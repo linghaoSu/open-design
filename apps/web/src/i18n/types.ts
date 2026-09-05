@@ -5,6 +5,7 @@ export type Locale = 'en' | 'id' | 'de' | 'zh-CN' | 'zh-TW' | 'pt-BR' | 'es-ES' 
 export const LOCALES: Locale[] = ['en', 'id', 'de', 'zh-CN', 'zh-TW', 'pt-BR', 'es-ES', 'ru', 'fa', 'ar', 'ja', 'ko', 'pl', 'hu', 'fr', 'uk', 'tr', 'th', 'it'];
 
 export const LOCALE_LABEL: Record<Locale, string> = {
+
   'en': 'English',
   'id': 'Bahasa Indonesia',
   'de': 'Deutsch',
@@ -30,6 +31,42 @@ export const LOCALE_LABEL: Record<Locale, string> = {
 // flat (not deeply nested) so missing-key TS errors point straight at the
 // offending string instead of a generic object mismatch.
 export interface Dict {
+  "designHandoff.title": string;
+  "designHandoff.description": string;
+  "designHandoff.framework": string;
+  "designHandoff.localCode": string;
+  "designHandoff.localComponent": string;
+  "designHandoff.definitionRevision": string;
+  "designHandoff.implementation": string;
+  "designHandoff.registerSource": string;
+  "designHandoff.existingCode": string;
+  "designHandoff.bindingId": string;
+  "designHandoff.register": string;
+  "designHandoff.noLocal": string;
+  "designHandoff.mappingHint": string;
+  "designHandoff.valueTransform": string;
+  "designHandoff.transformHint": string;
+  "designHandoff.invalidTransform": string;
+  "designHandoff.refreshFiles": string;
+  "designHandoff.sourceProof": string;
+  "designHandoff.handoffId": string;
+  "designHandoff.changeContext": string;
+  "designHandoff.previousVersion": string;
+  "designHandoff.create": string;
+  "designHandoff.outputs": string;
+  "designHandoff.emit": string;
+  "designHandoff.ready": string;
+  "designHandoff.notReady": string;
+  "designHandoff.downloadManifest": string;
+  "designHandoff.downloadCode": string;
+  "designHandoff.registeredCode": string;
+  "designHandoff.refreshHint": string;
+  "designHandoff.refreshCode": string;
+  "designHandoff.conflict": string;
+  "designHandoff.dirty": string;
+  "designHandoff.reloadBinding": string;
+  "designHandoff.staleResult": string;
+
   "designUpgrade.recipeTitle": string;
   "designUpgrade.recipeLoad": string;
   "designUpgrade.recipeChoose": string;
@@ -5674,4 +5711,5 @@ export interface Dict {
   'projectStructure.templateRequired': string;
   'projectStructure.staleRead': string;
   'projectStructure.conflict': string;
+
 }

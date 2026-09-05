@@ -38,6 +38,21 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('DesignRuntimePanel', () => {
+  it('preserves and exposes typed and legacy value conversions when editing another code mapping', async () => {
+    const state = designRuntimeState();
+    state.bindings.bindings[0]!.propMappings = [
+      { designProp: 'variant', codeProp: 'variant', valueTransform: { type: 'map', entries: [{ from: 'primary', to: 'primary' }, { from: 'secondary', to: 'secondary' }] } },
+      { designProp: 'disabled', codeProp: 'disabled', values: { false: false, true: true } },
+    ];
+    vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state });
+    render(<DesignRuntimePanel {...panelProps} />);
+    await screen.findByTestId('design-runtime-component-select');
+    expect((screen.getByTestId('design-runtime-value-transform-variant') as HTMLTextAreaElement).value).toContain('valueTransform');
+    expect((screen.getByTestId('design-runtime-value-transform-disabled') as HTMLTextAreaElement).value).toContain('values');
+    fireEvent.click(screen.getByTestId('design-runtime-bind'));
+    await waitFor(() => expect(provider.putProjectDesignRuntimeBinding).toHaveBeenCalledOnce());
+    expect(vi.mocked(provider.putProjectDesignRuntimeBinding).mock.calls[0]![2].binding.propMappings).toEqual(state.bindings.bindings[0]!.propMappings);
+  });
   it.each(['constructor', 'toString'])('validates a required %s prop without reading Object.prototype', async (name) => {
     const state = designRuntimeState();
     state.registry!.components[0]!.props = { [name]: { type: 'boolean', required: true } };

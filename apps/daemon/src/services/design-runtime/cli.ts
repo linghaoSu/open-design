@@ -1,6 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import {
+  CodeIdentitySchema,
+  ProjectDesignRuntimeRegisterLocalBindingRequestSchema, ProjectDesignRuntimeRegisterLocalBindingResponseSchema,
+  ProjectDesignRuntimeRefreshCodeResponseSchema, ProjectDesignRuntimeCreateHandoffRequestSchema,
+  ProjectDesignRuntimeHandoffResponseSchema, ProjectDesignRuntimeEmitHandoffRequestSchema, ProjectDesignRuntimeEmitHandoffResponseSchema,
+  type HandoffBuildResult,
   ProjectDesignRuntimeReviewUpgradeRequestSchema, ProjectDesignRuntimeReviewUpgradeResponseSchema,
   ProjectDesignRuntimeApplyUpgradeRequestSchema, ProjectDesignRuntimeApplyUpgradeResponseSchema,
   ProjectDesignRuntimeMigrationRecipesResponseSchema, ProjectDesignRuntimeInstantiateMigrationRecipeRequestSchema, ProjectDesignRuntimeMigrationRecipeResponseSchema,
@@ -51,6 +56,11 @@ import {
 import { resolveDaemonUrl } from '../../daemon-url.js';
 
 export const DESIGN_RUNTIME_CLI_USAGE = `Usage:
+  od design-runtime project-code-components <projectId> [--query <text>]
+  od design-runtime register-local-binding <projectId> --prompt-file <path|->
+  od design-runtime refresh-code-component <projectId> <codeComponentId>
+  od design-runtime handoff <projectId> --prompt-file <path|->
+  od design-runtime emit-handoff <projectId> --prompt-file <path|->
   od design-runtime get <projectId>
   od design-runtime compile <projectId> --prompt-file <path|->
   od design-runtime components <projectId> [--query <text>]
@@ -91,7 +101,7 @@ Common options:
   --daemon-url <url>          Override the daemon HTTP base.
   --workspace <id>            Exact Workspace for bound project requests.
   --workspace-member <id>     Exact caller membership for bound projects.
-  --expected-revision <n>     Snapshot revision for mutations and upgrade reviews.
+  --expected-revision <n>     Snapshot revision for mutations, reviews and handoffs.
   --prompt-file <path|->      Read a JSON request from a local file or stdin.
 
 Compile JSON: {"designSystemId":"acme","selections":[{"sourcePath":"src/Button.tsx","exportName":"Button","componentId":"button","codeComponentId":"acme/Button"}]}
@@ -133,12 +143,22 @@ Apply-upgrade requires {plan,reviewId,baseDigest,planDigest} from that review.
 Both accept expectedRevision or read it once; apply never retries a conflict.
 No command selects latest or upgrades a dependency implicitly. Clear-dependency
 removes the active dependency and can recover from an unavailable locked package.
+Register local JSON: {"source":{"framework":"react","sourcePath":"src/Card.tsx","exportName":"Card","codeComponentId":"project/Card"},"binding":{"schemaVersion":1,"id":"local/Card","componentRef":"local:Card","framework":"react","definitionRevision":1,"codeComponentId":"project/Card","status":"bound","verified":true}}
+Handoff JSON: {"id":"handoff","framework":"react"}. Optional changeContextSelection
+selects stored fromVersion:{designSystemId,version} and/or sharedChangeIds:[id].
+Emit JSON adds outputs:[{screenId,sourcePath,exportName}]. Vue exports use default.
+Handoff and emission read the saved document and current registered source through the
+daemon. Emitted files are returned in the response; these commands do not write them.
+Project-code-components lists project-owned code; code-components lists the effective
+union with DS code. Refresh preserves unavailable registered paths and marks dependent
+bindings broken/stale; use revalidate explicitly after repairing the source. Mapping
+valueTransform:{type:"map",entries:[{from:"primary",to:"filled"}]} preserves typed values.
 Validation/impact errors, unresolved bindings and blocked deletion checks exit 1;
 malformed arguments exit 2. A staged draft is retained even when its impact exits 1.
 `;
 
 interface CommandSpec {
-  argument?: 'bindingId' | 'componentId' | 'componentRef' | 'draftId' | 'designSystemId';
+  argument?: 'bindingId' | 'componentId' | 'componentRef' | 'draftId' | 'designSystemId' | 'codeComponentId';
   exactVersion?: boolean;
   mutates?: boolean;
   revisioned?: boolean;
@@ -147,6 +167,11 @@ interface CommandSpec {
 }
 
 const COMMANDS: Record<string, CommandSpec> = {
+  'project-code-components': { query: true },
+  'register-local-binding': { mutates: true, input: ProjectDesignRuntimeRegisterLocalBindingRequestSchema },
+  'refresh-code-component': { mutates: true, argument: 'codeComponentId' },
+  handoff: { revisioned: true, input: ProjectDesignRuntimeCreateHandoffRequestSchema },
+  'emit-handoff': { revisioned: true, input: ProjectDesignRuntimeEmitHandoffRequestSchema },
   get: {},
   'migration-recipes': { argument: 'designSystemId', exactVersion: true },
   'use-migration-recipe': { revisioned: true, input: ProjectDesignRuntimeInstantiateMigrationRecipeRequestSchema },
@@ -251,6 +276,16 @@ function diagnosticsExitCode(diagnostics: ValidationDiagnostic[]): number {
   return diagnostics.some((diagnostic) => diagnostic.severity === 'error') ? 1 : 0;
 }
 
+function printHandoff(result: HandoffBuildResult): void {
+  const manifest = result.manifest;
+  if (manifest) {
+    process.stdout.write(`Handoff: ${manifest.id}\nRevision ${manifest.projectRevision}\nFramework: ${manifest.framework}\nReady: ${manifest.ready}\n`);
+    for (const entry of manifest.coverage) process.stdout.write(`${JSON.stringify(entry)}\n`);
+    if (manifest.changeContext) process.stdout.write(`Change context: ${JSON.stringify(manifest.changeContext)}\n`);
+  }
+  printDiagnostics(result.diagnostics);
+}
+
 function ownerLabel(owner: ComponentReferenceOwner): string {
   return owner.kind === 'component' ? owner.componentRef : `${owner.documentId}/${owner.screenId}`;
 }
@@ -317,6 +352,7 @@ export async function runDesignRuntimeCli(args: string[], deps: DesignRuntimeCli
     if (spec.argument === 'componentId' || spec.argument === 'draftId' || spec.argument === 'designSystemId') parseInput(DesignEntityIdSchema, targetId);
     if (spec.exactVersion) parseInput(DesignSystemSemVerSchema, exactVersion);
     if (spec.argument === 'componentRef') parseInput(ProjectDesignRuntimeReferencesRequestSchema, { componentRef: targetId });
+    if (spec.argument === 'codeComponentId') parseInput(CodeIdentitySchema, targetId);
     if (spec.input && !values['prompt-file']) invalidInput(`${command} requires --prompt-file <path|->.`);
     if (!spec.input && values['prompt-file'] !== undefined) invalidInput(`--prompt-file is not supported by ${command}.`);
     if (!needsRevision && values['expected-revision'] !== undefined) invalidInput(`--expected-revision is not supported by ${command}.`);
@@ -359,6 +395,27 @@ export async function runDesignRuntimeCli(args: string[], deps: DesignRuntimeCli
     const output = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
     const encodedTarget = encodeURIComponent(targetId ?? '');
     const mutationBody = { ...input, expectedRevision };
+    if (command === 'register-local-binding') {
+      const data = await request('/project-code-components/register-binding', ProjectDesignRuntimeRegisterLocalBindingResponseSchema, 'POST', mutationBody);
+      if (json) output(data); else { printState(data); process.stdout.write(`Binding: ${data.binding.id}\n`); printDiagnostics(data.diagnostics); }
+      return { exitCode: diagnosticsExitCode(data.diagnostics) };
+    }
+    if (command === 'refresh-code-component') {
+      const data = await request(`/project-code-components/${encodedTarget}/refresh`, ProjectDesignRuntimeRefreshCodeResponseSchema, 'POST', { expectedRevision });
+      if (json) output(data); else { printState(data); printDiagnostics(data.diagnostics); }
+      return { exitCode: diagnosticsExitCode(data.diagnostics) };
+    }
+    if (command === 'handoff') {
+      const data = await request('/handoffs', ProjectDesignRuntimeHandoffResponseSchema, 'POST', mutationBody);
+      if (json) output(data); else printHandoff(data.result);
+      return { exitCode: data.result.manifest?.ready ? 0 : 1 };
+    }
+    if (command === 'emit-handoff') {
+      const data = await request('/handoffs/emit', ProjectDesignRuntimeEmitHandoffResponseSchema, 'POST', mutationBody);
+      if (json) output(data);
+      else { printHandoff(data.handoff); printDiagnostics(data.code.diagnostics); for (const file of data.code.files) process.stdout.write(`File: ${file.sourcePath}\n${file.content}\n`); }
+      return { exitCode: data.code.ok ? 0 : 1 };
+    }
     if (command === 'migration-recipes') {
       const data = await request(`/versions/${encodedTarget}/${encodeURIComponent(exactVersion!)}/migrations`, ProjectDesignRuntimeMigrationRecipesResponseSchema);
       if (json) output(data);
@@ -486,11 +543,11 @@ export async function runDesignRuntimeCli(args: string[], deps: DesignRuntimeCli
       else { process.stdout.write(`Published: ${targetId!}\n`); printState(data); printImpact(data.impact); }
       return { exitCode: diagnosticsExitCode(data.impact.diagnostics) };
     }
-    if (command === 'components' || command === 'code-components') {
+    if (command === 'components' || command === 'code-components' || command === 'project-code-components') {
       const query = values.query === undefined ? '' : `?${new URLSearchParams({ query: values.query })}`;
       const data = command === 'components'
         ? await request(`/components${query}`, ProjectDesignRuntimeComponentsResponseSchema)
-        : await request(`/code-components${query}`, ProjectDesignRuntimeCodeComponentsResponseSchema);
+        : await request(`/${command}${query}`, ProjectDesignRuntimeCodeComponentsResponseSchema);
       if (json) output(data);
       else for (const component of data.components) process.stdout.write(`${component.id}\t${component.name}\n`);
       return { exitCode: 0 };

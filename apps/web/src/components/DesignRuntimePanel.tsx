@@ -28,6 +28,7 @@ import { useT } from '../i18n';
 import { ProjectStructurePanel } from './ProjectStructurePanel';
 import { DesignSystemVersionsPanel } from './DesignSystemVersionsPanel';
 import { DesignRuntimeSourceSelections } from './DesignRuntimeSourceSelections';
+import { DesignHandoffPanel } from './DesignHandoffPanel';
 import styles from './DesignRuntimePanel.module.css';
 
 interface Props {
@@ -109,12 +110,14 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
   const [componentId, setComponentId] = useState('');
   const [codeId, setCodeId] = useState('');
   const [mappings, setMappings] = useState<Record<string, string>>({});
+  const [transforms, setTransforms] = useState<Record<string, string>>({});
   const [slotMappings, setSlotMappings] = useState<Record<string, string>>({});
   const [propDrafts, setPropDrafts] = useState<Record<string, PropDraft>>({});
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(true);
   const [structureBusy, setStructureBusy] = useState(false);
-  const [tab, setTab] = useState<'code' | 'structure' | 'versions'>('code');
+  const [tab, setTab] = useState<'code' | 'structure' | 'versions' | 'handoff'>('code');
+  const [handoffOpened, setHandoffOpened] = useState(false);
   const [versionsOpened, setVersionsOpened] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -139,6 +142,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
     const nextBinding = nextState?.bindings.bindings.find((candidate) => candidate.componentRef === ref);
     setCodeId(nextBinding && nextBinding.status !== 'unbound' ? nextBinding.codeComponentId : nextState?.codeIndex.components[0]?.id ?? '');
     setMappings(Object.fromEntries(nextBinding?.propMappings?.map((mapping) => [mapping.designProp, mapping.codeProp]) ?? []));
+    setTransforms(Object.fromEntries(nextBinding?.propMappings?.map((mapping) => [mapping.designProp, mapping.valueTransform !== undefined ? JSON.stringify({ valueTransform: mapping.valueTransform }, null, 2) : mapping.values !== undefined ? JSON.stringify({ values: mapping.values }, null, 2) : '']) ?? []));
     setSlotMappings(Object.fromEntries(nextBinding?.slotMappings?.map((mapping) => [mapping.designSlot, mapping.codeSlot]) ?? []));
     setPropDrafts({});
     setDiagnostics(null);
@@ -238,6 +242,16 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
 
   function bind() {
     if (viewerOnly || !state || !selectedCode || !componentRef) return;
+    let propMappings: NonNullable<ComponentBinding['propMappings']>;
+    try {
+      propMappings = Object.keys(selectedComponent?.props ?? {}).map((designProp) => {
+        const codeProp = Object.hasOwn(mappings, designProp) ? mappings[designProp]! : designProp;
+        const input = Object.hasOwn(transforms, designProp) ? transforms[designProp]!.trim() : '';
+        const transform: unknown = input ? JSON.parse(input) : {};
+        if (transform === null || typeof transform !== 'object' || Array.isArray(transform) || Object.keys(transform).some((key) => key !== 'values' && key !== 'valueTransform')) throw new Error(t('designHandoff.invalidTransform'));
+        return { designProp, codeProp, ...transform };
+      }).filter((mapping) => mapping.designProp !== mapping.codeProp || Object.hasOwn(mapping, 'values') || Object.hasOwn(mapping, 'valueTransform'));
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); return; }
     const nextBinding: ComponentBinding = {
       schemaVersion: 1,
       id: binding?.id ?? `binding:${state.registry!.id}:${componentId}:${selectedCode.framework}`,
@@ -246,9 +260,8 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
       status: 'bound',
       verified: true,
       codeComponentId: selectedCode.id,
-      propMappings: Object.entries(mappings)
-        .filter(([designProp, codeProp]) => designProp !== codeProp)
-        .map(([designProp, codeProp]) => ({ designProp, codeProp })),
+      ...(binding?.source ? { source: binding.source } : {}),
+      propMappings,
       slotMappings: Object.entries(slotMappings).filter(([, codeSlot]) => codeSlot !== '').map(([designSlot, codeSlot]) => ({ designSlot, codeSlot })),
     };
     void perform((authority) => putProjectDesignRuntimeBinding(authority, nextBinding.id, {
@@ -286,6 +299,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
         <Button role="tab" id={`${inputId}-code-tab`} aria-controls={`${inputId}-code`} aria-selected={tab === 'code'} disabled={busy || structureBusy} data-testid="design-runtime-code-tab" onClick={() => setTab('code')}>{t('projectStructure.codeTab')}</Button>
         <Button role="tab" id={`${inputId}-structure-tab`} aria-controls={`${inputId}-structure`} aria-selected={tab === 'structure'} disabled={busy || structureBusy} data-testid="design-runtime-structure-tab" onClick={() => setTab('structure')}>{t('projectStructure.title')}</Button>
         <Button role="tab" id={`${inputId}-versions-tab`} aria-controls={`${inputId}-versions`} aria-selected={tab === 'versions'} disabled={busy || structureBusy} data-testid="design-runtime-versions-tab" onClick={() => { setVersionsOpened(true); setTab('versions'); }}>{t('designVersions.title')}</Button>
+        <Button role="tab" id={`${inputId}-handoff-tab`} aria-controls={`${inputId}-handoff`} aria-selected={tab === 'handoff'} disabled={busy || structureBusy} data-testid="design-runtime-handoff-tab" onClick={() => { setHandoffOpened(true); setTab('handoff'); }}>{t('designHandoff.title')}</Button>
       </div>
       {viewerOnly ? <p className={styles.notice}>{t('designRuntime.readOnly')}</p> : null}
       {busy ? <p role="status">{t('common.loading')}</p> : null}
@@ -350,13 +364,16 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
               {selectedCode ? <ComponentMetadata component={selectedCode} /> : null}
               {selectedComponent && selectedCode ? <fieldset disabled={viewerOnly || busy}>
                 <legend>{t('designRuntime.propMappings')}</legend>
-                {Object.keys(selectedComponent.props).map((name) => <label className={styles.mapping} key={name}>
+                {Object.keys(selectedComponent.props).map((name) => <div key={name}><label className={styles.mapping}>
                   <code>{name}</code><span aria-hidden="true">→</span>
                   <select aria-label={`${t('designRuntime.propMappings')}: ${name}`} value={Object.hasOwn(mappings, name) ? mappings[name] : name} onChange={(event) => setMappings((current) => ({ ...current, [name]: event.target.value }))}>
                     {!Object.hasOwn(selectedCode.props, name) ? <option value={name}>{name}</option> : null}
                     {Object.keys(selectedCode.props).map((codeProp) => <option key={codeProp} value={codeProp}>{codeProp}</option>)}
                   </select>
-                </label>)}
+                </label><label className={styles.field}>{t('designHandoff.valueTransform')}: {name}
+                  <textarea rows={2} data-testid={`design-runtime-value-transform-${name}`} value={Object.hasOwn(transforms, name) ? transforms[name] : ''} onChange={(event) => setTransforms((current) => ({ ...current, [name]: event.target.value }))} />
+                </label></div>)}
+                <p className={styles.muted}>{t('designHandoff.transformHint')}</p>
               </fieldset> : null}
               {selectedComponent && selectedCode && Object.keys(selectedComponent.slots ?? {}).length ? <fieldset disabled={viewerOnly || busy}>
                 <legend>{t('designRuntime.slotMappings')}</legend>
@@ -424,6 +441,9 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
       </div>
       <div id={`${inputId}-structure`} role="tabpanel" aria-labelledby={`${inputId}-structure-tab`} hidden={tab !== 'structure'}>
         {state ? <ProjectStructurePanel scope={scope} state={state} viewerOnly={viewerOnly} externalBusy={busy} onState={(next) => adoptState(next)} onBusyChange={setStructureBusy} /> : null}
+      </div>
+      <div id={`${inputId}-handoff`} role="tabpanel" aria-labelledby={`${inputId}-handoff-tab`} hidden={tab !== 'handoff'}>
+        {handoffOpened && state ? <DesignHandoffPanel scope={scope} state={state} files={files} viewerOnly={viewerOnly} externalBusy={busy} onState={(next) => adoptState(next)} onBusyChange={setStructureBusy} /> : null}
       </div>
       <div id={`${inputId}-versions`} role="tabpanel" aria-labelledby={`${inputId}-versions-tab`} hidden={tab !== 'versions'}>
         {versionsOpened ? <DesignSystemVersionsPanel scope={scope} state={state} files={files} viewerOnly={viewerOnly} externalBusy={busy} onState={(next) => { adoptState(next); setError(''); setDiagnostics(null); }} onBusyChange={setStructureBusy} /> : null}

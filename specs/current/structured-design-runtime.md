@@ -61,7 +61,7 @@ until every required milestone and invariant has direct current-state evidence.
 | 6 | Immutable design-system versions, project dependencies, exact lock and digest/source verification | Reopen resolves same content until explicit upgrade; tampering/missing locked version diagnosed | Complete |
 | 7 | Semantic diff using stable component/token IDs | Added/removed/renamed/changed classification; removed variant/prop/token and incompatible slot are breaking | Complete |
 | 8 | Upgrade impact, deterministic migrations, review and explicit apply | Diff + graph + overrides identifies affected nodes/screens; migration validates before atomic lock/document update; failure/conflict leaves live state intact | Complete |
-| 9 | Machine-readable handoff and persistent project-component code bindings | Manifest includes lock, target, IR, registry, bindings and change context; deterministic round-trip, package compatibility, UI/CLI export | In progress |
+| 9 | Machine-readable handoff and persistent project-component code bindings | Manifest includes lock, target, IR, registry, bindings and change context; deterministic round-trip, package compatibility, UI/CLI export | Complete |
 | 10 | Explore/Guided project modes and generation repair loop | Structured diagnostics after generation; bounded repair; normal Explore behavior preserved; equivalent generation paths validated | In progress |
 | 11 | Pattern registry and design grammar | Pattern retrieval/configuration and slot composition validated deterministically; reusable resource-list fixture | In progress |
 | 12 | Strict mode semantic UI generation and source enforcement | Intent → retrieve → IR → validate → render/source → source validation → preview; unknown components/props/variants/slots/tokens/raw forbidden styles/reimplemented bound controls rejected | Pending |
@@ -223,8 +223,15 @@ The daemon observes installed package-root metadata without executing package co
 public callers select stored history instead of supplying evidence. Handoff and code
 emission are read-only and reject revision races. Root ran 49 focused daemon cases,
 then 13 final handoff/observer cases and 53 API contract cases. Contracts build and
-daemon source/test typechecks passed. The CLI and workspace handoff panel remain
-in progress.
+daemon source/test typechecks passed. The CLI and workspace Handoff tab now expose
+registration, source refresh, readiness inspection and manifest/source export through
+the same endpoints. Explicit property mappings preserve typed and legacy value
+conversions. Acceptance includes 65 real CLI dispatcher cases, 22 focused web cases
+and all 19 locale checks. Root's full browser workflow registered two actual local
+implementations, reopened their separate code index, emitted two React screens with
+production component calls, and verified that handoff/emission did not mutate state.
+The browser passed in 26.7 seconds (1.3 minutes including the shared harness), and
+the handoff screenshot was inspected. Full `pnpm guard` and `pnpm typecheck` passed.
 
 The pre-generation validator and eight-case benchmark foundation are accepted.
 The validator checks exact lock/source evidence, semantic resolution, production

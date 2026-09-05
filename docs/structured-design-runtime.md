@@ -124,6 +124,11 @@ All paths below are relative to `/api/projects/:id/design-runtime`:
 | Apply the reviewed migration | `POST /upgrades/apply` | `apply-upgrade <projectId> --prompt-file <path\|->` |
 | List exact-package migration recipes | `GET /versions/:designSystemId/:version/migrations` | `migration-recipes <projectId> <designSystemId> <exactVersion>` |
 | Turn a matching recipe into an editable plan | `POST /upgrades/recipes` | `use-migration-recipe <projectId> --prompt-file <path\|->` |
+| Search registered project implementations | `GET /project-code-components?query=...` | `project-code-components <projectId> --query <text>` |
+| Verify and register a local implementation | `POST /project-code-components/register-binding` | `register-local-binding <projectId> --prompt-file <path\|->` |
+| Refresh registered source metadata | `POST /project-code-components/:codeId/refresh` | `refresh-code-component <projectId> <codeComponentId>` |
+| Build a verified engineering handoff | `POST /handoffs` | `handoff <projectId> --prompt-file <path\|->` |
+| Emit screen source from the handoff | `POST /handoffs/emit` | `emit-handoff <projectId> --prompt-file <path\|->` |
 
 CLI commands begin with `od design-runtime` and support `--json`, `--daemon-url`,
 `--workspace`, and `--workspace-member`. Commands with request bodies read JSON from a
@@ -376,8 +381,24 @@ The local-binding foundation verifies an explicit shared definition revision and
 source-selected code contract. A template revision makes the binding stale even
 when its public properties are unchanged. Explicit project code ownership prevents
 collision with package-owned code, and current source evidence detects registered
-API drift. These internal operations are accepted; project persistence and handoff
-UI/CLI wiring remain part of Phase 9.
+API drift. The separate project code index persists across publication, activation,
+clearing and upgrades. Published design-system packages contain their own code and
+bindings; project implementations retain their separate ownership.
+
+In **Handoff**, select a reusable local component and framework, then register its
+source path, export and stable code/binding IDs. Verification reads the real file and
+records the current definition revision. Alternatively select existing registered or
+design-system code. Explicit property and slot mappings preserve typed value
+conversions. **Refresh source** retains unavailable selections and marks their
+bindings broken or stale; after repairing the source, revalidate explicitly.
+
+Create a handoff to inspect readiness and missing implementations. The daemon checks
+current source and exact dependency evidence each time. Optional change context selects
+an exact prior catalog version or published shared revisions in this project. Configure
+one output path and export per screen, then emit React TSX or Vue SFC files. The panel
+downloads the manifest and individual files; the CLI returns the same canonical data
+with `--json`. Emission returns content without writing into the project. Results tied
+to an older project revision require rebuilding before download.
 
 The internal `createHandoff` builder produces a portable snapshot containing the
 exact lock and frozen package, semantic document, local definitions, code indexes,
@@ -391,7 +412,7 @@ effective scalar props and ordered code slots. `emitHandoffCode` uses that same
 plan to return React TSX or Vue SFC screen files. Bound local instances remain
 production component calls. The emitter reparses the generated source and returns
 no files if any required binding, output path or framework construct is invalid.
-This pure service does not write files or establish the later public workflow.
+The public handoff operations call these same services.
 
 V1 instance overrides are an array of versioned records such as
 `{ schemaVersion: 1, path: ['props', 'title'], value: 'Production' }`.

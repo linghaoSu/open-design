@@ -1,4 +1,9 @@
 import {
+  CodeIdentitySchema,
+  ProjectDesignRuntimeRegisterLocalBindingRequestSchema, ProjectDesignRuntimeRegisterLocalBindingResponseSchema,
+  ProjectDesignRuntimeRefreshCodeResponseSchema, ProjectDesignRuntimeCreateHandoffRequestSchema,
+  ProjectDesignRuntimeHandoffResponseSchema, ProjectDesignRuntimeEmitHandoffRequestSchema, ProjectDesignRuntimeEmitHandoffResponseSchema,
+  type ProjectDesignRuntimeRegisterLocalBindingRequest, type ProjectDesignRuntimeCreateHandoffRequest, type ProjectDesignRuntimeEmitHandoffRequest,
   ProjectDesignRuntimeReviewUpgradeRequestSchema, ProjectDesignRuntimeReviewUpgradeResponseSchema,
   ProjectDesignRuntimeApplyUpgradeRequestSchema, ProjectDesignRuntimeApplyUpgradeResponseSchema,
   type ProjectDesignRuntimeReviewUpgradeRequest, type ProjectDesignRuntimeApplyUpgradeRequest,
@@ -132,6 +137,21 @@ export const searchProjectDesignRuntimeComponents = (scope: ProjectDesignRuntime
 
 export const searchProjectDesignRuntimeCodeComponents = (scope: ProjectDesignRuntimeScope, query = '') =>
   request(scope, `/code-components?query=${encodeURIComponent(query)}`, ProjectDesignRuntimeCodeComponentsResponseSchema);
+
+export const searchProjectDesignRuntimeOwnedCodeComponents = (scope: ProjectDesignRuntimeScope, query = '') =>
+  request(scope, `/project-code-components?query=${encodeURIComponent(query)}`, ProjectDesignRuntimeCodeComponentsResponseSchema);
+
+export const registerProjectDesignRuntimeLocalBinding = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeRegisterLocalBindingRequest) =>
+  request(scope, '/project-code-components/register-binding', ProjectDesignRuntimeRegisterLocalBindingResponseSchema, 'POST', ProjectDesignRuntimeRegisterLocalBindingRequestSchema.parse(input));
+
+export const refreshProjectDesignRuntimeCodeComponent = (scope: ProjectDesignRuntimeScope, codeId: string, input: ProjectDesignRuntimeRevisionRequest) =>
+  request(scope, `/project-code-components/${encodeURIComponent(CodeIdentitySchema.parse(codeId))}/refresh`, ProjectDesignRuntimeRefreshCodeResponseSchema, 'POST', ProjectDesignRuntimeRevisionRequestSchema.parse(input));
+
+export const createProjectDesignRuntimeHandoff = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeCreateHandoffRequest) =>
+  request(scope, '/handoffs', ProjectDesignRuntimeHandoffResponseSchema, 'POST', ProjectDesignRuntimeCreateHandoffRequestSchema.parse(input));
+
+export const emitProjectDesignRuntimeHandoff = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeEmitHandoffRequest) =>
+  request(scope, '/handoffs/emit', ProjectDesignRuntimeEmitHandoffResponseSchema, 'POST', ProjectDesignRuntimeEmitHandoffRequestSchema.parse(input));
 
 
 export const saveProjectDesignRuntimeDocument = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeSaveDocumentRequest) =>

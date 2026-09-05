@@ -12,6 +12,9 @@ import { reviewDesignSystemUpgrade, applyDesignSystemUpgrade } from '../../../sr
 import { packageFixture } from '../../fixtures/design-runtime/design-system-version.js';
 import { mixedProjectCompilerRequest } from '../../fixtures/design-runtime/compiler-selections.js';
 import { createDesignSystemVersion } from '../../../src/services/design-runtime/design-system-version.js';
+import { localHandoffFixture } from '../../fixtures/design-runtime/handoff.js';
+import { createHandoff } from '../../../src/services/design-runtime/handoff.js';
+import { emitHandoffCode } from '../../../src/services/design-runtime/handoff-emitter.js';
 
 const daemonRoot = fileURLToPath(new URL('../../..', import.meta.url));
 const cliEntry = fileURLToPath(new URL('../../../src/cli.ts', import.meta.url));
@@ -92,6 +95,63 @@ const compileRequest = {
   selections: [{ sourcePath: 'src/Button.tsx', exportName: 'Button', componentId: 'button', codeComponentId: 'acme/Button' }],
 };
 const scope = ['--workspace', 'workspace-1', '--workspace-member', 'member-1'];
+
+describe('od design-runtime production handoff dispatcher', () => {
+  it('registers a local implementation from a file with one CAS read and exact workspace headers', async () => {
+    const fixture = localHandoffFixture(); const binding = fixture.snapshot.bindings.bindings.find((entry) => entry.componentRef.startsWith('local:'))!;
+    const code = fixture.snapshot.projectCodeIndex.components[0]!;
+    const input = { source: { framework: code.framework, sourcePath: code.sourcePath, exportName: code.exportName, codeComponentId: code.id }, binding };
+    const stub = await startServer(({ method }) => ({ body: method === 'GET' ? { state: state() } : { state: state(8), binding, diagnostics: [] } }));
+    const output = await runCli(['design-runtime', 'register-local-binding', projectId, '--prompt-file', await inputFile(input), '--json', '--daemon-url', stub.url, ...scope]);
+    expect(output.code, output.stderr).toBe(0); expect(stub.requests).toHaveLength(2);
+    expect(stub.requests[1]).toMatchObject({ method: 'POST', url: `${prefix}/project-code-components/register-binding`, body: { ...input, expectedRevision: 7 } });
+    for (const request of stub.requests) expect(request.headers['x-od-workspace-member-id']).toBe('member-1');
+    expect(JSON.parse(output.stdout).binding.propMappings).toEqual(binding.propMappings);
+  });
+  it('lists owned code and refreshes an encoded code ID, returning broken-source diagnostics as failure after the persisted change', async () => {
+    const code = localHandoffFixture().snapshot.projectCodeIndex.components[0]!;
+    const diagnostic = { schemaVersion: 1, severity: 'error', code: 'ODDS7004', message: 'Source unavailable.' };
+    const stub = await startServer(({ method }) => ({ body: method === 'GET' ? { revision: 7, components: [code] } : { state: state(8), diagnostics: [diagnostic] } }));
+    const listed = await runCli(['design-runtime', 'project-code-components', projectId, '--query', 'Card + text', '--json', '--daemon-url', stub.url]);
+    expect(listed.code).toBe(0); expect(JSON.parse(listed.stdout).components).toEqual([code]);
+    const refreshed = await runCli(['design-runtime', 'refresh-code-component', projectId, code.id, '--expected-revision', '7', '--json', '--daemon-url', stub.url]);
+    expect(refreshed.code).toBe(1); expect(JSON.parse(refreshed.stdout).state.revision).toBe(8); expect(refreshed.stderr).toBe('');
+    expect(stub.requests.map((request) => request.url)).toEqual([`${prefix}/project-code-components?query=Card+%2B+text`, `${prefix}/project-code-components/project%2Fcard/refresh`]);
+  });
+  it.each(['react', 'vue'] as const)('creates a read-only %s handoff and emits actual source to stdout without writing output files', async (framework) => {
+    const fixture = localHandoffFixture(framework); fixture.projectRevision = 7;
+    const result = createHandoff(fixture); if (!result.manifest) throw new Error('Fixture has no manifest');
+    const outputs = [{ screenId: 'main', sourcePath: `nested/Main.${framework === 'vue' ? 'vue' : 'tsx'}`, exportName: framework === 'vue' ? 'default' : 'Main' }];
+    const code = emitHandoffCode({ manifest: result.manifest, outputs });
+    const stub = await startServer(({ url }) => ({ body: url.endsWith('/emit') ? { revision: 7, handoff: result, code } : { revision: 7, result } }));
+    const input = { expectedRevision: 7, id: 'handoff', framework };
+    const created = await runCli(['design-runtime', 'handoff', projectId, '--prompt-file', '-', '--json', '--daemon-url', stub.url], JSON.stringify(input));
+    expect(created.code, created.stderr).toBe(0); expect(JSON.parse(created.stdout).result.manifest.ready).toBe(true);
+    const emitted = await runCli(['design-runtime', 'emit-handoff', projectId, '--prompt-file', '-', '--daemon-url', stub.url], JSON.stringify({ ...input, outputs }));
+    expect(emitted.code, emitted.stderr).toBe(0); expect(emitted.stdout).toContain(`File: ${outputs[0]!.sourcePath}`); expect(emitted.stdout).toContain('filled');
+    expect(stub.requests).toHaveLength(2); expect(stub.requests[1]!.body).toEqual({ ...input, outputs });
+  });
+  it('prints actionable not-ready diagnostics and rejects caller evidence, traversal and extra positionals before HTTP', async () => {
+    const failure = { schemaVersion: 1, manifest: null, diagnostics: [{ schemaVersion: 1, code: 'ODDS7001', severity: 'error', message: 'Register the missing local implementation.' }] };
+    const stub = await startServer(() => ({ body: { revision: 7, result: failure } }));
+    const input = { expectedRevision: 7, id: 'handoff', framework: 'react' };
+    for (const extra of [{ snapshot: {} }, { targetPackages: [] }, { changeContext: {} }]) {
+      const invalid = await runCli(['design-runtime', 'handoff', projectId, '--prompt-file', '-', '--json', '--daemon-url', stub.url], JSON.stringify({ ...input, ...extra }));
+      expect(invalid.code).toBe(2);
+    }
+    expect((await runCli(['design-runtime', 'refresh-code-component', projectId, '../code', '--expected-revision', '7', '--json', '--daemon-url', stub.url])).code).toBe(2);
+    expect((await runCli(['design-runtime', 'handoff', projectId, 'extra', '--json', '--daemon-url', stub.url])).code).toBe(2);
+    expect(stub.requests).toHaveLength(0);
+    const result = await runCli(['design-runtime', 'handoff', projectId, '--prompt-file', '-', '--daemon-url', stub.url], JSON.stringify(input));
+    expect(result.code).toBe(1); expect(result.stdout).toContain('ODDS7001'); expect(result.stderr).toBe('');
+  });
+  it('reports handoff revision conflicts without retry or an implicit revision change', async () => {
+    const body = { error: { code: 'DESIGN_RUNTIME_REVISION_CONFLICT', message: 'Changed', details: { expectedRevision: 7, currentRevision: 8 } } };
+    const stub = await startServer(() => ({ status: 409, body }));
+    const result = await runCli(['design-runtime', 'handoff', projectId, '--prompt-file', '-', '--expected-revision', '7', '--json', '--daemon-url', stub.url], JSON.stringify({ id: 'handoff', framework: 'vue' }));
+    expect(result.code).toBe(1); expect(JSON.parse(result.stderr)).toEqual({ status: 409, ...body }); expect(stub.requests).toHaveLength(1);
+  });
+});
 
 function sharedFixture() {
   const definition: ProjectComponentDefinition = { schemaVersion: 1, id: 'Card', name: 'Card', revision: 1, props: {}, propMappings: [], template: { schemaVersion: 1, id: 'label', type: 'text', text: 'Current' } };

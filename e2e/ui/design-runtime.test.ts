@@ -5,6 +5,8 @@ import type {
   ProjectDesignRuntimePublishVersionResponse, ProjectDesignRuntimeVersionResponse, ProjectDesignRuntimeDependencyResponse,
   ProjectDesignRuntimeReviewUpgradeResponse, ProjectDesignRuntimeApplyUpgradeResponse,
   DesignSystemMigrationRecipe, ProjectDesignRuntimeMigrationRecipeResponse,
+  ProjectDesignRuntimeHandoffResponse, ProjectDesignRuntimeRegisterLocalBindingResponse,
+  ProjectDesignRuntimeEmitHandoffResponse,
   UIIRDocument,
 } from '@open-design/contracts';
 import { expect, test } from '@/playwright/suite';
@@ -367,6 +369,83 @@ export function Button({ variant = 'primary', disabled = false }: ButtonProps) {
   // Future unlocked compilation reads the intentionally adopted new production API.
   const adoptSource = await page.request.post(`/api/projects/${projectId}/files`, { data: { name: 'Button.tsx', content: upgradeSource } });
   expect(adoptSource.ok(), await adoptSource.text()).toBeTruthy();
+
+  // Bind the two existing shared definitions to actual source through the
+  // handoff panel, then reopen and emit both screens from those persisted facts.
+  const localSources = {
+    'SharedButton.tsx': `import { Button } from './Button';
+interface SharedButtonProps { variant?: 'solid' | 'secondary' }
+export function SharedButton({ variant = 'solid' }: SharedButtonProps) {
+  return <Button variant={variant} />;
+}`,
+    'ApplicationCard.tsx': `import { SharedButton } from './SharedButton';
+export function ApplicationCard() { return <SharedButton />; }`,
+  };
+  for (const [name, content] of Object.entries(localSources)) {
+    const response = await page.request.post(`/api/projects/${projectId}/files`, { data: { name, content } });
+    expect(response.ok(), await response.text()).toBeTruthy();
+  }
+  await page.getByTestId('design-runtime-handoff-tab').click();
+  await page.getByTestId('handoff-framework').selectOption('react');
+  const initialHandoffResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `${prefix}/handoffs`);
+  await page.getByTestId('handoff-create').click();
+  const initialHandoff = await initialHandoffResponse;
+  expect(initialHandoff.ok(), await initialHandoff.text()).toBeTruthy();
+  expect((await initialHandoff.json() as ProjectDesignRuntimeHandoffResponse).result.manifest?.ready).toBe(false);
+  let boundLocalState = upgradedState;
+  for (const [componentId, exportName] of [['localButton', 'SharedButton'], ['applicationCard', 'ApplicationCard']] as const) {
+    await page.getByTestId('handoff-local-component').selectOption(componentId);
+    await page.getByTestId('handoff-source-path').fill(`${exportName}.tsx`);
+    await page.getByTestId('handoff-export-name').fill(exportName);
+    await page.getByTestId('handoff-code-id').fill(`project/${componentId}`);
+    await page.getByTestId('handoff-binding-id').fill(`local/${componentId}`);
+    const registeredResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === `${prefix}/project-code-components/register-binding`);
+    await page.getByTestId('handoff-register-local').click();
+    const registered = await registeredResponse;
+    expect(registered.ok(), await registered.text()).toBeTruthy();
+    const registration = await registered.json() as ProjectDesignRuntimeRegisterLocalBindingResponse;
+    expect(registration.binding).toMatchObject({ componentRef: `local:${componentId}`, status: 'bound', verified: true,
+      definitionRevision: upgradedState.projectComponents.components.find((entry) => entry.id === componentId)!.revision });
+    boundLocalState = registration.state;
+  }
+  expect(boundLocalState.projectCodeIndex.components).toHaveLength(2);
+  expect(boundLocalState.codeIndex).toEqual(upgradedState.codeIndex);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.getByTestId('design-runtime-entry').click();
+  await page.getByTestId('design-runtime-handoff-tab').click();
+  const readyHandoffResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `${prefix}/handoffs`);
+  await page.getByTestId('handoff-create').click();
+  const readyHandoff = await readyHandoffResponse;
+  expect(readyHandoff.ok(), await readyHandoff.text()).toBeTruthy();
+  const readyResult = (await readyHandoff.json() as ProjectDesignRuntimeHandoffResponse).result;
+  expect(readyResult.manifest?.ready, JSON.stringify(readyResult.diagnostics)).toBe(true);
+  expect(readyResult.manifest?.snapshot.lock).toEqual(upgradedState.lock);
+  for (const [screenId, exportName] of [['applications', 'Applications'], ['dashboard', 'Dashboard']] as const) {
+    await page.getByTestId(`handoff-output-path-${screenId}`).fill(`${exportName}.tsx`);
+    await page.getByTestId(`handoff-output-export-${screenId}`).fill(exportName);
+  }
+  const emittedResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `${prefix}/handoffs/emit`);
+  await page.getByTestId('handoff-emit').click();
+  const emitted = await emittedResponse;
+  expect(emitted.ok(), await emitted.text()).toBeTruthy();
+  const emission = await emitted.json() as ProjectDesignRuntimeEmitHandoffResponse;
+  expect(emission.code.ok, JSON.stringify(emission.code.diagnostics)).toBe(true);
+  expect(emission.code.files.map((file) => file.sourcePath)).toEqual(['Applications.tsx', 'Dashboard.tsx']);
+  expect(emission.code.files.every((file) => file.content.includes('ApplicationCard') && !file.content.includes('<button'))).toBe(true);
+  expect(emission.code.files.find((file) => file.screenId === 'dashboard')!.content).toContain('SharedButton');
+  const afterHandoff = await page.request.get(prefix);
+  expect(afterHandoff.ok(), await afterHandoff.text()).toBeTruthy();
+  expect((await afterHandoff.json() as ProjectDesignRuntimeResponse).state).toEqual(boundLocalState);
+  const handoffScreenshot = testInfo.outputPath('verified-local-component-handoff.png');
+  await page.getByTestId('handoff-readiness').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: handoffScreenshot, fullPage: true });
+  await testInfo.attach('Verified local production component handoff', { path: handoffScreenshot, contentType: 'image/png' });
+
+  await page.getByTestId('design-runtime-versions-tab').click();
 
   const clearResponse = page.waitForResponse((response) => response.request().method() === 'DELETE'
     && new URL(response.url()).pathname === `${prefix}/dependency`);
