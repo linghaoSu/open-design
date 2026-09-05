@@ -240,8 +240,18 @@ A well-formed plan that cannot be applied still returns its review; the CLI exit
 `planDigest` from that review. The daemon verifies both immutable packages again,
 recomputes the review, and commits the lock, document, local definitions, bindings
 and shared revision history in one revision. Conflicts and invalid proposals leave
-live state intact. The web provider uses these same endpoints; the discoverable
-upgrade interface and reusable package recipes remain in the active delivery plan.
+live state intact.
+
+In **Versions**, choose **Review upgrade** beside the active dependency. Select an
+exact published target, enter the declared range and edit the typed migration rules
+and binding decisions. The vocabulary panel includes supported examples. Review
+shows semantic changes with full before/after values, current and proposed errors,
+affected screens, binding transitions and registered code impact. Current errors
+can be repaired by the proposal; proposed errors block application. Source and
+token coverage limitations are shown explicitly. **Apply upgrade** becomes available
+only for the unchanged applicable review. Editing the plan or refreshing project
+or catalog state invalidates that proof. Workspace viewers can review without
+applying. Reusable package-authored migration recipes remain in the delivery plan.
 
 ## Compatibility and identity
 

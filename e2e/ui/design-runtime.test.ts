@@ -3,6 +3,7 @@ import type {
   ProjectComponentDefinition, ProjectDesignRuntimeDocumentResponse, ProjectDesignRuntimePublishComponentResponse,
   ProjectDesignRuntimeResponse, ProjectDesignRuntimeStageComponentResponse, ProjectDesignRuntimeValidateResponse,
   ProjectDesignRuntimePublishVersionResponse, ProjectDesignRuntimeVersionResponse, ProjectDesignRuntimeDependencyResponse,
+  ProjectDesignRuntimeReviewUpgradeResponse, ProjectDesignRuntimeApplyUpgradeResponse,
   UIIRDocument,
 } from '@open-design/contracts';
 import { expect, test } from '@/playwright/suite';
@@ -273,6 +274,76 @@ export function Button({ variant = 'primary', disabled = false }: ButtonProps) {
   await page.screenshot({ path: lockScreenshot, fullPage: true });
   await testInfo.attach('Exact locked design system with newer published version', { path: lockScreenshot, contentType: 'image/png' });
 
+  // A real breaking package feeds the review UI. Import only publishes its bytes;
+  // live lock/definitions/overrides change together when the reviewed plan is applied.
+  const oldVersionResponse = await page.request.get(`${prefix}/versions/acme/1.0.0`);
+  expect(oldVersionResponse.ok(), await oldVersionResponse.text()).toBeTruthy();
+  const upgradePackage = structuredClone((await oldVersionResponse.json() as ProjectDesignRuntimeVersionResponse).version.package);
+  upgradePackage.version = '2.0.0';
+  for (const component of [...upgradePackage.registry.components, ...upgradePackage.codeIndex.components]) {
+    const variant = component.props.variant!;
+    expect(variant.type).toBe('enum');
+    if (variant.type === 'enum') variant.values = variant.values.map((value) => value === 'primary' ? 'solid' : value);
+    if (variant.default === 'primary') variant.default = 'solid';
+  }
+  const upgradeSource = sourceContent.replaceAll("'primary'", "'solid'");
+  upgradePackage.source.files = [{ path: 'Button.tsx', encoding: 'utf8', content: upgradeSource }];
+  const importUpgrade = await page.request.post(`${prefix}/versions`, {
+    data: { expectedRevision: nextPublication.state.revision, package: upgradePackage },
+  });
+  expect(importUpgrade.ok(), await importUpgrade.text()).toBeTruthy();
+  const upgradePublication = await importUpgrade.json() as ProjectDesignRuntimePublishVersionResponse;
+  expect(upgradePublication.state.lock).toEqual(lockedState.lock);
+  await page.getByTestId('versions-refresh').click();
+  await expect(page.getByTestId('versions-refresh')).toBeEnabled();
+  await page.getByTestId('versions-review-upgrade').click();
+  await page.getByTestId('upgrade-target').selectOption(JSON.stringify(['acme', '2.0.0', upgradePublication.version.digest, upgradePublication.version.sourceDigest]));
+  const blockedReviewResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `${prefix}/upgrades/review`);
+  await page.getByTestId('upgrade-review').click();
+  const blockedReview = await blockedReviewResponse;
+  expect(blockedReview.ok(), await blockedReview.text()).toBeTruthy();
+  expect((await blockedReview.json() as ProjectDesignRuntimeReviewUpgradeResponse).review.canApply).toBe(false);
+  await expect(page.getByTestId('upgrade-apply')).toBeDisabled();
+  await page.getByTestId('upgrade-editor').fill(JSON.stringify({
+    rules: [{ id: 'primary-to-solid', type: 'transform-prop', componentRef: binding.componentRef,
+      fromProp: 'variant', toProp: 'variant', valueMap: [{ from: 'primary', to: 'solid' }] }],
+    bindingDecisions: [{ type: 'use-target-package', bindingId: binding.id, targetBindingId: binding.id }],
+  }, null, 2));
+  const reviewUpgradeResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `${prefix}/upgrades/review`);
+  await page.getByTestId('upgrade-review').click();
+  const reviewUpgrade = await reviewUpgradeResponse;
+  expect(reviewUpgrade.ok(), await reviewUpgrade.text()).toBeTruthy();
+  const upgradeReview = (await reviewUpgrade.json() as ProjectDesignRuntimeReviewUpgradeResponse).review;
+  expect(upgradeReview.canApply, JSON.stringify(upgradeReview.diagnostics)).toBe(true);
+  expect(upgradeReview.diff.changes.some((change) => change.breaking)).toBe(true);
+  expect(upgradeReview.affectedScreens.map((screen) => screen.screenId).sort()).toEqual(['applications', 'dashboard']);
+  await expect(page.getByTestId('upgrade-affected-screens')).toContainText('Applications');
+  await expect(page.getByTestId('upgrade-affected-screens')).toContainText('Dashboard');
+  await expect(page.getByTestId('upgrade-apply')).toBeEnabled();
+  const upgradeScreenshot = testInfo.outputPath('reviewed-design-system-upgrade.png');
+  await page.getByTestId('upgrade-impact').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: upgradeScreenshot, fullPage: true });
+  await testInfo.attach('Breaking upgrade impact before explicit application', { path: upgradeScreenshot, contentType: 'image/png' });
+  const applyUpgradeResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `${prefix}/upgrades/apply`);
+  await page.getByTestId('upgrade-apply').click();
+  const applyUpgrade = await applyUpgradeResponse;
+  expect(applyUpgrade.ok(), await applyUpgrade.text()).toBeTruthy();
+  const upgradedState = (await applyUpgrade.json() as ProjectDesignRuntimeApplyUpgradeResponse).state;
+  expect(upgradedState.lock.dependencies[0]!.version).toBe('2.0.0');
+  expect(upgradedState.projectComponents.components.find((entry) => entry.id === 'localButton')!.props.variant!.default).toBe('solid');
+  const upgradedDocument = upgradedState.document!;
+  expect(upgradedDocument.screens[1]!.children[1]).toMatchObject({ type: 'instance', overrides: [{ value: 'solid' }] });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.getByTestId('design-runtime-entry').click();
+  await page.getByTestId('design-runtime-versions-tab').click();
+  await expect(page.getByTestId('versions-lock')).toContainText('2.0.0');
+  // Future unlocked compilation reads the intentionally adopted new production API.
+  const adoptSource = await page.request.post(`/api/projects/${projectId}/files`, { data: { name: 'Button.tsx', content: upgradeSource } });
+  expect(adoptSource.ok(), await adoptSource.text()).toBeTruthy();
+
   const clearResponse = page.waitForResponse((response) => response.request().method() === 'DELETE'
     && new URL(response.url()).pathname === `${prefix}/dependency`);
   await page.getByTestId('versions-clear').click();
@@ -280,8 +351,8 @@ export function Button({ variant = 'primary', disabled = false }: ButtonProps) {
   expect(cleared.ok(), await cleared.text()).toBeTruthy();
   const clearedState = (await cleared.json() as ProjectDesignRuntimeResponse).state;
   expect(clearedState.lock.dependencies).toEqual([]);
-  expect(clearedState.registry).toEqual(lockedState.registry);
-  expect(clearedState.document).toEqual(document);
+  expect(clearedState.registry).toEqual(upgradedState.registry);
+  expect(clearedState.document).toEqual(upgradedDocument);
 
   // An explicit unlock permits extending the working registry. Exercise the
   // compiler's format/metadata controls without recreating the project setup.
@@ -350,7 +421,7 @@ export const Populated = { args: { title: 'Vue applications' } };`,
   expect(vueCard.stories).toEqual([expect.objectContaining({ id: vueStoryId, args: { title: 'Vue applications' } })]);
   expect(vueCard.props.disabled!.default).toBe(false);
   expect(vueCard.props.title!.default).toBe('Vue summary');
-  expect(mixedState.document).toEqual(document);
+  expect(mixedState.document).toEqual(upgradedDocument);
   const cardBinding = mixedState.bindings.bindings.find((entry) => entry.componentRef === `ds:acme/${reactCard.id}`)!;
   await page.getByTestId('design-runtime-component-select').selectOption(reactCard.id);
   const cardUnbindResponse = page.waitForResponse((response) => response.request().method() === 'DELETE'

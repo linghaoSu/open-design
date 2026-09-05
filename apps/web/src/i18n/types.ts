@@ -30,6 +30,41 @@ export const LOCALE_LABEL: Record<Locale, string> = {
 // flat (not deeply nested) so missing-key TS errors point straight at the
 // offending string instead of a generic object mismatch.
 export interface Dict {
+  'designUpgrade.title': string;
+  'designUpgrade.hint': string;
+  'designUpgrade.target': string;
+  'designUpgrade.choose': string;
+  'designUpgrade.range': string;
+  'designUpgrade.editor': string;
+  'designUpgrade.editorHint': string;
+  'designUpgrade.vocabulary': string;
+  'designUpgrade.review': string;
+  'designUpgrade.apply': string;
+  'designUpgrade.noLock': string;
+  'designUpgrade.noTargets': string;
+  'designUpgrade.staleCatalog': string;
+  'designUpgrade.invalid': string;
+  'designUpgrade.ready': string;
+  'designUpgrade.blocked': string;
+  'designUpgrade.applied': string;
+  'designUpgrade.current': string;
+  'designUpgrade.proposed': string;
+  'designUpgrade.planDiagnostics': string;
+  'designUpgrade.none': string;
+  'designUpgrade.diff': string;
+  'designUpgrade.breaking': string;
+  'designUpgrade.screens': string;
+  'designUpgrade.usages': string;
+  'designUpgrade.overrides': string;
+  'designUpgrade.bindings': string;
+  'designUpgrade.code': string;
+  'designUpgrade.coverage': string;
+  'designUpgrade.documents': string;
+  'designUpgrade.proof': string;
+  'designUpgrade.loading': string;
+  'designUpgrade.source': string;
+  'designUpgrade.readOnly': string;
+
   'semanticEditor.title': string;
   'semanticEditor.screen': string;
   'semanticEditor.screenName': string;

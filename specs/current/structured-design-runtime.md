@@ -59,7 +59,7 @@ until every required milestone and invariant has direct current-state evidence.
 | 4 | Project component definitions, override-only instances, deterministic reference graph | Button → ApplicationCard → two screens traversal; inheritance/reset, direct/transitive usage, cycles, dangling refs and safe delete/detach rules | Complete |
 | 5 | Staged shared component revisions, usage/affected-screen impact, explicit publish and undo/history | A draft leaves live instances unchanged; publish changes all non-overridden instances; conflict/invalid-override tests and discoverable UI/CLI | Complete |
 | 6 | Immutable design-system versions, project dependencies, exact lock and digest/source verification | Reopen resolves same content until explicit upgrade; tampering/missing locked version diagnosed | Complete |
-| 7 | Semantic diff using stable component/token IDs | Added/removed/renamed/changed classification; removed variant/prop/token and incompatible slot are breaking | In progress |
+| 7 | Semantic diff using stable component/token IDs | Added/removed/renamed/changed classification; removed variant/prop/token and incompatible slot are breaking | Complete |
 | 8 | Upgrade impact, deterministic migrations, review and explicit apply | Diff + graph + overrides identifies affected nodes/screens; migration validates before atomic lock/document update; failure/conflict leaves live state intact | In progress |
 | 9 | Machine-readable handoff and persistent project-component code bindings | Manifest includes lock, target, IR, registry, bindings and change context; deterministic round-trip, package compatibility, UI/CLI export | In progress |
 | 10 | Explore/Guided project modes and generation repair loop | Structured diagnostics after generation; bounded repair; normal Explore behavior preserved; equivalent generation paths validated | Pending |
@@ -157,9 +157,9 @@ covering compilation and the concurrent upgrade API integration.
 Semantic diff is accepted internally in `69989178f`: stable-ID comparison,
 complete before/after snapshots, breaking property/slot/token changes, and a
 SemVer recommendation. Source provenance and Storybook examples remain distinct
-from production compatibility. Root ran 6 contract and 20 daemon cases. Its public
-review surface is part of the exact-version upgrade workflow being implemented
-next; Phase 7 remains in progress until that surface is exercised.
+from production compatibility. Root ran 6 contract and 20 daemon cases. The public
+Versions review now displays named semantic changes and full before/after values,
+including breaking variant changes, through the real browser workflow.
 
 Phase 8's pure migration/review/apply core is accepted in `de70e1f57`. It preserves
 authored identities and override-only instances, propagates finite value migrations
@@ -172,7 +172,14 @@ Root's combined acceptance includes five real HTTP/SQLite cases exercising
 read-only reviews, reopen/history, exact-source tampering, authority, invalid
 application and CAS race preservation; five CLI cases, three provider cases and
 three API schema cases also pass. Full `pnpm guard` and `pnpm typecheck` passed.
-The discoverable upgrade UI and package-authored recipes are still in progress.
+The Versions panel now exposes an exact-target migration editor, read-only review,
+current/proposed diagnostics, named affected screens, binding/code impact and
+explicit apply. Edits, catalog refreshes and authority changes invalidate review
+proofs. Root ran 41 web/provider/locale cases and the full browser workflow, which
+rejected an incomplete plan, reviewed a breaking variant migration, applied it,
+preserved overrides and reopened the exact new lock. The browser case passed in
+19.7 seconds, followed by full `pnpm guard` and `pnpm typecheck`. Package-authored
+recipes remain in progress.
 
 The prerequisite local-binding/value-transform foundation is accepted in
 `a76e97412`. It verifies exact local revisions, preserves project code in an explicit

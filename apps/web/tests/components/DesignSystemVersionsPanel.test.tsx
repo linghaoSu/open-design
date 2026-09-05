@@ -229,3 +229,22 @@ describe('DesignSystemVersionsPanel', () => {
     expect(accepted).not.toHaveBeenCalled(); expect(input('versions-name').value).toBe('test');
   });
 });
+
+it('opens reviewed upgrades from the active version card for both editors and viewers', async () => {
+  const v1 = versionFixture(); const v2 = versionFixture('2.0.0');
+  server(lockedState(v1), [v1, v2]);
+  render(<Harness initial={lockedState(v1)} viewerOnly />); await ready();
+  expect(screen.queryByTestId('design-runtime-upgrades')).toBeNull();
+  const entry = screen.getByTestId('versions-review-upgrade');
+  expect(entry.getAttribute('aria-expanded')).toBe('false');
+  fireEvent.click(entry);
+  expect(entry.getAttribute('aria-expanded')).toBe('true');
+  expect(screen.getByTestId('design-runtime-upgrades')).toBeTruthy();
+  const select = screen.getByTestId('upgrade-target') as HTMLSelectElement;
+  const option = within(select).getByRole('option', { name: /2.0.0/ }) as HTMLOptionElement;
+  fireEvent.change(select, { target: { value: option.value } });
+  expect((screen.getByTestId('upgrade-review') as HTMLButtonElement).disabled).toBe(false);
+  expect((screen.getByTestId('upgrade-apply') as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(entry);
+  expect(screen.queryByTestId('design-runtime-upgrades')).toBeNull();
+});

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from '@open-design/components';
 import { DesignSystemPackageSchema, type DesignSystemPackage, type DesignSystemVersion, type ProjectDesignRuntimeDependencyResponse,
   type ProjectDesignRuntimeState, type ProjectDesignRuntimeVersionSummary, type ValidationDiagnostic } from '@open-design/contracts';
@@ -10,6 +10,7 @@ import { activateProjectDesignRuntimeDependency, clearProjectDesignRuntimeDepend
 import { useT } from '../i18n';
 import { StructureDiagnostics } from './ProjectStructureReview';
 import { DesignSystemVersionDetails, initialVersionConstraints, VersionConstraintFields } from './DesignSystemVersionDetails';
+import { DesignRuntimeUpgrades } from './DesignRuntimeUpgrades';
 import styles from './DesignSystemVersionsPanel.module.css';
 
 interface Props {
@@ -29,6 +30,9 @@ export function DesignSystemVersionsPanel(props: Props) {
 
 function VersionsContent({ scope, state, files, viewerOnly, externalBusy = false, onState, onBusyChange }: Props) {
   const t = useT();
+  const upgradesId = useId();
+  const [upgradesOpened, setUpgradesOpened] = useState(false);
+  const [upgradeBusy, setUpgradeBusy] = useState(false);
   const [name, setName] = useState(state?.registry?.id ?? '');
   const [version, setVersion] = useState('1.0.0');
   const [sourcePaths, setSourcePaths] = useState<string[]>([]);
@@ -52,7 +56,7 @@ function VersionsContent({ scope, state, files, viewerOnly, externalBusy = false
   const stateRef = useRef(state); stateRef.current = state;
   const selectedRef = useRef(selected); selectedRef.current = selected;
   const busyCallback = useRef(onBusyChange); busyCallback.current = onBusyChange;
-  const locked = busy || externalBusy;
+  const locked = busy || externalBusy || upgradeBusy;
   const integrityFailed = dependency?.resolution.ok === false;
   const disabled = viewerOnly || locked;
   const active = state?.lock.dependencies[0];
@@ -106,7 +110,7 @@ function VersionsContent({ scope, state, files, viewerOnly, externalBusy = false
   }
 
   async function perform(operation: (authority: ProjectDesignRuntimeScope, current: () => boolean) => Promise<void>) {
-    if (running.current || externalBusy) return;
+    if (running.current || externalBusy || upgradeBusy) return;
     running.current = true; setBusy(true); busyCallback.current?.(true);
     const token = ++generation.current;
     const abort = new AbortController(); controller.current = abort;
@@ -205,9 +209,13 @@ function VersionsContent({ scope, state, files, viewerOnly, externalBusy = false
       <div className={styles.actions}>
         <Button data-testid="versions-resolve" disabled={locked} onClick={() => void perform(loadSnapshots)}>{t('designVersions.resolve')}</Button>
         <Button data-testid="versions-clear" disabled={disabled || !dependency || (!active && !integrityFailed)} onClick={clear}>{t('designVersions.clear')}</Button>
+        {active ? <Button data-testid="versions-review-upgrade" aria-expanded={upgradesOpened} aria-controls={upgradesId} disabled={locked || integrityFailed} onClick={() => setUpgradesOpened((opened) => !opened)}>{t('designUpgrade.title')}</Button> : null}
       </div>
       {active || integrityFailed ? <p className={styles.muted}>{t('designVersions.clearHint')}</p> : null}
     </section>
+    {upgradesOpened && active ? <div id={upgradesId}><DesignRuntimeUpgrades scope={scope} state={state} catalog={catalog} catalogRevision={snapshotRevision} viewerOnly={viewerOnly} externalBusy={busy || externalBusy || integrityFailed}
+      onBusyChange={(next) => { setUpgradeBusy(next); busyCallback.current?.(next); }}
+      onState={(next) => { acceptState(next); setMessage(t('designUpgrade.applied')); }} /></div> : null}
     <div className={styles.columns}>
       <form className={styles.card} onSubmit={(event) => { event.preventDefault(); publish(); }}>
         <h3>{t('designVersions.publishCurrent')}</h3><p className={styles.muted}>{t('designVersions.publishHint')}</p>
