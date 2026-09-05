@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import {
+  ProjectDesignRuntimePreviewRequestSchema, ProjectDesignRuntimePreviewResponseSchema,
   ProjectDesignRuntimePatternsResponseSchema, ProjectDesignRuntimePatternResponseSchema, ProjectDesignRuntimeInstantiatePatternRequestSchema, ProjectDesignRuntimeInstantiatePatternResponseSchema,
   CodeIdentitySchema,
   ProjectDesignRuntimeRegisterLocalBindingRequestSchema, ProjectDesignRuntimeRegisterLocalBindingResponseSchema,
@@ -60,6 +61,7 @@ import {
 import { resolveDaemonUrl } from '../../daemon-url.js';
 
 export const DESIGN_RUNTIME_CLI_USAGE = `Usage:
+  od design-runtime preview <projectId> --prompt-file <path|->
   od design-runtime patterns <projectId> [--query <text>]
   od design-runtime pattern <projectId> <patternId>
   od design-runtime instantiate-pattern <projectId> <patternId> --prompt-file <path|->
@@ -167,6 +169,11 @@ selects stored fromVersion:{designSystemId,version} and/or sharedChangeIds:[id].
 Emit JSON adds outputs:[{screenId,sourcePath,exportName}]. Vue exports use default.
 Handoff and emission read the saved document and current registered source through the
 daemon. Emitted files are returned in the response; these commands do not write them.
+Preview JSON: {"id":"preview","framework":"react","kind":"semantic-design","screenIds":["home"]}.
+Use kind production-handoff for verified project implementations. Optional comparison
+selects {type:"shared-draft",draftId,expectedDefinitionRevision} or {type:"upgrade",proof:{plan,reviewId,baseDigest,planDigest}}.
+Preview returns bounded browser bundles and provenance; it does not execute component
+code or write files. The web Preview panel renders these bundles in isolated frames.
 Project-code-components lists project-owned code; code-components lists the effective
 union with DS code. Refresh preserves unavailable registered paths and marks dependent
 bindings broken/stale; use revalidate explicitly after repairing the source. Mapping
@@ -191,6 +198,7 @@ const COMMANDS: Record<string, CommandSpec> = {
   'project-code-components': { query: true },
   'register-local-binding': { mutates: true, input: ProjectDesignRuntimeRegisterLocalBindingRequestSchema },
   'refresh-code-component': { mutates: true, argument: 'codeComponentId' },
+  preview: { revisioned: true, input: ProjectDesignRuntimePreviewRequestSchema },
   handoff: { revisioned: true, input: ProjectDesignRuntimeCreateHandoffRequestSchema },
   'emit-handoff': { revisioned: true, input: ProjectDesignRuntimeEmitHandoffRequestSchema },
   get: {},
@@ -451,6 +459,19 @@ export async function runDesignRuntimeCli(args: string[], deps: DesignRuntimeCli
       const data = await request(`/project-code-components/${encodedTarget}/refresh`, ProjectDesignRuntimeRefreshCodeResponseSchema, 'POST', { expectedRevision });
       if (json) output(data); else { printState(data); printDiagnostics(data.diagnostics); }
       return { exitCode: diagnosticsExitCode(data.diagnostics) };
+    }
+    if (command === 'preview') {
+      const data = await request('/previews', ProjectDesignRuntimePreviewResponseSchema, 'POST', mutationBody);
+      if (json) output(data);
+      else {
+        process.stdout.write(`Revision ${data.revision}\nPreview: ${data.request.kind} (${data.request.framework})\nAffected screens: ${data.impact.affectedScreens.map((screen) => screen.screenId).join(', ') || '(none)'}\n`);
+        printDiagnostics(data.diagnostics); printDiagnostics(data.impact.diagnostics);
+        for (const side of data.sides) {
+          process.stdout.write(`${side.role}: ${JSON.stringify(side.lock.dependencies)}\nSources: ${side.sourceDigest}\n`); printDiagnostics(side.diagnostics);
+          for (const screen of side.screens) { process.stdout.write(`${screen.screenId}: ${screen.bundle ? 'bundle prepared; browser rendering is separate' : 'unavailable'}\n`); printDiagnostics(screen.diagnostics); }
+        }
+      }
+      return { exitCode: data.sides.some((side) => side.screens.some((screen) => !screen.bundle)) ? 1 : diagnosticsExitCode([...data.diagnostics, ...data.impact.diagnostics]) };
     }
     if (command === 'handoff') {
       const data = await request('/handoffs', ProjectDesignRuntimeHandoffResponseSchema, 'POST', mutationBody);

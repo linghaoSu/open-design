@@ -1,4 +1,5 @@
 import {
+  ProjectDesignRuntimePreviewRequestSchema, ProjectDesignRuntimePreviewResponseSchema, type ProjectDesignRuntimePreviewRequest,
   ProjectDesignRuntimePatternsResponseSchema, ProjectDesignRuntimePatternResponseSchema, ProjectDesignRuntimeInstantiatePatternRequestSchema, ProjectDesignRuntimeInstantiatePatternResponseSchema, type ProjectDesignRuntimeInstantiatePatternRequest,
   CodeIdentitySchema,
   ProjectDesignRuntimeRegisterLocalBindingRequestSchema, ProjectDesignRuntimeRegisterLocalBindingResponseSchema,
@@ -154,6 +155,9 @@ export const refreshProjectDesignRuntimeCodeComponent = (scope: ProjectDesignRun
 
 export const createProjectDesignRuntimeHandoff = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeCreateHandoffRequest) =>
   request(scope, '/handoffs', ProjectDesignRuntimeHandoffResponseSchema, 'POST', ProjectDesignRuntimeCreateHandoffRequestSchema.parse(input));
+
+export const createProjectDesignRuntimePreview = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimePreviewRequest) =>
+  request(scope, '/previews', ProjectDesignRuntimePreviewResponseSchema, 'POST', ProjectDesignRuntimePreviewRequestSchema.parse(input));
 
 export const emitProjectDesignRuntimeHandoff = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeEmitHandoffRequest) =>
   request(scope, '/handoffs/emit', ProjectDesignRuntimeEmitHandoffResponseSchema, 'POST', ProjectDesignRuntimeEmitHandoffRequestSchema.parse(input));

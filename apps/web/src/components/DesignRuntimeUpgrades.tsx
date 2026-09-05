@@ -8,6 +8,7 @@ import { applyProjectDesignRuntimeUpgrade, reviewProjectDesignRuntimeUpgrade, Pr
   type ProjectDesignRuntimeScope } from '../providers/design-runtime';
 import { useT } from '../i18n';
 import { DesignRuntimeMigrationRecipes } from './DesignRuntimeMigrationRecipes';
+import type { DesignPreviewSelection } from './DesignPreviewPanel';
 import { StructureDiagnostics } from './ProjectStructureReview';
 import styles from './DesignRuntimeUpgrades.module.css';
 
@@ -22,6 +23,7 @@ interface Props {
   externalBusy?: boolean;
   onState(state: ProjectDesignRuntimeState): void;
   onBusyChange?(busy: boolean): void;
+  onPreview?(selection: DesignPreviewSelection): void;
 }
 const emptyEditor = JSON.stringify({ rules: [], bindingDecisions: [] }, null, 2);
 const editorSchema = DesignSystemMigrationPlanSchema.innerType().pick({ rules: true, bindingDecisions: true });
@@ -43,7 +45,7 @@ const examples = json({ rules: [
 export function DesignRuntimeUpgrades(props: Props) {
   return <UpgradeContent key={JSON.stringify([props.scope.projectId, workspaceAccountScopedCacheKey(props.scope.workspaceContext), props.viewerOnly])} {...props} />;
 }
-function UpgradeContent({ scope, state, catalog, catalogRevision, viewerOnly, externalBusy = false, onState, onBusyChange }: Props) {
+function UpgradeContent({ scope, state, catalog, catalogRevision, viewerOnly, externalBusy = false, onState, onBusyChange, onPreview }: Props) {
   const t = useT();
   const copy = Object.fromEntries(copyKeys.map((key) => [key, t(`designUpgrade.${key}`)])) as DesignRuntimeUpgradeCopy;
   const [selected, setSelected] = useState(''); const [range, setRange] = useState(''); const [editor, setEditor] = useState(emptyEditor);
@@ -124,6 +126,7 @@ function UpgradeContent({ scope, state, catalog, catalogRevision, viewerOnly, ex
       <div className={styles.actions}>
         <Button data-testid="upgrade-review" disabled={locked || !plan || staleCatalog} onClick={() => void perform(false)}>{copy.review}</Button>
         <Button data-testid="upgrade-apply" variant="primary" disabled={locked || viewerOnly || !validReview?.canApply} onClick={() => void perform(true)}>{copy.apply}</Button>
+        {onPreview ? <Button data-testid="upgrade-preview" disabled={locked || !validReview} onClick={() => { if (validReview) onPreview({ id: crypto.randomUUID(), comparison: { type: 'upgrade', proof: { plan: validReview.plan, reviewId: validReview.id, baseDigest: validReview.baseDigest, planDigest: validReview.planDigest } }, screenIds: validReview.affectedScreens.length ? validReview.affectedScreens.map((screen) => screen.screenId) : state?.document?.screens.slice(0, 6).map((screen) => screen.id) ?? [] }); }}>{t('designPreview.open')}</Button> : null}
       </div>
     </>}
     {busy ? <p role="status">{copy.loading}</p> : null}

@@ -10,6 +10,7 @@ import type {
   ProjectDesignRuntimeValidateArtifactsResponse,
   ProjectDesignRuntimeInstantiatePatternResponse,
   ProjectDesignRuntimeGenerationTargetsResponse,
+  ProjectDesignPreviewResult,
   UIIRDocument,
 } from '@open-design/contracts';
 import { expect, test } from '@/playwright/suite';
@@ -292,7 +293,8 @@ export function Button({ variant = 'primary', disabled = false }: ButtonProps) {
     if (variant.type === 'enum') variant.values = variant.values.map((value) => value === 'primary' ? 'solid' : value);
     if (variant.default === 'primary') variant.default = 'solid';
   }
-  const upgradeSource = sourceContent.replaceAll("'primary'", "'solid'");
+  const upgradeSource = sourceContent.replaceAll("'primary'", "'solid'")
+    .replace('>Continue</button>', '>Continue with updated system</button>');
   upgradePackage.source.files = [{ path: 'Button.tsx', encoding: 'utf8', content: upgradeSource }];
   const migrationRecipe: DesignSystemMigrationRecipe = {
     schemaVersion: 1, id: 'primary-to-solid', name: 'Adopt the solid Button variant',
@@ -355,6 +357,43 @@ export function Button({ variant = 'primary', disabled = false }: ButtonProps) {
   await page.getByTestId('upgrade-impact').scrollIntoViewIfNeeded();
   await page.screenshot({ path: upgradeScreenshot, fullPage: true });
   await testInfo.attach('Breaking upgrade impact before explicit application', { path: upgradeScreenshot, contentType: 'image/png' });
+
+  // Render both reviewed versions before applying the migration. These are real
+  // framework components in sandboxed frames, using each side's frozen source.
+  await page.getByTestId('upgrade-preview').click();
+  await page.getByTestId('design-preview-kind').selectOption('semantic-design');
+  const upgradePreviewResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `${prefix}/previews`);
+  await page.getByTestId('design-preview-build').click();
+  const upgradePreview = await upgradePreviewResponse;
+  expect(upgradePreview.ok(), await upgradePreview.text()).toBeTruthy();
+  const upgradeVisual = await upgradePreview.json() as ProjectDesignPreviewResult;
+  expect(upgradeVisual.impact.affectedScreens.map((screen) => screen.screenId).sort()).toEqual(['applications', 'dashboard']);
+  expect(upgradeVisual.sides.map((side) => side.lock.dependencies[0]!.version)).toEqual(['1.0.0', '2.0.0']);
+  const previewFrame = (role: 'current' | 'proposed', screenId: string) => page
+    .frameLocator(`[data-testid="design-preview-frame-${role}-${screenId}"]`)
+    .frameLocator('iframe[data-preview-renderer]');
+  const paintPreview = (role: 'current' | 'proposed', screenId: string) => previewFrame(role, screenId).locator('body').evaluate(() =>
+    new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  for (const screenId of ['applications', 'dashboard']) {
+    await expect(page.getByTestId(`design-preview-status-current-${screenId}`)).toHaveAttribute('data-status', 'rendered', { timeout: T.medium });
+    await expect(page.getByTestId(`design-preview-status-proposed-${screenId}`)).toHaveAttribute('data-status', 'rendered', { timeout: T.medium });
+    await expect(previewFrame('current', screenId).getByRole('button', { name: 'Continue', exact: true })).toHaveCount(screenId === 'applications' ? 1 : 2);
+    await expect(previewFrame('proposed', screenId).getByRole('button', { name: 'Continue with updated system', exact: true })).toHaveCount(screenId === 'applications' ? 1 : 2);
+  }
+  const afterVisualReview = await page.request.get(prefix);
+  expect(afterVisualReview.ok(), await afterVisualReview.text()).toBeTruthy();
+  expect((await afterVisualReview.json() as ProjectDesignRuntimeResponse).state.lock).toEqual(lockedState.lock);
+  const upgradeVisualScreenshot = testInfo.outputPath('real-upgrade-before-after.png');
+  await page.getByTestId('design-preview-frame-current-applications').scrollIntoViewIfNeeded();
+  await expect(previewFrame('current', 'applications').getByRole('button', { name: 'Continue', exact: true })).toBeVisible();
+  await expect(previewFrame('proposed', 'applications').getByRole('button', { name: 'Continue with updated system', exact: true })).toBeVisible();
+  // Offscreen nested frames can expose DOM before the compositor paints them.
+  await paintPreview('current', 'applications');
+  await paintPreview('proposed', 'applications');
+  await page.screenshot({ path: upgradeVisualScreenshot, fullPage: true });
+  await testInfo.attach('Real components from current and proposed exact versions', { path: upgradeVisualScreenshot, contentType: 'image/png' });
+  await page.getByTestId('design-runtime-versions-tab').click();
   const applyUpgradeResponse = page.waitForResponse((response) => response.request().method() === 'POST'
     && new URL(response.url()).pathname === `${prefix}/upgrades/apply`);
   await page.getByTestId('upgrade-apply').click();
@@ -721,4 +760,108 @@ export const Populated = { args: { title: 'Vue applications' } };`,
   const targetsScreenshot = testInfo.outputPath('saved-generation-targets.png');
   await page.screenshot({ path: targetsScreenshot, fullPage: true });
   await testInfo.attach('Future generation outputs mapped to saved semantic screens', { path: targetsScreenshot, contentType: 'image/png' });
+
+  // Stage a template-only shared change. Its semantic preview must use the new
+  // Card template while the live document and old local implementation stay put.
+  const beforeTemplatePreview = await page.request.get(prefix);
+  expect(beforeTemplatePreview.ok(), await beforeTemplatePreview.text()).toBeTruthy();
+  const beforeTemplateState = (await beforeTemplatePreview.json() as ProjectDesignRuntimeResponse).state;
+  const sharedDefinition = beforeTemplateState.projectComponents.components.find((entry) => entry.id === 'localButton')!;
+  const proposedSharedDefinition: ProjectComponentDefinition = {
+    ...sharedDefinition, revision: sharedDefinition.revision + 1,
+    propMappings: [{ prop: 'variant', nodeId: 'proposed-shared-variant', path: ['text'] }],
+    template: {
+      schemaVersion: 1, type: 'component', id: 'proposed-shared-card', ref: `ds:acme/${reactCard.id}`,
+      props: { title: 'Proposed shared summary' }, slots: { body: [
+        { schemaVersion: 1, type: 'text', id: 'proposed-shared-content', text: 'Awaiting publish' },
+        { schemaVersion: 1, type: 'text', id: 'proposed-shared-variant', text: '' },
+      ] },
+    },
+  };
+  const templateStage = await page.request.post(`${prefix}/component-changes`, { data: {
+    expectedRevision: beforeTemplateState.revision, draftId: 'shared-template-preview', expectedDefinitionRevision: sharedDefinition.revision,
+    definition: proposedSharedDefinition,
+  } });
+  expect(templateStage.ok(), await templateStage.text()).toBeTruthy();
+  const templateStaged = await templateStage.json() as ProjectDesignRuntimeStageComponentResponse;
+  expect(templateStaged.impact.usages.affectedScreens.map((screen) => screen.screenId).sort()).toEqual(['applications', 'dashboard']);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.getByTestId('design-runtime-entry').click();
+  await page.getByTestId('design-runtime-structure-tab').click();
+  await page.getByTestId('structure-component-localButton').click();
+  await page.getByTestId('structure-review-impact').click();
+  await expect(page.getByTestId('structure-preview')).toBeEnabled({ timeout: T.medium });
+  await page.getByTestId('structure-preview').click();
+  const sharedPreviewResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `${prefix}/previews`);
+  await page.getByTestId('design-preview-build').click();
+  const sharedPreview = await sharedPreviewResponse;
+  expect(sharedPreview.ok(), await sharedPreview.text()).toBeTruthy();
+  const sharedVisual = await sharedPreview.json() as ProjectDesignPreviewResult;
+  expect(sharedVisual.request.comparison).toMatchObject({ type: 'shared-draft', draftId: 'shared-template-preview' });
+  expect(sharedVisual.impact.affectedScreens.map((screen) => screen.screenId).sort()).toEqual(['applications', 'dashboard']);
+  for (const screenId of ['applications', 'dashboard']) {
+    await expect(page.getByTestId(`design-preview-status-current-${screenId}`)).toHaveAttribute('data-status', 'rendered', { timeout: T.medium });
+    await expect(page.getByTestId(`design-preview-status-proposed-${screenId}`)).toHaveAttribute('data-status', 'rendered', { timeout: T.medium });
+    await expect(previewFrame('current', screenId).getByRole('button', { name: 'Continue with updated system', exact: true })).toHaveCount(screenId === 'applications' ? 1 : 2);
+    await expect(previewFrame('proposed', screenId).getByRole('heading', { name: 'Proposed shared summary' })).toHaveCount(screenId === 'applications' ? 1 : 2);
+    await expect(previewFrame('proposed', screenId).getByText('Awaiting publish', { exact: false })).toHaveCount(screenId === 'applications' ? 1 : 2);
+    await expect(previewFrame('current', screenId).getByRole('heading', { name: 'Proposed shared summary' })).toHaveCount(0);
+  }
+  const afterTemplatePreview = await page.request.get(prefix);
+  expect(afterTemplatePreview.ok(), await afterTemplatePreview.text()).toBeTruthy();
+  expect((await afterTemplatePreview.json() as ProjectDesignRuntimeResponse).state).toEqual(templateStaged.state);
+  const sharedVisualScreenshot = testInfo.outputPath('real-shared-template-before-after.png');
+  await page.getByTestId('design-preview-frame-current-applications').scrollIntoViewIfNeeded();
+  await expect(previewFrame('proposed', 'applications').getByRole('heading', { name: 'Proposed shared summary' })).toBeVisible();
+  await paintPreview('current', 'applications');
+  await paintPreview('proposed', 'applications');
+  await page.screenshot({ path: sharedVisualScreenshot, fullPage: true });
+  await testInfo.attach('Shared template change across two real rendered screens', { path: sharedVisualScreenshot, contentType: 'image/png' });
+  await page.getByTestId('design-preview-kind').selectOption('production-handoff');
+  const staleImplementationResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `${prefix}/previews`);
+  await page.getByTestId('design-preview-build').click();
+  const staleImplementation = await staleImplementationResponse;
+  expect(staleImplementation.ok(), await staleImplementation.text()).toBeTruthy();
+  const staleVisual = await staleImplementation.json() as ProjectDesignPreviewResult;
+  expect(staleVisual.sides[1]!.screens.every((screen) => screen.bundle === null)).toBe(true);
+  expect(staleVisual.sides[1]!.diagnostics.some((issue) => issue.severity === 'error')).toBe(true);
+
+  // A current-only Vue preview clears the earlier comparison and runs the
+  // actual frozen SFC with its semantic title and slot content.
+  const vueDocument: UIIRDocument = { ...templateStaged.state.document!, screens: [...templateStaged.state.document!.screens, {
+    schemaVersion: 1, type: 'screen', id: 'vue-summary', name: 'Vue summary', children: [{
+      schemaVersion: 1, type: 'component', id: 'vue-summary-card', ref: `ds:acme/${vueCard.id}`,
+      props: { title: 'Live Vue summary' }, slots: { body: [{ schemaVersion: 1, type: 'text', id: 'vue-summary-content', text: 'Rendered by the Vue runtime' }] },
+    }],
+  }] };
+  const savedVueDocument = await page.request.put(`${prefix}/document`, { data: { expectedRevision: templateStaged.state.revision, document: vueDocument } });
+  expect(savedVueDocument.ok(), await savedVueDocument.text()).toBeTruthy();
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.getByTestId('design-runtime-entry').click();
+  await page.getByTestId('design-runtime-preview-tab').click();
+  await page.getByTestId('design-preview-framework').selectOption('vue');
+  await page.getByTestId('design-preview-kind').selectOption('semantic-design');
+  await page.getByTestId('design-preview-screen-applications').uncheck();
+  await page.getByTestId('design-preview-screen-dashboard').uncheck();
+  await page.getByTestId('design-preview-screen-vue-summary').check();
+  const vuePreviewResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `${prefix}/previews`);
+  await page.getByTestId('design-preview-build').click();
+  const vuePreview = await vuePreviewResponse;
+  expect(vuePreview.ok(), await vuePreview.text()).toBeTruthy();
+  const vueVisual = await vuePreview.json() as ProjectDesignPreviewResult;
+  expect(vueVisual.request.comparison).toBeUndefined();
+  expect(vueVisual.sides).toHaveLength(1);
+  expect(vueVisual.request.screenIds).toEqual(['vue-summary']);
+  expect(vueVisual.sides[0]!.runtimePackages).toContainEqual({ name: 'vue', version: '3.5.42', origin: 'tool-runtime' });
+  await expect(page.getByTestId('design-preview-status-current-vue-summary')).toHaveAttribute('data-status', 'rendered', { timeout: T.medium });
+  await expect(previewFrame('current', 'vue-summary').getByRole('heading', { name: 'Live Vue summary' })).toBeVisible();
+  await expect(previewFrame('current', 'vue-summary').getByText('Rendered by the Vue runtime', { exact: false })).toBeVisible();
+  const vueVisualScreenshot = testInfo.outputPath('real-vue-semantic-preview.png');
+  await page.getByTestId('design-preview-frame-current-vue-summary').scrollIntoViewIfNeeded();
+  await paintPreview('current', 'vue-summary');
+  await page.screenshot({ path: vueVisualScreenshot, fullPage: true });
+  await testInfo.attach('Actual Vue component and slot rendered in the sandbox', { path: vueVisualScreenshot, contentType: 'image/png' });
 });

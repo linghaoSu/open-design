@@ -11,7 +11,7 @@ API. Existing design-system discovery remains available alongside these structur
 registries and exact project locks.
 
 The [active delivery plan](../specs/current/structured-design-runtime.md) tracks
-acceptance and the remaining generation and visual preview work.
+acceptance and the remaining generation repair integration.
 
 ## Existing extension points
 
@@ -130,6 +130,7 @@ All paths below are relative to `/api/projects/:id/design-runtime`:
 | Refresh registered source metadata | `POST /project-code-components/:codeId/refresh` | `refresh-code-component <projectId> <codeComponentId>` |
 | Build a verified engineering handoff | `POST /handoffs` | `handoff <projectId> --prompt-file <path\|->` |
 | Emit screen source from the handoff | `POST /handoffs/emit` | `emit-handoff <projectId> --prompt-file <path\|->` |
+| Render selected current or proposed screens | `POST /previews` | `preview <projectId> --prompt-file <path\|->` |
 | Inspect saved mode and effective constraints | `GET /validation/settings` | `validation-settings <projectId>` |
 | Save mode and project constraints | `PUT /validation/settings` | `save-validation-settings <projectId> --prompt-file <path\|->` |
 | Validate actual project source files | `POST /validation/artifacts` | `validate-artifacts <projectId> --prompt-file <path\|->` |
@@ -298,6 +299,41 @@ Recipe binding decisions cover unchanged package bindings. Manual binding overla
 are skipped and reported for an explicit choice. Package authors can include optional
 `migrations` metadata when importing or publishing a version; publishing inherits it
 from the active package unless an explicit array replaces it (`[]` clears it).
+
+## Real component previews
+
+Open **Design runtime → Preview**, choose React or Vue and up to six saved screens,
+then select **Build preview**. **Semantic design** expands project definitions into
+their current or staged templates and renders actual components from the exact
+locked design-system source. **Production handoff** instead requires current local
+implementations, verified bindings and installed production packages. A changed
+template cannot reuse an outdated local implementation as evidence of the proposal.
+
+The shared component impact panel opens a current/proposed comparison for a staged
+definition. An upgrade review opens the same panel with its exact review proof.
+Both preselect affected screens; the displayed impact retains the complete reference
+graph or review roster even when the visual sample contains fewer screens. Building
+the preview leaves drafts, published definitions, source files and the active lock
+unchanged. Publication and upgrade application remain explicit actions.
+
+```bash
+od design-runtime preview <projectId> --json --prompt-file - <<'JSON'
+{"id":"applications-preview","framework":"react","kind":"semantic-design","screenIds":["applications"]}
+JSON
+```
+
+The response contains the exact request/revision, current and proposed locks, source
+digests and origins, tool runtime versions, observed target packages, browser bundles
+and diagnostics. Optional output paths control generated import placement without
+writing files. Missing bindings, unsupported imports, invalid SFCs or incomplete
+source evidence produce diagnostics instead of substitute visual components.
+Source, package or project authority changes during preparation invalidate the result.
+
+The browser runs bundles inside opaque-origin sandboxed frames with external network
+access and navigation blocked. Runtime errors and blocked capabilities remain visible.
+**Rendered** confirms browser execution; structural and production acceptance come
+from the deterministic validator. The tool supplies its pinned React/Vue runtime,
+whose identity is separate from the target repository's observed package versions.
 
 ## Locked patterns
 

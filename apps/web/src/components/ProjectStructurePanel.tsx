@@ -15,6 +15,7 @@ import {
 import { useT } from '../i18n';
 import { SemanticScreenEditor, SemanticTemplateEditor, SemanticTreeEditor } from './SemanticTreeEditor';
 import { DesignRuntimePatterns } from './DesignRuntimePatterns';
+import type { DesignPreviewSelection } from './DesignPreviewPanel';
 import { PublicComponentPropsEditor } from './PublicComponentPropsEditor';
 import { ComponentImpact, ReferenceUsages, StructureDiagnostics } from './ProjectStructureReview';
 import { adoptSubtree, allNodes, formForDefinition, freshId, prepareDefinition, type ComponentFormDraft } from './project-structure-drafts';
@@ -28,6 +29,7 @@ interface Props {
   sourceIdentity?: unknown;
   onState(state: ProjectDesignRuntimeState): void;
   onBusyChange?(busy: boolean): void;
+  onPreview?(selection: DesignPreviewSelection): void;
 }
 interface DocumentWork { value: UIIRDocument; base: string; dirty: boolean }
 interface Extraction { componentId: string; source: UIIRNode; publishedRevision?: number }
@@ -42,7 +44,7 @@ export function ProjectStructurePanel(props: Props) {
   return <ProjectStructurePanelContent key={JSON.stringify([props.scope.projectId, workspaceAccountScopedCacheKey(props.scope.workspaceContext)])} {...props} />;
 }
 
-function ProjectStructurePanelContent({ scope, state, viewerOnly, externalBusy = false, sourceIdentity, onState, onBusyChange }: Props) {
+function ProjectStructurePanelContent({ scope, state, viewerOnly, externalBusy = false, sourceIdentity, onState, onBusyChange, onPreview }: Props) {
   const t = useT();
   const [work, setWork] = useState(() => documentWork(state));
   const [screenId, setScreenId] = useState(state.document?.screens[0]?.id ?? '');
@@ -267,7 +269,7 @@ function ProjectStructurePanelContent({ scope, state, viewerOnly, externalBusy =
               <Button disabled={disabled} data-testid="structure-discard-stage" onClick={() => void perform((authority) => discardProjectDesignRuntimeComponent(authority, pending.id, { expectedRevision: state.revision }), (result) => { adoptPublished(result.state); setImpact(null); })}>{t('projectStructure.discardStage')}</Button>
             </div>
           </section> : null}
-          {currentImpact ? <ComponentImpact impact={currentImpact.value} document={state.document} /> : null}
+          {currentImpact ? <><ComponentImpact impact={currentImpact.value} document={state.document} />{onPreview && pending ? <Button data-testid="structure-preview" disabled={locked} onClick={() => onPreview({ id: crypto.randomUUID(), comparison: { type: 'shared-draft', draftId: pending.id, expectedDefinitionRevision: pending.baseDefinition?.revision ?? 0 }, screenIds: currentImpact.value.usages.affectedScreens.length ? currentImpact.value.usages.affectedScreens.map((screen) => screen.screenId) : state.document?.screens.slice(0, 6).map((screen) => screen.id) ?? [] })}>{t('designPreview.open')}</Button> : null}</> : null}
           {extraction?.componentId === componentId && extraction.publishedRevision !== undefined && extraction.publishedRevision === published?.revision ? <Button disabled={disabled} data-testid="structure-adopt-extraction" onClick={() => {
             replaceSource(extraction.source, { schemaVersion: 1, type: 'instance', id: extraction.source.id, ref: `local:${componentId}`, overrides: [] }); setExtraction(null);
           }}>{t('projectStructure.adoptExtraction')}</Button> : null}

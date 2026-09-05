@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from 'express';
 import {
+  ProjectDesignRuntimePreviewRequestSchema,
   ProjectDesignRuntimeInstantiatePatternRequestSchema,
   ProjectDesignRuntimeGenerationTargetsRequestSchema,
   ProjectDesignRuntimeValidationSettingsRequestSchema, ProjectDesignRuntimeValidateArtifactsRequestSchema,
@@ -44,6 +45,7 @@ import { DesignSystemVersionError } from '../services/design-runtime/design-syst
 import { DesignSystemUpgradeError } from '../services/design-runtime/design-system-upgrade.js';
 import { SharedComponentChangeError } from '../services/design-runtime/shared-component-changes.js';
 import { LocalComponentBindingError } from '../services/design-runtime/local-component-binding.js';
+import { DesignPreviewError } from '../services/design-runtime/preview-preparation.js';
 
 export interface RegisterDesignRuntimeRoutesDeps extends RouteDeps<'designRuntime' | 'authorizeProjectRequest'> {}
 
@@ -78,6 +80,8 @@ function sendFailure(res: Response, error: unknown): void {
       { details: JsonValueSchema.parse({ diagnostics: error.diagnostics, ...(error.review ? { review: error.review } : {}) }) });
   } else if (error instanceof LocalComponentBindingError) {
     sendApiError(res, 400, 'DESIGN_RUNTIME_INVALID_BINDING', error.message, { details: JsonValueSchema.parse({ diagnostics: error.diagnostics }) });
+  } else if (error instanceof DesignPreviewError) {
+    sendApiError(res, error.code === 'CONFLICT' ? 409 : 400, error.code === 'CONFLICT' ? 'DESIGN_RUNTIME_PREVIEW_CONFLICT' : 'DESIGN_RUNTIME_PREVIEW_INVALID', error.message, { details: JsonValueSchema.parse({ diagnostics: error.diagnostics }) });
   } else if (error instanceof ProjectDesignRuntimeError) {
     sendApiError(res, error.status, error.code, error.message,
       error.details === undefined ? {} : { details: JsonValueSchema.parse(error.details) });
@@ -121,6 +125,16 @@ export function registerDesignRuntimeRoutes(app: Express, deps: RegisterDesignRu
   };
 
   app.get(prefix, handle('read', (req) => ({ state: service.get(String(req.params.id)) })));
+  app.post(`${prefix}/previews`, async (req, res) => {
+    try {
+      const id = String(req.params.id);
+      if (!await deps.authorizeProjectRequest(req, res, id, { mode: 'read' })) return;
+      const result = await service.preview(id, parseInput(ProjectDesignRuntimePreviewRequestSchema, req.body));
+      // Membership/account authority can change while the asynchronous bundle is built.
+      if (!await deps.authorizeProjectRequest(req, res, id, { mode: 'read' })) return;
+      res.json(result);
+    } catch (error) { sendFailure(res, error); }
+  });
   app.get(`${prefix}/generation/targets`, handle('read', (req) => service.generationTargets(String(req.params.id))));
   app.put(`${prefix}/generation/targets`, handle('write', (req) => ({ state: service.saveGenerationTargets(String(req.params.id), parseInput(ProjectDesignRuntimeGenerationTargetsRequestSchema, req.body)) })));
   app.get(`${prefix}/validation/settings`, handle('read', (req) => service.validationSettings(String(req.params.id))));

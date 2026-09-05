@@ -61,6 +61,8 @@ import { resolveComponentBinding } from './binding-resolver.js';
 import { registerLocalComponentBinding, synchronizeLocalComponentBindings, verifyProjectCodeSources } from './local-component-binding.js';
 import { effectiveProjectCodeIndex, readProjectCodeEvidence, refreshProjectCode } from './project-code.js';
 import { buildProjectHandoff } from './project-handoff.js';
+import { createProjectPreviewService, type ProjectPreviewAuthority } from './project-preview.js';
+import { DesignPreviewError } from './preview-preparation.js';
 import { emitHandoffCode } from './handoff-emitter.js';
 import { createProjectGenerationTargetsService } from './project-generation-targets.js';
 import { createProjectValidationService } from './project-validation.js';
@@ -101,6 +103,7 @@ export interface ProjectDesignRuntimeServiceDeps {
   readSource: (projectId: string, sourcePath: string) => Promise<string>;
   /** Omission stays explicitly unknown in tests/embedders; production injects the project observer. */
   observeTargetPackages?: (projectId: string, packageNames: readonly string[]) => Promise<HandoffTargetPackage[]>;
+  acquirePreviewAuthority?: (projectId: string) => Promise<ProjectPreviewAuthority>;
 }
 
 function requireRegistry(state: ProjectDesignRuntimeState): ComponentRegistry {
@@ -143,7 +146,7 @@ function requireProjectComponent(state: ProjectDesignRuntimeState, componentId: 
   return definition;
 }
 
-export function createProjectDesignRuntimeService({ store, readSource, observeTargetPackages = async (_projectId, names) => [...new Set(names)].sort().map((name) => ({ name, installation: { status: 'unknown' as const } })) }: ProjectDesignRuntimeServiceDeps) {
+export function createProjectDesignRuntimeService({ store, readSource, acquirePreviewAuthority, observeTargetPackages = async (_projectId, names) => [...new Set(names)].sort().map((name) => ({ name, installation: { status: 'unknown' as const } })) }: ProjectDesignRuntimeServiceDeps) {
   function dependencyResolution(projectId: string, state: ProjectDesignRuntimeState) {
     return resolveLockedDesignSystemsSync(state.dependencies, state.lock, (entry) => store.readVersion(projectId, entry.designSystemId, entry.version));
   }
@@ -208,6 +211,7 @@ export function createProjectDesignRuntimeService({ store, readSource, observeTa
   });
 
   return {
+    ...createProjectPreviewService({ store, readAtRevision, acquireAuthority: acquirePreviewAuthority ?? (async () => { throw new DesignPreviewError('INVALID_REQUEST', 'The host has not configured an authorized preview source reader.'); }) }),
     ...createProjectGenerationTargetsService({ store, persist }),
     validationSettings: validation.validationSettings,
     saveValidationSettings: validation.saveValidationSettings,

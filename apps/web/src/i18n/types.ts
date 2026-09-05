@@ -31,6 +31,43 @@ export const LOCALE_LABEL: Record<Locale, string> = {
 // flat (not deeply nested) so missing-key TS errors point straight at the
 // offending string instead of a generic object mismatch.
 export interface Dict {
+  "designPreview.title": string;
+  "designPreview.open": string;
+  "designPreview.hint": string;
+  "designPreview.kind": string;
+  "designPreview.semantic": string;
+  "designPreview.production": string;
+  "designPreview.framework": string;
+  "designPreview.draft": string;
+  "designPreview.currentOnly": string;
+  "designPreview.sharedComparison": string;
+  "designPreview.upgradeComparison": string;
+  "designPreview.clearComparison": string;
+  "designPreview.semanticHint": string;
+  "designPreview.productionHint": string;
+  "designPreview.screens": string;
+  "designPreview.noScreens": string;
+  "designPreview.building": string;
+  "designPreview.build": string;
+  "designPreview.failed": string;
+  "designPreview.stale": string;
+  "designPreview.impact": string;
+  "designPreview.selected": string;
+  "designPreview.affected": string;
+  "designPreview.none": string;
+  "designPreview.sampleHint": string;
+  "designPreview.current": string;
+  "designPreview.proposed": string;
+  "designPreview.revision": string;
+  "designPreview.unavailable": string;
+  "designPreview.evidence": string;
+  "designPreview.runtimeHint": string;
+  "designPreview.telemetryHint": string;
+  "designPreview.loading": string;
+  "designPreview.rendered": string;
+  "designPreview.error": string;
+  "designPreview.timeout": string;
+  "designPreview.runtimeError": string;
   "designHandoff.title": string;
   "designHandoff.description": string;
   "designHandoff.framework": string;

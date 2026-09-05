@@ -65,7 +65,7 @@ until every required milestone and invariant has direct current-state evidence.
 | 10 | Explore/Guided project modes and generation repair loop | Structured diagnostics after generation; bounded repair; normal Explore behavior preserved; equivalent generation paths validated | In progress |
 | 11 | Pattern registry and design grammar | Pattern retrieval/configuration and slot composition validated deterministically; reusable resource-list fixture | Complete |
 | 12 | Strict mode semantic UI generation and source enforcement | Intent → retrieve → IR → validate → render/source → source validation → preview; unknown components/props/variants/slots/tokens/raw forbidden styles/reimplemented bound controls rejected | Pending |
-| 13 | Visual impact preview of representative affected screens | Current/proposed side-by-side uses graph-selected screens and the locked production component runtime; UI exercised with screenshot evidence | Pending |
+| 13 | Visual impact preview of representative affected screens | Current/proposed side-by-side uses graph-selected screens and the locked production component runtime; UI exercised with screenshot evidence | Complete |
 
 ## Cross-milestone closure
 
@@ -101,8 +101,8 @@ reference graphs and staged shared changes have accepted web/CLI/HTTP surfaces.
 Immutable versions, reviewed upgrades, compiler format selection, persistent handoff
 bindings and explicit artifact validation now have matching web/CLI/HTTP surfaces.
 Locked pattern retrieval and screen composition are also accepted through all three
-surfaces. Current work adds generation completion enforcement and real component
-previews. Internal foundation commits can land independently; their
+surfaces. Real component previews and generation completion enforcement are accepted;
+current work completes bounded repair and logical-task reporting. Internal foundation commits can land independently; their
 corresponding phase remains incomplete until its listed product and validation
 evidence exists.
 
@@ -324,7 +324,7 @@ repository guard and workspace/root-script typechecks passed. The
 bounded automatic repair coordinator and final UI/CLI logical-task reporting remain
 required; this slice does not complete Phase 10 or 12.
 
-The Phase 13 preview core is accepted independently of its pending public surface.
+The Phase 13 preview core was accepted before its public surface.
 Canonical results preserve the full graph/review impact roster alongside selected
 screen samples, current/proposed locks, exact source evidence and explicitly named
 tool runtimes. Semantic previews expand shared definitions through frozen DS source;
@@ -333,8 +333,20 @@ proof. The shared emitter supplies actual React/Vue calls to a bounded browser b
 without executing component code in the daemon. Source and authority drift abort the
 response. Root ran 61 preview/emitter/upgrade daemon cases and 3 contract cases;
 the agent also ran the broader handoff/validator regression set and a frozen install.
-Guard and workspace typechecks passed. Browser sandboxing, public UI/API/CLI and
-visible before/after acceptance remain required before Phase 13 is complete.
+Guard and workspace typechecks passed.
+
+The public Preview tab, shared-impact entry and reviewed-upgrade entry now use one
+read-only API and matching CLI command. Frames run actual React/Vue bundles with
+visible runtime/error status in opaque-origin sandboxes. Root ran 80 HTTP/CLI cases
+and 6 focused web/provider cases; agent regression covered 60 web/provider/UI cases,
+all 19 locales and source/test typechecks. The complete browser workflow passed in
+40.3 seconds (60 seconds with the shared tools-dev harness). It verified both exact
+upgrade versions before Apply, one shared template change across two screens without
+publishing, explicit stale implementation diagnostics, and an actual Vue SFC title
+and slot. All three screenshots were inspected. Installed Chromium 149 was used
+because local Chrome 152 lost nested-frame tracking with this Playwright client;
+DOM assertions were retained, and capture waits for renderer paint after scrolling.
+Full repository guard and workspace/root-script typechecks passed at acceptance.
 
 Phase 2/3 acceptance includes 88 focused contract tests, 147 daemon design-runtime
 tests, the existing 16 project CLI tests, 30 web provider/panel/locale tests, and

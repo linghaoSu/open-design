@@ -1,4 +1,6 @@
 import { z } from 'zod';
+export { ProjectDesignPreviewRequestSchema as ProjectDesignRuntimePreviewRequestSchema, ProjectDesignPreviewResultSchema as ProjectDesignRuntimePreviewResponseSchema } from '../design-runtime/preview.js';
+export type { ProjectDesignPreviewRequest as ProjectDesignRuntimePreviewRequest, ProjectDesignPreviewResult as ProjectDesignRuntimePreviewResponse } from '../design-runtime/preview.js';
 import {
   DesignPatternSearchResultSchema, DesignPatternReadResultSchema, DesignPatternInstantiationResultSchema, InstantiateDesignPatternRequestSchema,
   DesignGenerationTargetsSchema,

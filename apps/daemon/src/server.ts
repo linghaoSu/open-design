@@ -847,6 +847,8 @@ import { createDesignGenerationService } from './services/design-runtime/generat
 import { createDesignRuntimeStore, DesignRuntimeProjectNotFoundError } from './storage/design-runtime-store.js';
 import { decodeDesignRuntimeSource } from './services/design-runtime/source-text.js';
 import { createProjectDesignRuntimeService } from './services/design-runtime/project-service.js';
+import { readBoundedPreviewSource } from './services/design-runtime/preview-source.js';
+import { DesignPreviewError } from './services/design-runtime/preview-preparation.js';
 import { observeInstalledTargetPackages } from './services/design-runtime/installed-package-observer.js';
 import { registerHostToolsRoutes } from './routes/host-tools.js';
 import { registerPluginAssetRoutes } from './routes/plugins/assets.js';
@@ -8470,6 +8472,31 @@ export async function startServer({
   const designRuntimeStore = createDesignRuntimeStore(db);
   const designRuntime = createProjectDesignRuntimeService({
     store: designRuntimeStore,
+    acquirePreviewAuthority: async (projectId) => {
+      const capture = () => {
+        const project = getProject(db, projectId);
+        if (!project) throw new DesignRuntimeProjectNotFoundError();
+        const metadata = structuredClone(project.metadata);
+        const root = fs.realpathSync(resolveProjectDir(PROJECTS_DIR, projectId, metadata));
+        return { metadata, root, key: JSON.stringify({ metadata, root,
+          workspace: pinRunWorkspaceScopeForProject(db, projectId),
+          accountIdentity: velaWorkspaceDirectoryIdentity(undefined, configuredAmrEnv()),
+        }) };
+      };
+      const captured = capture();
+      const assertCurrent = async () => {
+        try { if (capture().key === captured.key) return; } catch { /* Deleted or unavailable project authority is a conflict too. */ }
+        throw new DesignPreviewError('CONFLICT', 'Project root, workspace or account authority changed during preview.');
+      };
+      return { projectRoot: captured.root, assertCurrent,
+        readSource: async (sourcePath) => {
+          await assertCurrent();
+          const file = await resolveProjectFilePath(PROJECTS_DIR, projectId, sourcePath, captured.metadata);
+          return readBoundedPreviewSource(file.filePath, captured.root);
+        },
+        observeTargetPackages: async (names) => { await assertCurrent(); return observeInstalledTargetPackages(captured.root, names); },
+      };
+    },
     observeTargetPackages: async (projectId, packageNames) => {
       const project = getProject(db, projectId);
       if (!project) throw new DesignRuntimeProjectNotFoundError();

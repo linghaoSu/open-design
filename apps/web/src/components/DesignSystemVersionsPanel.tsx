@@ -11,6 +11,7 @@ import { useT } from '../i18n';
 import { StructureDiagnostics } from './ProjectStructureReview';
 import { DesignSystemVersionDetails, initialVersionConstraints, VersionConstraintFields } from './DesignSystemVersionDetails';
 import { DesignRuntimeUpgrades } from './DesignRuntimeUpgrades';
+import type { DesignPreviewSelection } from './DesignPreviewPanel';
 import styles from './DesignSystemVersionsPanel.module.css';
 
 interface Props {
@@ -21,6 +22,7 @@ interface Props {
   externalBusy?: boolean;
   onState(state: ProjectDesignRuntimeState): void;
   onBusyChange?(busy: boolean): void;
+  onPreview?(selection: DesignPreviewSelection): void;
 }
 const versionKey = (value: { id: string; version: string }) => JSON.stringify([value.id, value.version]);
 
@@ -28,7 +30,7 @@ export function DesignSystemVersionsPanel(props: Props) {
   return <VersionsContent key={JSON.stringify([props.scope.projectId, workspaceAccountScopedCacheKey(props.scope.workspaceContext)])} {...props} />;
 }
 
-function VersionsContent({ scope, state, files, viewerOnly, externalBusy = false, onState, onBusyChange }: Props) {
+function VersionsContent({ scope, state, files, viewerOnly, externalBusy = false, onState, onBusyChange, onPreview }: Props) {
   const t = useT();
   const upgradesId = useId();
   const [upgradesOpened, setUpgradesOpened] = useState(false);
@@ -215,7 +217,7 @@ function VersionsContent({ scope, state, files, viewerOnly, externalBusy = false
     </section>
     {upgradesOpened && active ? <div id={upgradesId}><DesignRuntimeUpgrades scope={scope} state={state} catalog={catalog} catalogRevision={snapshotRevision} viewerOnly={viewerOnly} externalBusy={busy || externalBusy || integrityFailed}
       onBusyChange={(next) => { setUpgradeBusy(next); busyCallback.current?.(next); }}
-      onState={(next) => { acceptState(next); setMessage(t('designUpgrade.applied')); }} /></div> : null}
+      onState={(next) => { acceptState(next); setMessage(t('designUpgrade.applied')); }} {...(onPreview ? { onPreview } : {})} /></div> : null}
     <div className={styles.columns}>
       <form className={styles.card} onSubmit={(event) => { event.preventDefault(); publish(); }}>
         <h3>{t('designVersions.publishCurrent')}</h3><p className={styles.muted}>{t('designVersions.publishHint')}</p>

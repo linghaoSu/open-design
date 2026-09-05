@@ -990,7 +990,7 @@ function printRootHelp() {
 
   od design-runtime <command> <projectId> [options]
                          Compile components, edit documents, inspect references, and stage/publish shared revisions.
-                         Run od design-runtime --help for document, component, binding, version, dependency, and reviewed upgrade commands.
+                         Run od design-runtime --help for documents, bindings, versions, reviewed upgrades, handoff, and real component previews.
       Compile component registries and manage explicit code bindings through
       the project daemon API. Use --prompt-file <path|-> for JSON requests.
 

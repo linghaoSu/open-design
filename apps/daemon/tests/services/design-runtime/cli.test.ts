@@ -17,12 +17,23 @@ import { createDesignSystemVersion } from '../../../src/services/design-runtime/
 import { localHandoffFixture } from '../../fixtures/design-runtime/handoff.js';
 import { createHandoff } from '../../../src/services/design-runtime/handoff.js';
 import { emitHandoffCode } from '../../../src/services/design-runtime/handoff-emitter.js';
+import type { ProjectDesignPreviewResult } from '@open-design/contracts';
 
 const daemonRoot = fileURLToPath(new URL('../../..', import.meta.url));
 const cliEntry = fileURLToPath(new URL('../../../src/cli.ts', import.meta.url));
 const tsxEntry = fileURLToPath(new URL('../../../../../node_modules/tsx/dist/cli.mjs', import.meta.url));
 const projectId = 'project /#1';
 const prefix = `/api/projects/${encodeURIComponent(projectId)}/design-runtime`;
+
+function previewResponse(): ProjectDesignPreviewResult {
+  const digest = `sha256:${'a'.repeat(64)}`;
+  return { schemaVersion: 1, projectId: 'project', revision: 7,
+    request: { expectedRevision: 7, id: 'preview', framework: 'react', kind: 'semantic-design', screenIds: ['home'] }, requestDigest: digest,
+    impact: { source: 'none', affectedScreens: [], diagnostics: [] }, diagnostics: [], sides: [{ role: 'current', kind: 'semantic-design', lock: { schemaVersion: 1, id: 'project', dependencies: [] },
+      origins: [], sourceEvidence: [], sourceDigest: digest, runtimePackages: [], targetPackages: [], diagnostics: [],
+      screens: [{ screenId: 'home', sourcePath: 'src/Home.tsx', exportName: 'Home', bundle: { javascript: 'void 0;', css: '', digest }, diagnostics: [] }],
+    }] };
+}
 
 interface RequestRecord { method: string; url: string; headers: http.IncomingHttpHeaders; body: unknown }
 type Reply = { status?: number; body: unknown };
@@ -806,5 +817,30 @@ describe('generation target CLI', () => {
       const result = await runCli(['design-runtime', 'save-generation-targets', projectId, '--daemon-url', url, '--json', '--prompt-file', '-'], JSON.stringify(body)); expect(result.code).toBe(2);
     }
     expect(requests).toHaveLength(0);
+  });
+});
+
+describe('real preview dispatcher', () => {
+  it.each(['file', 'stdin'])('sends %s JSON authoring input through the canonical read-only HTTP endpoint and preserves workspace/CAS', async (mode) => {
+    const response = previewResponse(); const { expectedRevision: _revision, ...input } = response.request;
+    const { requests, url } = await startServer((record) => ({ body: record.method === 'GET' ? { state: state() } : response }));
+    const file = mode === 'file' ? await inputFile(input) : '-';
+    const result = await runCli(['design-runtime', 'preview', 'project', '--daemon-url', url, '--workspace', 'team', '--workspace-member', 'member', '--json', '--prompt-file', file], mode === 'stdin' ? JSON.stringify(input) : '');
+    expect(result.code).toBe(0); expect(JSON.parse(result.stdout)).toEqual(response);
+    expect(requests).toHaveLength(2); expect(requests[1]).toMatchObject({ method: 'POST', url: '/api/projects/project/design-runtime/previews', body: response.request, headers: { 'x-od-workspace-id': 'team', 'x-od-workspace-member-id': 'member' } });
+  });
+  it('prints meaningful bundle status and returns failure for a diagnosed missing side', async () => {
+    const response = previewResponse(); response.sides[0]!.screens[0]!.bundle = null;
+    response.sides[0]!.screens[0]!.diagnostics = [{ schemaVersion: 1, code: 'ODDS8002', severity: 'error', message: 'Unsupported source import.' }];
+    const { url, requests } = await startServer(() => ({ body: response }));
+    const result = await runCli(['design-runtime', 'preview', 'project', '--daemon-url', url, '--prompt-file', '-'], JSON.stringify(response.request));
+    expect(result.code).toBe(1); expect(result.stdout).toContain('home: unavailable'); expect(result.stdout).toContain('ODDS8002'); expect(requests).toHaveLength(1);
+  });
+  it('never retries source/authority conflicts and rejects source roots before any HTTP request', async () => {
+    const response = previewResponse(); const { url, requests } = await startServer(() => ({ status: 409, body: { error: { code: 'DESIGN_RUNTIME_PREVIEW_CONFLICT', message: 'Source changed', details: { diagnostics: [{ schemaVersion: 1, code: 'ODDS8001', severity: 'error', message: 'Source changed' }] } } } }));
+    const conflict = await runCli(['design-runtime', 'preview', 'project', '--daemon-url', url, '--json', '--prompt-file', '-'], JSON.stringify(response.request));
+    expect(conflict.code).toBe(1); expect(JSON.parse(conflict.stderr).error.code).toBe('DESIGN_RUNTIME_PREVIEW_CONFLICT'); expect(requests).toHaveLength(1);
+    const invalid = await runCli(['design-runtime', 'preview', 'project', '--daemon-url', url, '--json', '--prompt-file', '-'], JSON.stringify({ ...response.request, projectRoot: '/private' }));
+    expect(invalid.code).toBe(2); expect(requests).toHaveLength(1);
   });
 });
