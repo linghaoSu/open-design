@@ -63,7 +63,7 @@ until every required milestone and invariant has direct current-state evidence.
 | 8 | Upgrade impact, deterministic migrations, review and explicit apply | Diff + graph + overrides identifies affected nodes/screens; migration validates before atomic lock/document update; failure/conflict leaves live state intact | Complete |
 | 9 | Machine-readable handoff and persistent project-component code bindings | Manifest includes lock, target, IR, registry, bindings and change context; deterministic round-trip, package compatibility, UI/CLI export | In progress |
 | 10 | Explore/Guided project modes and generation repair loop | Structured diagnostics after generation; bounded repair; normal Explore behavior preserved; equivalent generation paths validated | In progress |
-| 11 | Pattern registry and design grammar | Pattern retrieval/configuration and slot composition validated deterministically; reusable resource-list fixture | Pending |
+| 11 | Pattern registry and design grammar | Pattern retrieval/configuration and slot composition validated deterministically; reusable resource-list fixture | In progress |
 | 12 | Strict mode semantic UI generation and source enforcement | Intent → retrieve → IR → validate → render/source → source validation → preview; unknown components/props/variants/slots/tokens/raw forbidden styles/reimplemented bound controls rejected | Pending |
 | 13 | Visual impact preview of representative affected screens | Current/proposed side-by-side uses graph-selected screens and the locked production component runtime; UI exercised with screenshot evidence | Pending |
 
@@ -224,6 +224,17 @@ required page categories; each records an invalid source, an evaluated repair an
 a valid result across three file-order permutations. Reported variance describes
 validator repeatability; model-generation variance remains unmeasured. Saved mode
 settings, public artifact validation and generation completion/repair remain pending.
+
+The exact-lock pattern runtime core is accepted. Search and retrieval verify the
+immutable package; instantiation applies declared defaults, property mappings and
+slot configuration, then validates the complete destination document. Supplied local
+instances retain their sparse overrides. Deterministic node identities include the
+project, pattern, instance and source location; collisions anywhere in the document
+fail without silently renaming nodes. Public slot rules inspect resolved local roots,
+and every returned node retains its source origin. The existing local engine shares
+the extracted default/mapping materializer. Root ran 24 daemon cases and 56 contract
+cases; package build and daemon source/test typechecks passed. Public pattern
+retrieval and insertion into the screen editor remain in progress.
 
 Phase 2/3 acceptance includes 88 focused contract tests, 147 daemon design-runtime
 tests, the existing 16 project CLI tests, 30 web provider/panel/locale tests, and

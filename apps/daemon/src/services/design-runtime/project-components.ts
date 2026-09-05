@@ -20,6 +20,7 @@ import {
   type ValidationDiagnostic,
 } from '@open-design/contracts';
 import { acceptsComponentPropertyDomain, validateComponentProperties } from './component-validator.js';
+import { materializeComponentProperties as withDefaults, materializeTemplateProperties } from './template-properties.js';
 import {
   analyzeComponentDeletion,
   buildReferenceGraph,
@@ -42,15 +43,6 @@ function hasErrors(diagnostics: ValidationDiagnostic[]): boolean {
 function getDefinition(input: ProjectComponentContext, ref: string): Definition | undefined {
   if (ref.startsWith('local:')) return input.projectComponents.components.find((entry) => ref === `local:${entry.id}`);
   return input.registry?.components.find((entry) => ref === `ds:${input.registry!.id}/${entry.id}`);
-}
-
-function withDefaults(definition: Definition, explicit: Record<string, JsonValue>): Record<string, JsonValue> {
-  const props: Record<string, JsonValue> = {};
-  for (const name of Object.keys(definition.props).sort()) {
-    const value = definition.props[name]!.default;
-    if (value !== undefined) props[name] = value;
-  }
-  return { ...props, ...explicit };
 }
 
 function overrideProps(instance: ComponentInstance): Record<string, JsonValue> {
@@ -87,18 +79,7 @@ function mappingDiagnostics(input: ProjectComponentContext): ValidationDiagnosti
 }
 
 function materializeTemplate(definition: ProjectComponentDefinition, props: Record<string, JsonValue>): UIIRNode {
-  const template = structuredClone(definition.template);
-  const nodes = new Map<string, UIIRNode>();
-  walk(template, (node) => nodes.set(node.id, node));
-  for (const mapping of definition.propMappings) {
-    if (!Object.hasOwn(props, mapping.prop)) continue;
-    const node = nodes.get(mapping.nodeId)!;
-    const value = props[mapping.prop]!;
-    if (mapping.path[0] === 'text' && node.type === 'text') node.text = value as string;
-    else if (mapping.path[0] === 'props' && node.type === 'component') node.props = { ...node.props, [mapping.path[1]]: value };
-    else if (mapping.path[0] === 'props' && node.type === 'instance') node.overrides.push({ schemaVersion: 1, path: ['props', mapping.path[1]], value });
-  }
-  return template;
+  return materializeTemplateProperties(definition.template, definition.propMappings, props);
 }
 
 function sampleProps(definition: ProjectComponentDefinition): Record<string, JsonValue> {
