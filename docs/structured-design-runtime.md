@@ -11,7 +11,7 @@ API. Existing design-system discovery, generation, and rendering retain their
 current behavior.
 
 The [active delivery plan](../specs/current/structured-design-runtime.md) tracks
-acceptance and the remaining versioning, upgrade, handoff, and generation work.
+acceptance and the remaining upgrade, handoff, compiler, and generation work.
 
 ## Existing extension points
 
@@ -56,8 +56,9 @@ acceptance and the remaining versioning, upgrade, handoff, and generation work.
 
 No new workspace package is needed. A later milestone can extract pure runtime
 algorithms once actual shared consumers justify that boundary. Prompt integration,
-version resolution, migrations, production rendering, and
-handoff remain tracked separately in the active plan.
+migrations, production rendering, and handoff remain tracked separately in the
+active plan. Immutable versions and exact resolution live in the same daemon
+service boundary.
 
 ## Project workflow and persistence
 
@@ -106,6 +107,13 @@ All paths below are relative to `/api/projects/:id/design-runtime`:
 | Stage an earlier revision as new content | `POST /project-components/:componentId/undo` | `undo <projectId> <componentId> --prompt-file <path\|->` |
 | Delete, replace, detach or remove referencing instances | `DELETE /project-components/:componentId` | `delete <projectId> <componentId> --prompt-file <path\|->` |
 | Derive a detached subtree for review | `POST /instances/detach` | `detach <projectId> --prompt-file <path\|->` |
+| List published versions | `GET /versions` | `versions <projectId>` |
+| Export an exact version | `GET /versions/:designSystemId/:version` | `version <projectId> <designSystemId> <exactVersion> --json` |
+| Import a complete immutable package | `POST /versions` | `import-version <projectId> --prompt-file <path\|->` |
+| Publish the current metadata and selected sources | `POST /versions/publish-current` | `publish-version <projectId> --prompt-file <path\|->` |
+| Activate an exact version and declared range | `POST /dependency` | `activate-dependency <projectId> --prompt-file <path\|->` |
+| Resolve the exact lock | `GET /dependency/resolve` | `resolve-dependency <projectId>` |
+| Clear the active dependency explicitly | `DELETE /dependency` | `clear-dependency <projectId>` |
 
 CLI commands begin with `od design-runtime` and support `--json`, `--daemon-url`,
 `--workspace`, and `--workspace-member`. Commands with request bodies read JSON from a
@@ -164,6 +172,51 @@ local registry, source document, pending changes and history. Older snapshots ga
 the new empty fields on read without changing their revision; the next successful
 write persists the complete shape.
 
+## Published versions and exact locks
+
+The project catalog stores immutable packages containing registry metadata, code
+bindings, tokens, patterns, constraints, production package compatibility and
+frozen source bytes. A package digest covers all metadata and source; a separate
+source digest covers exact path/byte pairs. Publication and the project revision
+advance together in one transaction. Republishing an exact version with different
+content fails and leaves both records intact. Catalogs are scoped to the project.
+
+`publish-version` reads only explicitly selected project source paths. Those files
+must be valid UTF-8; the daemon preserves the BOM and line endings. Supply explicit
+constraints for the initial publication. Subsequent publication from a locked
+version preserves its tokens, patterns, constraints and compatibility declarations
+unless the request provides typed replacements. `import-version` accepts a full
+package and supports base64 entries for binary assets. The list and project
+snapshot omit frozen source bytes; exact version export includes the full package.
+
+Publishing a version does not activate it. Activation selects an exact version
+and a declared range such as `^1.0.0`, then validates the current project against
+that snapshot. This project runtime supports one active design system. The generic
+lock contracts support multiple entries for other consumers. Initial activation
+requires an empty registry or the same working component, code and binding
+snapshot. Directly switching an existing lock is blocked until the reviewed
+upgrade flow is applied.
+
+Every ordinary document, reference, shared-change and binding operation verifies
+the active package and source digests and uses the frozen registry/code index.
+Publishing a newer version, editing project source or reopening the project cannot
+change its lock. Compilation is disabled while a dependency is active. Project
+binding overrides remain editable without changing the published package.
+
+A missing or tampered locked version returns structured diagnostics. The dependency
+resolution endpoint remains readable and returns the current revision for recovery.
+Explicitly clearing the dependency retains the stored working registry and document;
+it does not claim the unavailable package was verified. There is no latest-version
+fallback or automatic upgrade.
+
+`diffDesignSystemVersions` compares verified packages by stable entity identity.
+Names can change without replacing an entity. Removed props/variants/tokens and
+narrower slot contracts are breaking; new compatible members are additive.
+The result retains full before/after values and recommends a SemVer bump.
+Storybook presets and source provenance remain visible without being treated as
+production API breakage. The public diff review joins the upgrade workflow tracked
+in the active plan.
+
 ## Compatibility and identity
 
 The new schema is additive and independent of `components.manifest.json` and the
@@ -206,13 +259,25 @@ Supported extraction is deliberately small:
   string, boolean, finite number, and scalar literal unions.
 - Scalar literal defaults in parameter destructuring, including renamed props.
 - Source path, export name, line, and deterministic provenance.
+- Source-proven `ReactNode` imports, local aliases and namespace references as code
+  slot capabilities. Semantic accepted child references come from an explicitly
+  selected static metadata export and bind to code slots one-to-one.
 
 Unsupported syntax throws `CompilerError` with source context. This includes
-imported types, inheritance, generics, intersections, callbacks/object/array
-props, wrappers, overloads, TypeScript receiver (`this`) parameters, export
-specifiers, default exports, and computed defaults. This is not yet a production
-React library importer. Storybook, Vue extraction, project scanning, identity
-reconciliation, and inference are deferred.
+imported prop types other than the supported React slot types, inheritance,
+generics, intersections, callbacks/object/array props, wrappers, overloads,
+TypeScript receiver (`this`) parameters, export specifiers, default React exports,
+and computed defaults. Project scanning, identity reconciliation, and inference
+remain outside this deterministic subset.
+
+The shared internal `extractSourceCodeComponent` boundary proves code props and
+slots without inventing a semantic binding. `compileSourceComponent` additionally
+requires valid semantic slot mappings. `compileStorybookMetadata` reads explicitly
+selected CSF3 story exports, literal args/argTypes and tags from a directly imported
+component. It keeps stable story IDs and provenance; presets never replace source
+prop defaults. Dynamic spreads, callbacks, selected render/decorator metadata and
+mutable metadata aliases are rejected. These internal operations are accepted;
+public selection wiring and Vue extraction remain in the active compiler task.
 
 `validateComponentUsage(registry, { component, props, nodeId? })` checks exact
 design-system references, unknown/required properties, scalar types, and enum
@@ -223,8 +288,9 @@ their presence in the schema does not mean those validators ship here.
 
 `resolveComponentBinding(binding, registry, codeComponents)` resolves supplied
 metadata by exact identity and verifies the current binding state, framework,
-property compatibility, and one-to-one property renames. It rejects slots and
-value transformations until those mappings can be checked. It also rejects
+property compatibility, one-to-one property renames and explicit slot mappings.
+Every design slot must map to a declared code slot with compatible requiredness and
+cardinality. Value transformations remain unsupported until they can be checked. It also rejects
 diverging defaults on omittable design props: this spike does not materialize
 design defaults before calling a code component. It does not inspect the
 filesystem for stale/broken exports.

@@ -113,8 +113,36 @@ affected screens, verifies retained overrides, reopens persisted state, and stag
 and publishes undo as revision 3. The shared tools-dev browser test passed in
 12.8 seconds (45.5 seconds including harness startup/cleanup) using installed
 Chrome; screenshots cover the workspace entry and staged impact panel.
-Full `pnpm guard` and `pnpm typecheck` passed. Phase 6 immutable package/lock and
-Phase 7 semantic diff foundations are being developed independently.
+Full `pnpm guard` and `pnpm typecheck` passed. Subsequent accepted foundations
+are recorded below; their public workflows remain separately gated.
+
+Phase 6's pure package/version/lock foundation is accepted in `07c57b9a0`.
+Packages cover registry metadata, tokens, patterns, constraints, production package
+compatibility and frozen source bytes. Exact resolution verifies source/package
+digests and bound React source facts without latest fallback. Root acceptance ran
+59 contract/mapping cases and 35 version/project-engine cases. Project-scoped
+catalog persistence and exact dependency activation are accepted in `c3016293d`,
+including seven matching CLI operations and the web provider boundary. Root ran
+45 API contract cases, 48 daemon cases, 47 CLI dispatcher cases and 7 provider
+cases; full `pnpm guard` and `pnpm typecheck` passed again. The discoverable versions
+UI and real browser publication/pinning/reopen witness are in progress, so Phase 6
+is not complete yet.
+
+React slot proof and explicit Storybook CSF3 metadata are accepted in `db264c5b0`.
+Code slot capability and semantic slot acceptance have separate provenance and an
+explicit one-to-one binding. Frozen versions verify both prop and slot source
+facts, while reindexing detects slot API drift. Story args remain example presets.
+Root ran 152 related daemon cases, then 40 targeted cases after three additional
+source/Storybook regressions (155 cases in the final combined set), plus 4 new
+canonical contract cases. Vue extraction and public compiler selection wiring are
+active follow-on work through the shared source compiler boundary.
+
+Semantic diff is accepted internally in `69989178f`: stable-ID comparison,
+complete before/after snapshots, breaking property/slot/token changes, and a
+SemVer recommendation. Source provenance and Storybook examples remain distinct
+from production compatibility. Root ran 6 contract and 20 daemon cases. Its public
+review surface is part of the exact-version upgrade workflow being implemented
+next; Phase 7 remains in progress until that surface is exercised.
 
 Phase 2/3 acceptance includes 88 focused contract tests, 147 daemon design-runtime
 tests, the existing 16 project CLI tests, 30 web provider/panel/locale tests, and
