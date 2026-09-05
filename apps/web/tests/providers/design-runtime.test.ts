@@ -46,6 +46,8 @@ describe('project design runtime provider', () => {
     const revision = { expectedRevision: 1 };
     const compile = { ...revision, designSystemId: 'test', selections: [{
       sourcePath: 'src/Button.tsx', exportName: 'Button', componentId: 'button', codeComponentId: 'code/Button',
+      framework: 'react' as const, metadataExportName: 'ButtonPolicy',
+      storySources: [{ sourcePath: 'src/Button.stories.ts', selections: [{ id: 'primary', exportName: 'Primary' }] }],
     }] };
     const bind = { ...revision, binding: state.bindings.bindings[0]! };
     const validate = { component: 'ds:test/button', props: { variant: 'primary' } };
@@ -110,6 +112,17 @@ describe('project design runtime provider', () => {
       expectedRevision: 1, draftId: 'draft', expectedDefinitionRevision: 2,
       definition: { schemaVersion: 1, id: 'Local', name: 'Local', revision: 1, props: {}, propMappings: [], template: { schemaVersion: 1, type: 'text', id: 'text', text: '' } },
     })).toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects injected Storybook source bytes before issuing a compile request', () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const input = { expectedRevision: 0, designSystemId: 'test', selections: [{
+      sourcePath: 'src/Button.vue', framework: 'vue', exportName: 'default', componentId: 'button', codeComponentId: 'code/Button',
+      storySources: [{ sourcePath: 'src/Button.stories.ts', sourceText: 'injected', selections: [{ id: 'primary', exportName: 'Primary' }] }],
+    }] } as unknown as Parameters<typeof compileProjectDesignRuntime>[1];
+    expect(() => compileProjectDesignRuntime({ projectId: 'p', workspaceContext: null }, input)).toThrow();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

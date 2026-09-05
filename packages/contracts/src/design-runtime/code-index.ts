@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import { CodeComponentDefinitionSchema, ComponentBindingSchema } from './component-binding.js';
 import { ComponentRegistrySchema } from './component-registry.js';
+import { ComponentStorySelectionSchema } from './component-stories.js';
 import {
   CodeIdentitySchema,
+  ComponentFrameworkSchema,
   DesignEntityIdSchema,
   DesignRuntimeSchemaVersionSchema,
   SourcePathSchema,
@@ -46,6 +48,13 @@ export const ComponentBindingRegistrySchema = z.object({
 }).strict();
 export type ComponentBindingRegistry = z.infer<typeof ComponentBindingRegistrySchema>;
 
+export const ComponentStorySourceSelectionSchema = z.object({
+  sourceText: z.string(),
+  sourcePath: SourcePathSchema,
+  selections: z.array(ComponentStorySelectionSchema).min(1),
+}).strict();
+export type ComponentStorySourceSelection = z.infer<typeof ComponentStorySourceSelectionSchema>;
+
 export const ComponentCompilationSelectionSchema = z.object({
   sourceText: z.string(),
   sourcePath: SourcePathSchema,
@@ -53,6 +62,10 @@ export const ComponentCompilationSelectionSchema = z.object({
   componentId: DesignEntityIdSchema,
   codeComponentId: CodeIdentitySchema,
   packageName: z.string().min(1).optional(),
+  /** Omission preserves the original React compilation request contract. */
+  framework: ComponentFrameworkSchema.optional(),
+  metadataExportName: z.string().min(1).optional(),
+  storySources: z.array(ComponentStorySourceSelectionSchema).min(1).optional(),
 }).strict();
 export type ComponentCompilationSelection = z.infer<typeof ComponentCompilationSelectionSchema>;
 
@@ -64,6 +77,18 @@ export const CompileComponentRegistryRequestSchema = z.object({
   const codeIds = new Set<string>();
   const exports = new Set<string>();
   request.selections.forEach((selection, position) => {
+    const storyIds = new Set<string>();
+    const storyPaths = new Set<string>();
+    for (const [sourceIndex, source] of (selection.storySources ?? []).entries()) {
+      const path = ['selections', position, 'storySources', sourceIndex];
+      if (storyPaths.has(source.sourcePath)) ctx.addIssue({ code: z.ZodIssueCode.custom, path, message: 'Group story selections from the same source path together.' });
+      storyPaths.add(source.sourcePath);
+      const storyExports = new Set<string>();
+      source.selections.forEach((story, storyIndex) => {
+        if (storyIds.has(story.id) || storyExports.has(story.exportName)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [...path, 'selections', storyIndex], message: 'Story IDs and selected source exports must be unique within a component.' });
+        storyIds.add(story.id); storyExports.add(story.exportName);
+      });
+    }
     for (const [field, value, seen] of [
       ['componentId', selection.componentId, designIds],
       ['codeComponentId', selection.codeComponentId, codeIds],

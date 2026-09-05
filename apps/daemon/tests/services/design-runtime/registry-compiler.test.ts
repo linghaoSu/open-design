@@ -8,6 +8,7 @@ import { resolveComponentBinding } from '../../../src/services/design-runtime/bi
 import { validateComponentUsage } from '../../../src/services/design-runtime/component-validator.js';
 import { CompilerError } from '../../../src/services/design-runtime/react-compiler.js';
 import { compileComponentRegistry } from '../../../src/services/design-runtime/registry-compiler.js';
+import { mixedCompilerRequest } from '../../fixtures/design-runtime/compiler-selections.js';
 
 const fixtureSources = {
   'Button.tsx': readFileSync(new URL('./fixtures/Button.tsx', import.meta.url), 'utf8'),
@@ -36,6 +37,29 @@ function fixture(): CompileComponentRegistryRequest {
 }
 
 describe('compileComponentRegistry', () => {
+  it('compiles mixed frameworks, explicit slots and grouped stories deterministically without changing defaults', () => {
+    const input = mixedCompilerRequest(); const before = structuredClone(input);
+    const result = compileComponentRegistry(input);
+    expect(result.codeIndex.components.map((code) => code.framework)).toEqual(['react', 'vue']);
+    expect(result.registry.components[0]!.slots?.body).toMatchObject({ accepts: ['text'], required: false, multiple: true });
+    expect(result.registry.components[0]!.props.elevated).toMatchObject({ default: false });
+    expect(result.registry.components[0]!.stories?.map((story) => story.id)).toEqual(['card-plain', 'card-raised']);
+    expect(result.registry.components[1]!.stories?.[0]).toMatchObject({ id: 'vue-primary', args: { variant: 'primary' } });
+    expect(result.bindings[0]!.slotMappings).toEqual([expect.objectContaining({ designSlot: 'body', codeSlot: 'children' })]);
+    const shuffled = structuredClone(input); shuffled.selections.reverse(); for (const selection of shuffled.selections) selection.storySources?.forEach((source) => source.selections.reverse());
+    expect(compileComponentRegistry(shuffled)).toEqual(result); expect(input).toEqual(before);
+  });
+
+  it('fails atomically for invalid or inconsistent story snapshots and mutable imported component exports', () => {
+    const input = mixedCompilerRequest(); const valid = compileComponentRegistry(input);
+    const invalid = structuredClone(input); invalid.selections[1]!.storySources![0]!.sourceText += '\nPrimary.args = { variant: "filled" };';
+    expect(() => compileComponentRegistry(invalid)).toThrow(/mutated/);
+    const inconsistent = structuredClone(input); inconsistent.selections[0]!.storySources![0]!.sourcePath = inconsistent.selections[1]!.storySources![0]!.sourcePath;
+    expect(() => compileComponentRegistry(inconsistent)).toThrow(/identical source snapshot/);
+    const mutated = structuredClone(input); mutated.selections[0]!.sourceText += '\nSlotCard = Replacement;';
+    expect(() => compileComponentRegistry(mutated)).toThrow(/Selected component export/);
+    expect(compileComponentRegistry(input)).toEqual(valid);
+  });
   it('compiles selected exports from several source files into a complete resolvable snapshot', () => {
     const result = compileComponentRegistry(fixture());
     expect(result.registry.id).toBe('test');

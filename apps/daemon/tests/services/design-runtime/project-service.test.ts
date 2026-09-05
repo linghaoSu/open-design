@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDesignRuntimeStore, migrateDesignRuntimeStore } from '../../../src/storage/design-runtime-store.js';
 import { projectComponentFixture } from '../../fixtures/design-runtime/project-components.js';
 import { createProjectDesignRuntimeService } from '../../../src/services/design-runtime/project-service.js';
+import { mixedProjectCompilerRequest } from '../../fixtures/design-runtime/compiler-selections.js';
 
 const source = `export function Button(props: { variant?: 'primary' | 'secondary' }) { return null; }
 export function Card(props: { title: string }) { return null; }`;
@@ -11,7 +12,7 @@ const request = { expectedRevision: 0, designSystemId: 'test', selections: [sele
 let db: Database.Database;
 afterEach(() => db?.close());
 
-function setup(readSource = vi.fn(async () => source)) {
+function setup(readSource = vi.fn(async (_projectId: string, _sourcePath: string) => source)) {
   db = new Database(':memory:');
   db.pragma('foreign_keys = ON');
   db.exec("CREATE TABLE projects (id TEXT PRIMARY KEY); INSERT INTO projects VALUES ('project');");
@@ -22,6 +23,21 @@ function setup(readSource = vi.fn(async () => source)) {
 }
 
 describe('project design runtime service', () => {
+  it('reads grouped story files once through project authority and persists mixed compilation atomically', async () => {
+    const { request, sources } = mixedProjectCompilerRequest();
+    const read = vi.fn(async (_project: string, path: string) => { const text = sources.get(path); if (text === undefined) throw new Error('Missing source'); return text; });
+    const { service } = setup(read);
+    const state = await service.compile('project', request);
+    expect(read.mock.calls).toEqual([...sources.keys()].map((path) => ['project', path]));
+    expect(state.registry!.components.map((component) => component.stories?.length)).toEqual([2, 1]);
+    expect(JSON.stringify(state)).not.toContain('sourceText');
+    sources.set('src/VueButton.stories.ts', 'export default { component: Unknown }; export const Primary = {};');
+    await expect(service.compile('project', { ...request, expectedRevision: state.revision })).rejects.toThrow();
+    expect(service.get('project')).toEqual(state);
+    sources.delete('src/VueButton.stories.ts');
+    await expect(service.compile('project', { ...request, expectedRevision: state.revision })).rejects.toMatchObject({ code: 'DESIGN_RUNTIME_SOURCE_UNAVAILABLE' });
+    expect(service.get('project')).toEqual(state);
+  });
   it('compiles shared source once, retains deterministic metadata, and never persists source text', async () => {
     const { service, readSource } = setup();
     const state = await service.compile('project', { ...request, selections: [selection, { ...selection, exportName: 'Card', componentId: 'card', codeComponentId: 'ui/Card' }] });

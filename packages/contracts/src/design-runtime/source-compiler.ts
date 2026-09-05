@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { CodeComponentDefinitionSchema, ComponentBindingSchema, type ComponentBinding } from './component-binding.js';
 import { ComponentRegistrySchema } from './component-registry.js';
+import { ComponentStorySelectionSchema } from './component-stories.js';
 import { CodeIdentitySchema, ComponentFrameworkSchema, DesignEntityIdSchema, DesignRuntimeSchemaVersionSchema, SourcePathSchema } from './common.js';
 
 /** Supplied source only. Filesystem/module resolution remains the caller's responsibility. */
@@ -44,7 +45,7 @@ export const CompileStorybookMetadataRequestSchema = z.object({
   sourceText: z.string(),
   sourcePath: SourcePathSchema,
   compiled: CompileSourceComponentResultSchema,
-  selections: z.array(z.object({ id: DesignEntityIdSchema, exportName: z.string().min(1) }).strict()).min(1),
+  selections: z.array(ComponentStorySelectionSchema).min(1),
 }).strict().superRefine((input, ctx) => {
   const ids = new Set<string>();
   const exports = new Set<string>();

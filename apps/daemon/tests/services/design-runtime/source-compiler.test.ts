@@ -12,6 +12,15 @@ const input = { framework: 'react' as const, sourceText, sourcePath: 'src/Card.t
 const designInput = { ...input, designSystemId: 'test', componentId: 'card', metadataExportName: 'CardPolicy' };
 
 describe('source compiler proof boundary', () => {
+  it.each([
+    'Card = Other;',
+    '({ Card } = replacements);',
+    'Card.defaultProps = { elevated: true };',
+    'namespace Card { export const defaultProps = { elevated: true }; }',
+    'function later() { Card = Other; }',
+  ])('rejects selected runtime export mutation before reporting source proof: %s', (mutation) => {
+    expect(() => extractSourceCodeComponent({ ...input, sourceText: `${sourceText}\n${mutation}` })).toThrow(/Selected component export/);
+  });
   it('extracts source-proven code slots independently from explicit semantic acceptance policy', () => {
     const code = extractSourceCodeComponent(input);
     expect(code.props).toEqual({ elevated: expect.objectContaining({ type: 'boolean', default: false, required: false }) });

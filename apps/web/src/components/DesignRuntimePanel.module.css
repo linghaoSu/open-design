@@ -37,6 +37,8 @@
 .source { margin: 12px 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
 .source summary { cursor: pointer; color: var(--text-muted); padding: 6px 0; }
 .source details input[readonly] { font: 11px var(--font-mono, monospace); }
+.source .storySource { margin: 12px 0; border-inline-start: 2px solid var(--border); padding-inline-start: 10px; }
+.story + .story { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
 .muted { color: var(--text-muted); font-size: 12px; line-height: 1.5; }
 .notice, .error { padding: 10px 12px; border-radius: 6px; background: var(--bg-subtle); line-height: 1.5; }
 .error { color: var(--red, #b42318); overflow-wrap: anywhere; }

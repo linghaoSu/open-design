@@ -1,0 +1,4 @@
+import { SlotCard } from './SlotCard';
+export default { component: SlotCard, args: { elevated: false } };
+export const Plain = { args: { children: 'Card content' } };
+export const Raised = { args: { elevated: true, children: 'Raised card' } };

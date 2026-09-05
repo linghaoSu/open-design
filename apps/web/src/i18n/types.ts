@@ -112,6 +112,18 @@ export interface Dict {
   "designVersions.rawSpacing": string;
   "designVersions.customControls": string;
   "designVersions.upgradeRequired": string;
+  'designRuntime.framework': string;
+  'designRuntime.metadataExport': string;
+  'designRuntime.metadataHint': string;
+  'designRuntime.stories': string;
+  'designRuntime.storyHint': string;
+  'designRuntime.storySource': string;
+  'designRuntime.storyExport': string;
+  'designRuntime.storyId': string;
+  'designRuntime.addStorySource': string;
+  'designRuntime.addStory': string;
+  'designRuntime.slotMappings': string;
+  'designRuntime.chooseCodeSlot': string;
   'designRuntime.title': string;
   'designRuntime.description': string;
   'designRuntime.revision': string;

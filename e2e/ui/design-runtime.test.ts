@@ -282,4 +282,96 @@ export function Button({ variant = 'primary', disabled = false }: ButtonProps) {
   expect(clearedState.lock.dependencies).toEqual([]);
   expect(clearedState.registry).toEqual(lockedState.registry);
   expect(clearedState.document).toEqual(document);
+
+  // An explicit unlock permits extending the working registry. Exercise the
+  // compiler's format/metadata controls without recreating the project setup.
+  const additionalSources = {
+    'ReactCard.tsx': `import type { ReactNode } from 'react';
+interface CardProps { title?: string; children: ReactNode }
+export function Card({ title = 'Summary', children }: CardProps) {
+  return <section><h2>{title}</h2>{children}</section>;
+}
+export const CardSlots = { component: Card, slots: {
+  body: { codeSlot: 'children', accepts: ['text'], required: true, multiple: true }
+} } as const;`,
+    'ReactCard.stories.ts': `import { Card } from './ReactCard';
+export default { component: Card, title: 'Cards/React' };
+export const Populated = { args: { title: 'Applications', children: 'Application summary' } };`,
+    'VueCard.vue': `<script lang="ts">
+export const VueSlots = { component: 'default', slots: {
+  body: { codeSlot: 'default', accepts: ['text'], required: false, multiple: true }
+} } as const;
+</script>
+<script setup lang="ts">
+interface Props { title?: string; disabled?: boolean }
+const props = withDefaults(defineProps<Props>(), { title: 'Vue summary' });
+defineSlots<{ default?: () => unknown }>();
+</script>
+<template><section><h2>{{ props.title }}</h2><slot /></section></template>`,
+    'VueCard.stories.ts': `import VueCard from './VueCard.vue';
+export default { component: VueCard, title: 'Cards/Vue' };
+export const Populated = { args: { title: 'Vue applications' } };`,
+  };
+  for (const [name, content] of Object.entries(additionalSources)) {
+    const response = await page.request.post(`/api/projects/${projectId}/files`, { data: { name, content } });
+    expect(response.ok(), await response.text()).toBeTruthy();
+  }
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.getByTestId('design-runtime-entry').click();
+  await page.getByTestId('design-runtime-add-source').click();
+  await page.getByTestId('design-runtime-source-path-1').selectOption('ReactCard.tsx');
+  await page.getByTestId('design-runtime-export-name-1').fill('Card');
+  await page.getByTestId('design-runtime-metadata-export-1').fill('CardSlots');
+  await panel.locator('details').filter({ has: page.getByTestId('design-runtime-add-story-source-1') }).locator('summary').click();
+  await page.getByTestId('design-runtime-add-story-source-1').click();
+  await page.getByTestId('design-runtime-story-source-1-0').selectOption('ReactCard.stories.ts');
+  await page.getByTestId('design-runtime-story-export-1-0-0').fill('Populated');
+  const reactStoryId = await page.getByTestId('design-runtime-story-id-1-0-0').inputValue();
+  await page.getByTestId('design-runtime-add-source').click();
+  await page.getByTestId('design-runtime-framework-2').selectOption('vue');
+  await page.getByTestId('design-runtime-source-path-2').selectOption('VueCard.vue');
+  await expect(page.getByTestId('design-runtime-export-name-2')).toHaveValue('default');
+  await page.getByTestId('design-runtime-metadata-export-2').fill('VueSlots');
+  await panel.locator('details').filter({ has: page.getByTestId('design-runtime-add-story-source-2') }).locator('summary').click();
+  await page.getByTestId('design-runtime-add-story-source-2').click();
+  await page.getByTestId('design-runtime-story-source-2-0').selectOption('VueCard.stories.ts');
+  await page.getByTestId('design-runtime-story-export-2-0-0').fill('Populated');
+  const vueStoryId = await page.getByTestId('design-runtime-story-id-2-0-0').inputValue();
+  const mixedCompileResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `${prefix}/compile`);
+  await page.getByTestId('design-runtime-compile').click();
+  const mixedCompile = await mixedCompileResponse;
+  expect(mixedCompile.ok(), await mixedCompile.text()).toBeTruthy();
+  const mixedState = (await mixedCompile.json() as ProjectDesignRuntimeResponse).state;
+  expect(mixedState.registry!.components).toHaveLength(3);
+  const reactCard = mixedState.registry!.components.find((entry) => entry.name === 'Card')!;
+  const vueCard = mixedState.registry!.components.find((entry) => entry.name === 'VueCard')!;
+  expect(reactCard.stories).toEqual([expect.objectContaining({ id: reactStoryId, args: { title: 'Applications', children: 'Application summary' } })]);
+  expect(vueCard.stories).toEqual([expect.objectContaining({ id: vueStoryId, args: { title: 'Vue applications' } })]);
+  expect(vueCard.props.disabled!.default).toBe(false);
+  expect(vueCard.props.title!.default).toBe('Vue summary');
+  expect(mixedState.document).toEqual(document);
+  const cardBinding = mixedState.bindings.bindings.find((entry) => entry.componentRef === `ds:acme/${reactCard.id}`)!;
+  await page.getByTestId('design-runtime-component-select').selectOption(reactCard.id);
+  const cardUnbindResponse = page.waitForResponse((response) => response.request().method() === 'DELETE'
+    && new URL(response.url()).pathname === `${prefix}/bindings/${encodeURIComponent(cardBinding.id)}`);
+  await page.getByTestId('design-runtime-unbind').click();
+  expect((await cardUnbindResponse).ok()).toBeTruthy();
+  await expect(page.getByTestId('design-runtime-unbind')).toBeDisabled();
+  await page.getByTestId('design-runtime-slot-mapping-body').selectOption('children');
+  const cardRebindResponse = page.waitForResponse((response) => response.request().method() === 'PUT'
+    && new URL(response.url()).pathname === `${prefix}/bindings/${encodeURIComponent(cardBinding.id)}`);
+  await page.getByTestId('design-runtime-bind').click();
+  const cardRebind = await cardRebindResponse;
+  expect(cardRebind.ok(), await cardRebind.text()).toBeTruthy();
+  expect((await cardRebind.json() as ProjectDesignRuntimeResponse).state.bindings.bindings.find((entry) => entry.id === cardBinding.id))
+    .toMatchObject({ status: 'bound', slotMappings: [{ designSlot: 'body', codeSlot: 'children' }] });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.getByTestId('design-runtime-entry').click();
+  await page.getByTestId('design-runtime-component-select').selectOption(vueCard.id);
+  await expect(page.getByTestId('design-runtime-slot-mapping-body')).toHaveValue('default');
+  await expect(page.getByTestId('design-runtime-unbind')).toBeEnabled();
+  const compilerScreenshot = testInfo.outputPath('mixed-source-compilation.png');
+  await page.screenshot({ path: compilerScreenshot, fullPage: true });
+  await testInfo.attach('React and Vue source metadata in the workspace', { path: compilerScreenshot, contentType: 'image/png' });
 });

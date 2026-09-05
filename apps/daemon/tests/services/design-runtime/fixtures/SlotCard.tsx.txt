@@ -1,0 +1,3 @@
+import type { ReactNode } from 'react';
+export function SlotCard({ elevated = false, children }: { elevated?: boolean; children?: ReactNode }) { return <section>{children}</section>; }
+export const SlotCardPolicy = { component: SlotCard, slots: { body: { codeSlot: 'children', accepts: ['text'], required: false, multiple: true } } } as const;

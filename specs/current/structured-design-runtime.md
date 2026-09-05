@@ -61,7 +61,7 @@ until every required milestone and invariant has direct current-state evidence.
 | 6 | Immutable design-system versions, project dependencies, exact lock and digest/source verification | Reopen resolves same content until explicit upgrade; tampering/missing locked version diagnosed | Complete |
 | 7 | Semantic diff using stable component/token IDs | Added/removed/renamed/changed classification; removed variant/prop/token and incompatible slot are breaking | In progress |
 | 8 | Upgrade impact, deterministic migrations, review and explicit apply | Diff + graph + overrides identifies affected nodes/screens; migration validates before atomic lock/document update; failure/conflict leaves live state intact | In progress |
-| 9 | Machine-readable handoff and persistent project-component code bindings | Manifest includes lock, target, IR, registry, bindings and change context; deterministic round-trip, package compatibility, UI/CLI export | Pending |
+| 9 | Machine-readable handoff and persistent project-component code bindings | Manifest includes lock, target, IR, registry, bindings and change context; deterministic round-trip, package compatibility, UI/CLI export | In progress |
 | 10 | Explore/Guided project modes and generation repair loop | Structured diagnostics after generation; bounded repair; normal Explore behavior preserved; equivalent generation paths validated | Pending |
 | 11 | Pattern registry and design grammar | Pattern retrieval/configuration and slot composition validated deterministically; reusable resource-list fixture | Pending |
 | 12 | Strict mode semantic UI generation and source enforcement | Intent → retrieve → IR → validate → render/source → source validation → preview; unknown components/props/variants/slots/tokens/raw forbidden styles/reimplemented bound controls rejected | Pending |
@@ -145,7 +145,14 @@ pinned SFC parser without source execution or imported type reads. It covers loc
 scalar props, literal defaults, Boolean omission semantics, typed unscoped slots,
 explicit semantic metadata and frozen-source verification. Root ran 195 combined
 compiler cases, a frozen-lock install, full `pnpm guard` and full `pnpm typecheck`.
-Public compiler selection wiring remains active through the shared source boundary.
+The public compiler now accepts explicit React/Vue selection, semantic slot exports
+and grouped Storybook selections through the same UI/API/CLI contract. The daemon
+reads each selected path once and refuses injected source text. Reopening preserves
+original compiler provenance after manual binding changes. The real browser flow
+compiled React and Vue examples together, retained production defaults, rebound
+both slot conventions and reopened saved state; it passed in 19.3 seconds.
+Root also ran a combined 161 daemon cases, 61 contract cases and 44 web/locale cases
+covering compilation and the concurrent upgrade API integration.
 
 Semantic diff is accepted internally in `69989178f`: stable-ID comparison,
 complete before/after snapshots, breaking property/slot/token changes, and a
@@ -153,6 +160,22 @@ SemVer recommendation. Source provenance and Storybook examples remain distinct
 from production compatibility. Root ran 6 contract and 20 daemon cases. Its public
 review surface is part of the exact-version upgrade workflow being implemented
 next; Phase 7 remains in progress until that surface is exercised.
+
+Phase 8's pure migration/review/apply core is accepted in `de70e1f57`. It preserves
+authored identities and override-only instances, propagates finite value migrations
+through local public mappings, records shared revisions and requires explicit
+binding transitions. Exact package, plan and full project digests bind application
+to the reviewed snapshot. Root ran 52 daemon migration/history/diff cases and 16
+contract cases. Source/token coverage remains explicitly conservative; public
+review/application and package-authored recipes are still in progress.
+
+The prerequisite local-binding/value-transform foundation is accepted in
+`a76e97412`. It verifies exact local revisions, preserves project code in an explicit
+index composition, proves current registered source and applies typed scalar
+transforms with design defaults. Existing binding identities cannot be taken over
+by another component/framework relationship. Root ran 83 daemon binding/index/version
+cases and 79 contract cases. Full `pnpm guard` and `pnpm typecheck` passed for both
+foundations. Handoff emission and persistent public local bindings remain in progress.
 
 Phase 2/3 acceptance includes 88 focused contract tests, 147 daemon design-runtime
 tests, the existing 16 project CLI tests, 30 web provider/panel/locale tests, and
@@ -167,3 +190,35 @@ workflow and `e2e/ui/design-runtime.test.ts` for the browser witness.
 The original brief's conceptual names describe responsibilities, not a demand to
 create empty packages or placeholder files. Keep algorithms inside the daemon
 until a real second consumer justifies an additive shared runtime package.
+
+## Remaining integration seams
+
+Handoff must preserve project-owned code alongside the immutable package index.
+Package publication and activation must separate package-owned bindings from local
+bindings as well as preserving that separation on reads. Local binding verification
+records the exact shared definition revision; changing only its template still
+requires code revalidation. Handoff checks current registered source evidence and
+distinguishes an observed installed package version from a declared dependency
+range. Missing implementations remain actionable manifest diagnostics, while code
+emission requires complete bindings and produces no partial files.
+
+Generation modes belong to saved project runtime state. Request bodies cannot
+weaken the saved mode when detaching, clearing dependencies or validating output.
+Explore keeps the existing normal generation path. Guided runs the structural
+validator and a bounded repair loop; Strict additionally requires validated semantic
+IR and validated production source before accepting the preview. Repair attempts
+must preserve analytics lineage and use the existing physical-run creation service.
+
+The generation host contract needs one canonical contracts implementation, consumed
+by daemon legacy slim/classic, contracts API/BYOK and OD Next runtime context.
+The existing OD Next deliverable check proves artifact presence rather than these
+structural rules, so it cannot serve as the new validator or its repair gate.
+Acceptance must exercise the actual completion path for each affected generation
+mode, including exhaustion and cancellation, with deterministic agent fixtures.
+
+Before Guided/Strict acceptance, the evaluation suite must contain resource list,
+resource detail, settings, form, dialog, dashboard, empty and error states. Metrics
+come from parsed source/IR and binding resolution: reuse, unknown components and
+tokens, raw literals, duplicate controls, repair attempts and repeatability. Visual
+impact compares graph-selected current/proposed screens through the locked
+production runtime; symbolic boxes or only serialized IR do not satisfy Phase 13.

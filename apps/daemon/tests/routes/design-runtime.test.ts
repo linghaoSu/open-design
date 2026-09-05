@@ -24,6 +24,7 @@ import {
 } from '@open-design/contracts';
 import { createDesignSystemVersion } from '../../src/services/design-runtime/design-system-version.js';
 import { packageFixture } from '../fixtures/design-runtime/design-system-version.js';
+import { mixedProjectCompilerRequest } from '../fixtures/design-runtime/compiler-selections.js';
 import { registerDesignRuntimeRoutes } from '../../src/routes/design-runtime.js';
 import { createProjectDesignRuntimeService } from '../../src/services/design-runtime/project-service.js';
 import { createDesignRuntimeStore, migrateDesignRuntimeStore } from '../../src/storage/design-runtime-store.js';
@@ -203,6 +204,8 @@ describe('project design runtime HTTP routes', () => {
         [{ ...selection, sourcePath: '../secret.tsx' }],
         [{ ...selection, sourceText: 'export function Button() {}' }],
         [selection, selection],
+        [{ ...selection, storySources: [{ sourcePath: 'src/Button.stories.ts', sourceText: 'injected text', selections: [{ id: 'story', exportName: 'Primary' }] }] }],
+        [{ ...selection, storySources: [{ sourcePath: '../outside.stories.ts', selections: [{ id: 'story', exportName: 'Primary' }] }] }],
       ]) {
         const result = await request('POST', '/compile', { ...compileRequest, selections });
         expect(result.status).toBe(400);
@@ -214,6 +217,19 @@ describe('project design runtime HTTP routes', () => {
       expect(unsupported.status).toBe(400);
       expect(unsupported.json.error).toMatchObject({ code: 'DESIGN_RUNTIME_COMPILATION_FAILED', details: { sourcePath: 'src/Button.tsx', exportName: 'Button' } });
       expect(ProjectDesignRuntimeResponseSchema.parse((await request('GET')).json).state.revision).toBe(0);
+    });
+  });
+
+  it('compiles mixed framework and Storybook selections through the existing HTTP endpoint', async () => {
+    await withRoute(async ({ request, readSource }) => {
+      const mixed = mixedProjectCompilerRequest();
+      readSource.mockImplementation(async (_projectId, path) => mixed.sources.get(path)!);
+      const response = await request('POST', '/compile', mixed.request);
+      expect(response.status).toBe(200);
+      const state = ProjectDesignRuntimeResponseSchema.parse(response.json).state;
+      expect(state.codeIndex.components.map((code) => code.framework)).toEqual(['react', 'vue']);
+      expect(state.registry?.components.map((component) => component.stories?.length)).toEqual([2, 1]);
+      expect(readSource.mock.calls.map((call) => call[1])).toEqual([...mixed.sources.keys()]);
     });
   });
 

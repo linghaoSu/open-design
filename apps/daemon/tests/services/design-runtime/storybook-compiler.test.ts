@@ -10,6 +10,19 @@ const compiled = compileSourceComponent({ framework: 'react', sourceText: compon
 const input = { sourceText: storySource, sourcePath: 'fixture/Button.stories.tsx', compiled, selections: [{ id: 'story-primary', exportName: 'Primary' }, { id: 'story-danger', exportName: 'Danger' }] };
 
 describe('Storybook metadata compiler', () => {
+  it('reads Vue CSF3 default imports from the exact source and keeps framework identity explicit', () => {
+    const sourceText = readFileSync(new URL('./fixtures/VueButton.vue', import.meta.url), 'utf8');
+    const storyText = readFileSync(new URL('./fixtures/VueButton.stories.ts.txt', import.meta.url), 'utf8');
+    const vue = compileSourceComponent({ framework: 'vue', sourceText, sourcePath: 'fixture/VueButton.vue', exportName: 'default', componentId: 'vue-button', codeComponentId: 'code/vue-button', designSystemId: 'test' });
+    const request = { compiled: vue, sourceText: storyText, sourcePath: 'fixture/VueButton.stories.ts', selections: [{ id: 'vue-primary', exportName: 'Primary' }] };
+    const result = compileStorybookMetadata(request);
+    expect(result.registry.components[0]!.stories).toEqual([expect.objectContaining({ id: 'vue-primary', name: 'Vue primary', args: { variant: 'primary' } })]);
+    expect(result.registry.components[0]!.props.variant).toMatchObject({ default: 'primary' });
+    expect(result.binding.framework).toBe('vue');
+    expect(() => compileStorybookMetadata({ ...request, sourceText: storyText.replace('import VueButton from', 'import { default as VueButton } from') })).toThrow(/Vue Storybook/);
+    expect(() => compileStorybookMetadata({ ...input, sourceText: storySource.replace('import { Button as ProductionButton }', 'import ProductionButton') })).toThrow(/React Storybook/);
+    expect(() => compileStorybookMetadata({ ...request, sourceText: storyText.replace("'./VueButton.vue'", "'./Wrong.vue'") })).toThrow(/selected code source/);
+  });
   it('imports literal CSF3 presets and provenance without replacing production defaults or bindings', () => {
     const before = JSON.stringify(compiled);
     const result = compileStorybookMetadata(input);

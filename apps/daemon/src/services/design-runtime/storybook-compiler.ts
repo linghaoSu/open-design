@@ -94,12 +94,19 @@ function verifyComponentImport(program: t.Program, node: t.Node | undefined, sto
   const matches = program.body.flatMap((statement) => statement.type === 'ImportDeclaration' && statement.importKind !== 'type'
     ? statement.specifiers.filter((specifier) => specifier.local.name === node.name).map((specifier) => ({ statement, specifier })) : []);
   const match = matches[0];
-  if (matches.length !== 1 || !match || match.specifier.type !== 'ImportSpecifier' || match.specifier.importKind === 'type') fail('Storybook component must use a direct named runtime import', node);
-  const exported = match.specifier.imported.type === 'Identifier' ? match.specifier.imported.name : match.specifier.imported.value;
+  if (matches.length !== 1 || !match) fail('Storybook component must use one direct runtime import', node);
+  let exported: string;
+  if (code.framework === 'vue') {
+    if (match.specifier.type !== 'ImportDefaultSpecifier') fail('Vue Storybook components require a direct default runtime import', node);
+    exported = 'default';
+  } else {
+    if (match.specifier.type !== 'ImportSpecifier' || match.specifier.importKind === 'type') fail('React Storybook components require a direct named runtime import', node);
+    exported = match.specifier.imported.type === 'Identifier' ? match.specifier.imported.name : match.specifier.imported.value;
+  }
   const specifier = match.statement.source.value;
   if (!specifier.startsWith('./') && !specifier.startsWith('../')) fail('Storybook package and alias import resolution is unsupported; supply a direct relative source import', match.statement);
   const target = posix.normalize(posix.join(posix.dirname(storyPath), specifier));
-  const candidates = posix.extname(target) ? [target] : [target, `${target}.tsx`, `${target}.ts`];
+  const candidates = posix.extname(target) ? [target] : code.framework === 'vue' ? [target, `${target}.vue`] : [target, `${target}.tsx`, `${target}.ts`];
   if (exported !== code.exportName || !candidates.includes(code.sourcePath)) fail('Storybook component import does not identify the selected code source and export', match.statement);
 }
 

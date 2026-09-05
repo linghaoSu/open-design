@@ -36,6 +36,22 @@ import {
 
 const selection = { sourcePath: 'src/Button.tsx', exportName: 'Button', componentId: 'button', codeComponentId: 'ui/Button' };
 const compile = { expectedRevision: 0, designSystemId: 'test', selections: [selection] };
+
+it('validates explicit framework/story selections and rejects nested source injection and duplicate identities', () => {
+  const source = { sourcePath: 'src/Button.stories.ts', selections: [{ id: 'primary', exportName: 'Primary' }] };
+  const selected = { ...selection, framework: 'react', metadataExportName: 'ButtonPolicy', storySources: [source] };
+  const request = { ...compile, selections: [selected] };
+  expect(ProjectDesignRuntimeCompileRequestSchema.parse(request)).toEqual(request);
+  for (const change of [
+    { framework: 'unknown' },
+    { sourceText: 'injected' },
+    { storySources: [{ ...source, sourceText: 'injected' }] },
+    { storySources: [source, source] },
+    { storySources: [{ ...source, selections: [source.selections[0], { id: 'another', exportName: 'Primary' }] }] },
+    { storySources: [source, { ...source, sourcePath: 'src/Other.stories.ts' }] },
+  ]) expect(ProjectDesignRuntimeCompileRequestSchema.safeParse({ ...compile, selections: [{ ...selected, ...change }] }).success).toBe(false);
+  expect(ProjectDesignRuntimeCompileRequestSchema.parse(compile)).toEqual(compile);
+});
 const component = { schemaVersion: 1, id: 'button', name: 'Button', props: {} };
 const code = { schemaVersion: 1, id: 'ui/Button', framework: 'react', name: 'Button', exportName: 'Button', sourcePath: 'src/Button.tsx', props: {} };
 const binding = { schemaVersion: 1, id: 'binding/button', componentRef: 'ds:test/button', framework: 'react', status: 'bound', verified: true, codeComponentId: 'ui/Button' };

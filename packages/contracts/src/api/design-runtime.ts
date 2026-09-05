@@ -5,6 +5,7 @@ import {
   ComponentBindingRegistrySchema,
   ComponentBindingSchema,
   ComponentCompilationSelectionSchema,
+  ComponentStorySourceSelectionSchema,
   CompileComponentRegistryRequestSchema,
   ComponentDefinitionSchema,
   ComponentRegistrySchema,
@@ -81,11 +82,15 @@ export type ProjectDesignRuntimeResponse = z.infer<typeof ProjectDesignRuntimeRe
 export const ProjectDesignRuntimeCompileRequestSchema = z.object({
   expectedRevision: revisionSchema,
   designSystemId: DesignEntityIdSchema,
-  selections: z.array(ComponentCompilationSelectionSchema.omit({ sourceText: true })).min(1),
+  selections: z.array(ComponentCompilationSelectionSchema.omit({ sourceText: true }).extend({
+    storySources: z.array(ComponentStorySourceSelectionSchema.omit({ sourceText: true })).min(1).optional(),
+  })).min(1),
 }).strict().superRefine((request, ctx) => {
   const checked = CompileComponentRegistryRequestSchema.safeParse({
     designSystemId: request.designSystemId,
-    selections: request.selections.map((selection) => ({ ...selection, sourceText: '' })),
+    selections: request.selections.map((selection) => ({ ...selection, sourceText: '',
+      ...(selection.storySources ? { storySources: selection.storySources.map((source) => ({ ...source, sourceText: '' })) } : {}),
+    })),
   });
   if (!checked.success) checked.error.issues.forEach((issue) => ctx.addIssue(issue));
 });

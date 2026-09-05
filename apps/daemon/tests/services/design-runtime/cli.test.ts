@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ProjectComponentDefinition, ProjectDesignRuntimeState, ReferenceGraphQueryResult, ResolvedUIIRResult, SharedComponentDraft, SharedComponentImpact, ValidationDiagnostic } from '@open-design/contracts';
+import { mixedProjectCompilerRequest } from '../../fixtures/design-runtime/compiler-selections.js';
 import { packageFixture } from '../../fixtures/design-runtime/design-system-version.js';
 import { createDesignSystemVersion } from '../../../src/services/design-runtime/design-system-version.js';
 
@@ -105,6 +106,16 @@ function sharedFixture() {
 }
 
 describe('od design-runtime CLI dispatcher', () => {
+  it('forwards explicit framework, slot policy and grouped story selections through canonical compile JSON', async () => {
+    const { request } = mixedProjectCompilerRequest(7);
+    const stub = await startServer();
+    const result = await runCli(['design-runtime', 'compile', projectId, '--prompt-file', '-', '--json', '--daemon-url', stub.url, ...scope], JSON.stringify(request));
+    expect(result.code, result.stderr).toBe(0);
+    expect(stub.requests).toHaveLength(1);
+    expect(stub.requests[0]!.body).toEqual(request);
+    expect(stub.requests[0]!.headers['x-od-workspace-id']).toBe('workspace-1');
+    expect(JSON.stringify(stub.requests[0]!.body)).not.toContain('sourceText');
+  });
   it('advertises commands and JSON, stdin, workspace and revision options through real help', async () => {
     const result = await runCli(['design-runtime', '--help']);
     expect(result.code, result.stderr).toBe(0);

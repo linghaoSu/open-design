@@ -27,6 +27,7 @@ import {
 import { useT } from '../i18n';
 import { ProjectStructurePanel } from './ProjectStructurePanel';
 import { DesignSystemVersionsPanel } from './DesignSystemVersionsPanel';
+import { DesignRuntimeSourceSelections } from './DesignRuntimeSourceSelections';
 import styles from './DesignRuntimePanel.module.css';
 
 interface Props {
@@ -43,19 +44,28 @@ interface PropDraft { included: boolean; input: string; kind: ScalarKind }
 
 function newSelection(sourcePath = ''): SourceSelection {
   const identity = crypto.randomUUID();
-  return { sourcePath, exportName: '', componentId: `component-${identity}`, codeComponentId: `code/${identity}` };
+  return { sourcePath, exportName: '', framework: 'react', componentId: `component-${identity}`, codeComponentId: `code/${identity}` };
 }
 
 function sourceSelections(state: ProjectDesignRuntimeState): SourceSelection[] {
   return (state.registry?.components ?? []).flatMap((component) => {
-    const source = component.source;
-    const code = state.codeIndex.components.find((candidate) =>
-      candidate.sourcePath === source?.sourcePath && candidate.exportName === source?.exportName);
-    return source && code ? [{
-      sourcePath: source.sourcePath,
+    // A manually chosen binding target does not replace the original compilation source.
+    const code = state.codeIndex.components.find((candidate) => candidate.sourcePath === component.source?.sourcePath && candidate.exportName === component.source?.exportName);
+    const metadataExports = new Set(Object.values(component.slots ?? {}).map((slot) => slot.source?.exportName).filter((name): name is string => !!name));
+    const storySources = new Map<string, NonNullable<SourceSelection['storySources']>[number]>();
+    for (const story of component.stories ?? []) {
+      if (!story.source.sourcePath) continue;
+      const source = storySources.get(story.source.sourcePath) ?? { sourcePath: story.source.sourcePath, selections: [] };
+      source.selections.push({ id: story.id, exportName: story.exportName }); storySources.set(source.sourcePath, source);
+    }
+    return code ? [{
+      sourcePath: code.sourcePath,
       exportName: code.exportName,
+      framework: code.framework,
       componentId: component.id,
       codeComponentId: code.id,
+      ...(metadataExports.size === 1 ? { metadataExportName: [...metadataExports][0]! } : {}),
+      ...(storySources.size ? { storySources: [...storySources.values()] } : {}),
       ...(code.packageName === undefined ? {} : { packageName: code.packageName }),
     }] : [];
   });
@@ -92,13 +102,14 @@ export function DesignRuntimePanel(props: Props) {
 function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerOnly, onClose }: Props) {
   const t = useT();
   const inputId = useId();
-  const sourceFiles = files.map(({ name }) => name).filter((name) => /\.(tsx|ts)$/.test(name) && !name.endsWith('.d.ts')).sort();
+  const sourceFiles = files.map(({ name }) => name).filter((name) => /\.(tsx|ts|vue)$/.test(name) && !name.endsWith('.d.ts')).sort();
   const [state, setState] = useState<ProjectDesignRuntimeState | null>(null);
   const [selections, setSelections] = useState<SourceSelection[]>(() => [newSelection(sourceFiles[0])]);
   const [designSystemId, setDesignSystemId] = useState('project');
   const [componentId, setComponentId] = useState('');
   const [codeId, setCodeId] = useState('');
   const [mappings, setMappings] = useState<Record<string, string>>({});
+  const [slotMappings, setSlotMappings] = useState<Record<string, string>>({});
   const [propDrafts, setPropDrafts] = useState<Record<string, PropDraft>>({});
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(true);
@@ -128,6 +139,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
     const nextBinding = nextState?.bindings.bindings.find((candidate) => candidate.componentRef === ref);
     setCodeId(nextBinding && nextBinding.status !== 'unbound' ? nextBinding.codeComponentId : nextState?.codeIndex.components[0]?.id ?? '');
     setMappings(Object.fromEntries(nextBinding?.propMappings?.map((mapping) => [mapping.designProp, mapping.codeProp]) ?? []));
+    setSlotMappings(Object.fromEntries(nextBinding?.slotMappings?.map((mapping) => [mapping.designSlot, mapping.codeSlot]) ?? []));
     setPropDrafts({});
     setDiagnostics(null);
     setMessage('');
@@ -237,6 +249,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
       propMappings: Object.entries(mappings)
         .filter(([designProp, codeProp]) => designProp !== codeProp)
         .map(([designProp, codeProp]) => ({ designProp, codeProp })),
+      slotMappings: Object.entries(slotMappings).filter(([, codeSlot]) => codeSlot !== '').map(([designSlot, codeSlot]) => ({ designSlot, codeSlot })),
     };
     void perform((authority) => putProjectDesignRuntimeBinding(authority, nextBinding.id, {
       expectedRevision: state.revision, binding: nextBinding,
@@ -254,10 +267,6 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
       setDiagnostics(result.diagnostics);
       setMessage(result.diagnostics.length ? '' : t('designRuntime.valid'));
     });
-  }
-
-  function changeSelection(index: number, values: Partial<SourceSelection>) {
-    setSelections((current) => current.map((selection, position) => position === index ? { ...selection, ...values } : selection));
   }
 
   return (
@@ -298,34 +307,9 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
             <label className={styles.field}>{t('designRuntime.systemId')}
               <input data-testid="design-runtime-system-id" value={designSystemId} readOnly={!!state?.registry} required pattern="[A-Za-z0-9][A-Za-z0-9._-]*" onChange={(event) => setDesignSystemId(event.target.value)} />
             </label>
-            {selections.map((selection, index) => <div className={styles.source} key={selection.componentId}>
-              <label className={styles.field}>{t('designRuntime.sourcePath')}
-                <select data-testid={`design-runtime-source-path-${index}`} value={selection.sourcePath} required onChange={(event) => changeSelection(index, { sourcePath: event.target.value })}>
-                  <option value="">{t('designRuntime.chooseSource')}</option>
-                  {selection.sourcePath && !sourceFiles.includes(selection.sourcePath) ? <option value={selection.sourcePath}>{selection.sourcePath}</option> : null}
-                  {sourceFiles.map((path) => <option key={path} value={path}>{path}</option>)}
-                </select>
-              </label>
-              <label className={styles.field}>{t('designRuntime.exportName')}
-                <input data-testid={`design-runtime-export-name-${index}`} value={selection.exportName} required pattern="[A-Za-z_$][A-Za-z0-9_$]*" onChange={(event) => changeSelection(index, { exportName: event.target.value })} />
-              </label>
-              <details>
-                <summary>{t('designRuntime.identities')}</summary>
-                <p className={styles.muted}>{t('designRuntime.identityHint')}</p>
-                <label className={styles.field}>{t('designRuntime.componentId')}
-                  <input data-testid={`design-runtime-component-id-${index}`} value={selection.componentId} readOnly />
-                </label>
-                <label className={styles.field}>{t('designRuntime.codeId')}
-                  <input data-testid={`design-runtime-code-id-${index}`} value={selection.codeComponentId} readOnly />
-                </label>
-                <label className={styles.field}>{t('designRuntime.packageName')}
-                  <input value={selection.packageName ?? ''} onChange={(event) => changeSelection(index, { packageName: event.target.value || undefined })} />
-                </label>
-              </details>
-              <Button variant="ghost" disabled={selections.length === 1} aria-label={`${t('common.delete')} ${index + 1}`} onClick={() => setSelections((current) => current.filter((_, position) => position !== index))}>{t('common.delete')}</Button>
-            </div>)}
+            <DesignRuntimeSourceSelections selections={selections} files={sourceFiles} onChange={setSelections} />
             <div className={styles.actions}>
-              <Button onClick={() => setSelections((current) => [...current, newSelection(sourceFiles[0])])}>{t('designRuntime.addSource')}</Button>
+              <Button data-testid="design-runtime-add-source" onClick={() => setSelections((current) => [...current, newSelection(sourceFiles[0])])}>{t('designRuntime.addSource')}</Button>
               <Button data-testid="design-runtime-compile" type="submit" variant="primary">{t('designRuntime.compile')}</Button>
             </div>
           </fieldset>
@@ -351,6 +335,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
                     <strong>{name}</strong>: {slot.accepts.join(', ')} · {slot.required ? t('designRuntime.required') : t('designRuntime.optional')} · {slot.multiple ? t('designRuntime.multiple') : t('designRuntime.single')}
                   </li>)}
                 </ul> : <p className={styles.muted}>{t('common.none')}</p>}
+                {selectedComponent.stories?.length ? <><h4>{t('designRuntime.stories')}</h4><ul>{selectedComponent.stories.map((story) => <li key={story.id}><strong>{story.name}</strong> · <code>{story.exportName}</code><p>{Object.entries(story.args).map(([name, value]) => `${name}: ${JSON.stringify(value)}`).join(', ')}</p><code>{story.source.sourcePath}</code></li>)}</ul></> : null}
               </> : null}
             </section>
             <section className={styles.card}>
@@ -358,7 +343,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
               <p>{t('designRuntime.status')}: <strong data-testid="design-runtime-binding-status">{t(`designRuntime.status.${binding?.status ?? 'unbound'}`)}</strong></p>
               {binding && binding.status !== 'unbound' ? <p className={styles.muted}>{t('designRuntime.boundTarget')}: <code>{binding.codeComponentId}</code></p> : null}
               <label className={styles.field}>{t('designRuntime.codeComponent')}
-                <select data-testid="design-runtime-code-select" value={codeId} disabled={busy} onChange={(event) => { setCodeId(event.target.value); setMappings({}); setDiagnostics(null); setMessage(''); }}>
+                <select data-testid="design-runtime-code-select" value={codeId} disabled={busy} onChange={(event) => { setCodeId(event.target.value); setMappings({}); setSlotMappings({}); setDiagnostics(null); setMessage(''); }}>
                   {state.codeIndex.components.map((component) => <option key={component.id} value={component.id}>{component.name} · {component.id}</option>)}
                 </select>
               </label>
@@ -372,6 +357,19 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
                     {Object.keys(selectedCode.props).map((codeProp) => <option key={codeProp} value={codeProp}>{codeProp}</option>)}
                   </select>
                 </label>)}
+              </fieldset> : null}
+              {selectedComponent && selectedCode && Object.keys(selectedComponent.slots ?? {}).length ? <fieldset disabled={viewerOnly || busy}>
+                <legend>{t('designRuntime.slotMappings')}</legend>
+                {Object.keys(selectedComponent.slots ?? {}).map((name) => {
+                  const target = Object.hasOwn(slotMappings, name) ? slotMappings[name]! : '';
+                  return <label className={styles.mapping} key={name}><code>{name}</code><span aria-hidden="true">→</span>
+                    <select data-testid={`design-runtime-slot-mapping-${name}`} aria-label={`${t('designRuntime.slotMappings')}: ${name}`} value={target} onChange={(event) => setSlotMappings((current) => ({ ...current, [name]: event.target.value }))}>
+                      <option value="">{t('designRuntime.chooseCodeSlot')}</option>
+                      {target && !Object.hasOwn(selectedCode.slots ?? {}, target) ? <option value={target}>{target}</option> : null}
+                      {Object.keys(selectedCode.slots ?? {}).map((codeSlot) => <option value={codeSlot} key={codeSlot}>{codeSlot}</option>)}
+                    </select>
+                  </label>;
+                })}
               </fieldset> : null}
               <div className={styles.actions}>
                 <Button data-testid="design-runtime-bind" disabled={viewerOnly || busy || !selectedCode || !selectedComponent} onClick={bind}>{t('designRuntime.bind')}</Button>

@@ -240,15 +240,17 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
       }
       const sources = new Map<string, Promise<string>>();
       for (const selection of request.selections) {
-        if (!sources.has(selection.sourcePath)) {
-          sources.set(selection.sourcePath, readSource(projectId, selection.sourcePath).catch(() => {
-            throw new ProjectDesignRuntimeError(400, 'DESIGN_RUNTIME_SOURCE_UNAVAILABLE', 'A selected project source could not be read.', { sourcePath: selection.sourcePath });
+        for (const { sourcePath } of [selection, ...selection.storySources ?? []]) {
+          if (!sources.has(sourcePath)) sources.set(sourcePath, readSource(projectId, sourcePath).catch(() => {
+            throw new ProjectDesignRuntimeError(400, 'DESIGN_RUNTIME_SOURCE_UNAVAILABLE', 'A selected project source could not be read.', { sourcePath });
           }));
         }
       }
-      const selections = await Promise.all(request.selections.map(async (selection) => ({
-        ...selection, sourceText: await sources.get(selection.sourcePath)!,
-      })));
+      const sourceTexts = new Map(await Promise.all([...sources].map(async ([path, read]) => [path, await read] as const)));
+      const selections = request.selections.map(({ storySources, ...selection }) => ({
+        ...selection, sourceText: sourceTexts.get(selection.sourcePath)!,
+        ...(storySources ? { storySources: storySources.map((source) => ({ ...source, sourceText: sourceTexts.get(source.sourcePath)! })) } : {}),
+      }));
       const compiled = compileComponentRegistry({ designSystemId: request.designSystemId, selections });
       assertValidProject({ ...current, registry: compiled.registry });
       const codeIndex = { ...compiled.codeIndex, id: projectId };

@@ -124,6 +124,7 @@ function readReactComponent(input: ReactSourceInput) {
   }
 
   const component = findComponent(ast.program, ctx);
+  assertStableComponentExport(ast.program, ctx);
   if (component.typeParameters || component.async || component.generator) {
     ctx.fail('Generic, async, and generator components are unsupported', component);
   }
@@ -223,6 +224,36 @@ function findComponent(program: t.Program, ctx: Context): ComponentFunction {
     ctx.fail(`Expected exactly one directly named function or const arrow export ${JSON.stringify(ctx.input.exportName)}; found ${matches.length}`);
   }
   return matches[0]!;
+}
+
+/** Bounded syntax proof: writes and namespace augmentation invalidate the selected export API. */
+function assertStableComponentExport(program: t.Program, ctx: Context): void {
+  const targetsExport = (node: t.Node | null | undefined): boolean => {
+    if (!node) return false;
+    if (node.type === 'Identifier') return node.name === ctx.input.exportName;
+    if (node.type === 'MemberExpression' || node.type === 'OptionalMemberExpression') return targetsExport(node.object);
+    if (node.type === 'ObjectPattern') return node.properties.some((property) => targetsExport(property.type === 'RestElement' ? property.argument : property.value));
+    if (node.type === 'ArrayPattern') return node.elements.some(targetsExport);
+    if (node.type === 'RestElement') return targetsExport(node.argument);
+    if (node.type === 'AssignmentPattern') return targetsExport(node.left);
+    if (node.type === 'TSAsExpression' || node.type === 'TSTypeAssertion' || node.type === 'TSNonNullExpression') return targetsExport(node.expression);
+    return false;
+  };
+  const visit = (node: t.Node): void => {
+    if (['TSTypeAliasDeclaration', 'TSInterfaceDeclaration', 'TSTypeAnnotation', 'TSTypeParameterDeclaration', 'TSTypeParameterInstantiation'].includes(node.type)) return;
+    const written = node.type === 'AssignmentExpression' ? node.left
+      : node.type === 'UpdateExpression' || (node.type === 'UnaryExpression' && node.operator === 'delete') ? node.argument
+        : node.type === 'ForInStatement' || node.type === 'ForOfStatement' ? node.left : undefined;
+    if (targetsExport(written) || (node.type === 'TSModuleDeclaration' && node.id.type === 'Identifier' && node.id.name === ctx.input.exportName)) {
+      ctx.fail('Selected component export mutations and namespace augmentation are unsupported', node);
+    }
+    for (const value of Object.values(node)) {
+      for (const child of Array.isArray(value) ? value : [value]) {
+        if (child && typeof child === 'object' && 'type' in child && typeof child.type === 'string') visit(child as t.Node);
+      }
+    }
+  };
+  visit(program);
 }
 
 function provenance(node: t.Node, input: ReactSourceInput): SourceProvenance {

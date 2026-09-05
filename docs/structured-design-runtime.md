@@ -1,11 +1,11 @@
 # Structured design runtime
 
-Projects can compile selected React/TypeScript exports into a structured component
+Projects can compile selected React/TypeScript exports and Vue SFCs into a structured component
 registry, inspect their properties, manage explicit code bindings, and validate
 property values. They can also compose semantic screens and reusable project
 components, inspect affected screens, and explicitly publish shared revisions.
 Open **Design runtime** from the project file workspace's tab
-bar, select source files and named exports, then choose **Compile registry**.
+bar, select source files and their framework/exports, then choose **Compile registry**.
 The same operations are available through `od design-runtime` and the project HTTP
 API. Existing design-system discovery, generation, and rendering retain their
 current behavior.
@@ -64,7 +64,10 @@ service boundary.
 
 Compilation replaces the project's registry using the complete selection list.
 Each selection contains a project-relative source path, export name, and stable
-component/code IDs. The daemon reads each selected file once and compiles every
+component/code IDs. React is the default framework; Vue selects the SFC default
+export. An optional named metadata export supplies semantic slots. Expand
+**Storybook examples** to select CSF3 source files and named stories; each story
+keeps an independent stable ID. The daemon reads each component and story file once and compiles every
 export before atomically saving the new registry, code index, and bindings. A
 failed source read, unsupported type, or invalid selection leaves the prior
 snapshot intact. Source text is not copied into registry storage.
@@ -74,6 +77,9 @@ the proposed registry before committing it.
 The UI assigns identities once per selection and preserves them when source paths
 or exports are edited. Existing manual bindings and explicit unbound states survive
 recompilation. Removed targets become broken; changed public APIs become stale.
+Reopening the compiler restores original source provenance even when a manual
+binding points to a different production component. The binding editor exposes
+explicit design-slot to code-slot targets for both frameworks.
 Recompilation does not automatically revalidate stale, broken, or candidate
 bindings. **Bind** and **Revalidate** check the current registry and code index;
 **Unbind** retains the binding's design identity while removing its code target.
@@ -275,7 +281,7 @@ Unsupported syntax throws `CompilerError` with source context. This includes
 imported prop types other than the supported React slot types, inheritance,
 generics, intersections, callbacks/object/array props, wrappers, overloads,
 TypeScript receiver (`this`) parameters, export specifiers, default React exports,
-and computed defaults. Project scanning, identity reconciliation, and inference
+computed defaults, selected-export writes and namespace augmentation. Project scanning, identity reconciliation, and inference
 remain outside this deterministic subset.
 
 The shared internal `extractSourceCodeComponent` boundary proves code props and
@@ -284,8 +290,10 @@ requires valid semantic slot mappings. `compileStorybookMetadata` reads explicit
 selected CSF3 story exports, literal args/argTypes and tags from a directly imported
 component. It keeps stable story IDs and provenance; presets never replace source
 prop defaults. Dynamic spreads, callbacks, selected render/decorator metadata and
-mutable metadata aliases are rejected. These internal operations are accepted;
-public format/metadata selection wiring remains in the active compiler task.
+mutable metadata aliases are rejected. React stories use a direct named relative
+component import; Vue stories use a direct default relative SFC import. The same
+selection contract drives the compiler UI, project API and CLI JSON input. Source
+bytes are always read by the daemon; requests cannot inject component or story text.
 
 The Vue path parses literal `<script setup lang="ts">` SFCs with the pinned Vue
 compiler. It selects the default export explicitly and accepts local scalar props,
@@ -304,14 +312,23 @@ the declared enum. It does not validate slots, raw CSS, tokens, local instances,
 or whole artifacts. The other diagnostic codes reserve the intended namespace;
 their presence in the schema does not mean those validators ship here.
 
-`resolveComponentBinding(binding, registry, codeComponents)` resolves supplied
+`resolveComponentBinding(binding, registry, codeComponents, projectComponents?)` resolves supplied
 metadata by exact identity and verifies the current binding state, framework,
 property compatibility, one-to-one property renames and explicit slot mappings.
 Every design slot must map to a declared code slot with compatible requiredness and
-cardinality. Value transformations remain unsupported until they can be checked. It also rejects
-diverging defaults on omittable design props: this spike does not materialize
-design defaults before calling a code component. It does not inspect the
-filesystem for stale/broken exports.
+cardinality. Value transformations require complete finite enum or Boolean domains.
+Typed scalar maps distinguish values such as `1` and `'1'`; legacy string-keyed maps
+are accepted only when their domains are unambiguous. `materializeBindingProps`
+resolves the binding, validates input and applies the same proven mapping plan,
+including design defaults before a code component is called. Defaultless omission
+must remain compatible with the code contract. The resolver does not read files.
+
+The local-binding foundation verifies an explicit shared definition revision and
+source-selected code contract. A template revision makes the binding stale even
+when its public properties are unchanged. Explicit project code ownership prevents
+collision with package-owned code, and current source evidence detects registered
+API drift. These internal operations are accepted; project persistence and handoff
+UI/CLI wiring remain part of Phase 9.
 
 V1 instance overrides are an array of versioned records such as
 `{ schemaVersion: 1, path: ['props', 'title'], value: 'Production' }`.

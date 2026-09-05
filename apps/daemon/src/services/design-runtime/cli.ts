@@ -88,6 +88,7 @@ Common options:
   --prompt-file <path|->      Read a JSON request from a local file or stdin.
 
 Compile JSON: {"designSystemId":"acme","selections":[{"sourcePath":"src/Button.tsx","exportName":"Button","componentId":"button","codeComponentId":"acme/Button"}]}
+Vue + stories JSON: {"designSystemId":"acme","selections":[{"framework":"vue","sourcePath":"src/Button.vue","exportName":"default","componentId":"button","codeComponentId":"acme/Button","metadataExportName":"ButtonPolicy","storySources":[{"sourcePath":"src/Button.stories.ts","selections":[{"id":"primary-example","exportName":"Primary"}]}]}]}
 Bind JSON: {"binding":{"schemaVersion":1,"id":"binding:button","componentRef":"ds:acme/button","framework":"react","status":"bound","verified":true,"codeComponentId":"acme/Button"}}
 Validate JSON: {"component":"ds:acme/button","props":{"variant":"primary"}}
 Save/validate document JSON: {"document":{"schemaVersion":1,"id":"design","screens":[]}}
@@ -100,7 +101,10 @@ Import version JSON: {"package":<complete DesignSystemPackage with frozen source
 Publish version JSON: {"name":"Acme UI","version":"1.0.0","sourcePaths":["src/Button.tsx","DESIGN.md"],"constraints":<complete DesignConstraintSet>}
 Activate dependency JSON: {"designSystemId":"acme","version":"1.0.0","range":"^1.0.0"}
 
-Compile reads source files inside the project through the daemon. The JSON request
+Compile reads selected component and Storybook files inside the project through the daemon.
+Framework is explicit react/vue; omission preserves React compatibility. Slot metadata
+exports are explicit, and each selected story has a stable ID independent of its export name.
+Story args remain example presets and never replace production defaults. The JSON request
 contains project-relative paths, never source text. Mutation requests may include
 expectedRevision; when neither the body nor flag supplies it, the CLI reads the
 current state once and submits that revision. Conflicts are reported without retry.

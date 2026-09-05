@@ -1,0 +1,7 @@
+import type { Meta, StoryObj } from '@storybook/vue3';
+import VueButton from './VueButton.vue';
+
+const meta = { component: VueButton, title: 'Fixture/VueButton', args: { variant: 'secondary' } } satisfies Meta<typeof VueButton>;
+export default meta;
+type Story = StoryObj<typeof meta>;
+export const Primary: Story = { name: 'Vue primary', args: { variant: 'primary' } };

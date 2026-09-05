@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import { DesignEntityIdSchema, DesignMemberNameSchema, JsonScalarSchema, SourceProvenanceSchema } from './common.js';
 
+export const ComponentStorySelectionSchema = z.object({ id: DesignEntityIdSchema, exportName: z.string().min(1) }).strict();
+export type ComponentStorySelection = z.infer<typeof ComponentStorySelectionSchema>;
+
 /** Storybook control annotations describe examples, not the production prop API. */
 export const ComponentStoryArgTypeSchema = z.object({
   description: z.string().optional(),
