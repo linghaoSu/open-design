@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ProjectComponentDefinition, ProjectDesignRuntimeState, ReferenceGraphQueryResult, ResolvedUIIRResult, SharedComponentDraft, SharedComponentImpact, ValidationDiagnostic } from '@open-design/contracts';
+import { instantiateDesignSystemMigrationRecipe } from '../../../src/services/design-runtime/migration-recipes.js';
 import { upgradeFixture } from '../../fixtures/design-runtime/design-system-upgrade.js';
 import { reviewDesignSystemUpgrade, applyDesignSystemUpgrade } from '../../../src/services/design-runtime/design-system-upgrade.js';
 import { packageFixture } from '../../fixtures/design-runtime/design-system-version.js';
@@ -599,5 +600,46 @@ describe('reviewed upgrade CLI', () => {
       expect(result.code).toBe(2); expect(JSON.parse(result.stderr).error.code).toBe('BAD_REQUEST');
     }
     expect(requests).toHaveLength(0);
+  });
+});
+
+
+describe('migration recipe CLI', () => {
+  function recipeData() {
+    const base = upgradeFixture();
+    const recipe = { schemaVersion: 1 as const, id: 'button-v2', name: 'Button v2', from: { version: base.from.package.version, digest: base.from.digest }, rules: base.plan.rules, packageBindingDecisions: [] };
+    const to = createDesignSystemVersion({ ...base.to.package, migrations: [recipe] });
+    const input = { designSystemId: to.package.id, version: to.package.version, recipeId: recipe.id, planId: 'cli-choice', targetRange: '2.0.0' };
+    const { designSystemId: _id, version: _version, ...request } = input;
+    const response = { revision: base.context.revision, ...instantiateDesignSystemMigrationRecipe(base.context, base.from, to, request) };
+    return { recipe, input, response };
+  }
+  it('lists exact recipes through the same metadata endpoint', async () => {
+    const { recipe } = recipeData();
+    const response = { revision: 8, recipes: [recipe] };
+    const { requests, url } = await startServer(() => ({ body: response }));
+    const result = await runCli(['design-runtime', 'migration-recipes', projectId, 'acme', '2.0.0', '--daemon-url', url, '--json']);
+    expect(result.code).toBe(0); expect(JSON.parse(result.stdout)).toEqual(response);
+    expect(requests.map(({ method, url }) => [method, url])).toEqual([['GET', `${prefix}/versions/acme/2.0.0/migrations`]]);
+  });
+  it('reads a JSON recipe choice from stdin, fetches revision once and returns a plan without review or apply', async () => {
+    const { input, response } = recipeData();
+    const { requests, url } = await startServer(({ method }) => ({ body: method === 'GET' ? { state: state(8) } : response }));
+    const result = await runCli(['design-runtime', 'use-migration-recipe', projectId, '--daemon-url', url, '--json', '--prompt-file', '-'], JSON.stringify(input));
+    expect(result.code).toBe(0); expect(JSON.parse(result.stdout)).toEqual(response);
+    expect(requests.map(({ method, url }) => [method, url])).toEqual([['GET', prefix], ['POST', `${prefix}/upgrades/recipes`]]);
+    expect(requests[1]!.body).toEqual({ ...input, expectedRevision: 8 });
+  });
+  it('rejects a mutable target or injected plan before HTTP and never retries a stale recipe choice', async () => {
+    const { input } = recipeData();
+    const error = { error: { code: 'DESIGN_RUNTIME_REVISION_CONFLICT', message: 'Stale snapshot', details: { expectedRevision: 8, currentRevision: 9 } } };
+    const { requests, url } = await startServer(() => ({ status: 409, body: error }));
+    for (const invalid of [{ ...input, version: 'latest' }, { ...input, plan: {} }]) {
+      const result = await runCli(['design-runtime', 'use-migration-recipe', projectId, '--daemon-url', url, '--json', '--prompt-file', '-'], JSON.stringify(invalid));
+      expect(result.code).toBe(2);
+    }
+    expect(requests).toHaveLength(0);
+    const result = await runCli(['design-runtime', 'use-migration-recipe', projectId, '--daemon-url', url, '--json', '--expected-revision', '8', '--prompt-file', '-'], JSON.stringify(input));
+    expect(result.code).toBe(1); expect(JSON.parse(result.stderr)).toEqual({ status: 409, ...error }); expect(requests).toHaveLength(1);
   });
 });

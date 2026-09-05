@@ -1,6 +1,14 @@
 import type { Dict } from '../types';
 
 export const ru: Dict = {
+  "designUpgrade.recipeTitle": "Опубликованные рецепты миграции",
+  "designUpgrade.recipeLoad": "Найти рецепты миграции",
+  "designUpgrade.recipeChoose": "Выберите рецепт миграции",
+  "designUpgrade.recipeUse": "Использовать рецепт в плане",
+  "designUpgrade.recipeEmpty": "В этой точной версии нет рецепта для активной зависимости.",
+  "designUpgrade.recipeHint": "Рецепт заполняет редактируемый план. Проверка и применение остаются отдельными действиями.",
+  "designUpgrade.recipeLoaded": "Рецепт добавлен в редактируемый план. Проверьте его перед применением.",
+
   "designUpgrade.title": "Проверить обновление дизайн-системы",
   "designUpgrade.hint": "Выберите точную опубликованную версию, проверьте влияние и примените проверенные изменения.",
   "designUpgrade.target": "Целевая версия",

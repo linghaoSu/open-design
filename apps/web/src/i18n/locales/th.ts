@@ -1,6 +1,14 @@
 import type { Dict } from '../types';
 
 export const th: Dict = {
+  "designUpgrade.recipeTitle": "สูตรการย้ายข้อมูลที่เผยแพร่",
+  "designUpgrade.recipeLoad": "ค้นหาสูตรการย้ายข้อมูล",
+  "designUpgrade.recipeChoose": "เลือกสูตรการย้ายข้อมูล",
+  "designUpgrade.recipeUse": "ใช้สูตรในแผน",
+  "designUpgrade.recipeEmpty": "เวอร์ชันที่เจาะจงนี้ไม่มีสูตรสำหรับการพึ่งพาที่ใช้งานอยู่",
+  "designUpgrade.recipeHint": "การใช้สูตรจะเติมแผนที่แก้ไขได้ การตรวจสอบและการนำไปใช้ยังเป็นคนละขั้นตอน",
+  "designUpgrade.recipeLoaded": "เพิ่มสูตรในแผนที่แก้ไขได้แล้ว โปรดตรวจสอบก่อนนำไปใช้",
+
   "designUpgrade.title": "ตรวจสอบการอัปเกรดระบบการออกแบบ",
   "designUpgrade.hint": "เลือกเวอร์ชันที่เผยแพร่แบบเจาะจง ตรวจสอบผลกระทบ แล้วใช้การเปลี่ยนแปลงที่ตรวจสอบแล้ว",
   "designUpgrade.target": "เวอร์ชันเป้าหมาย",

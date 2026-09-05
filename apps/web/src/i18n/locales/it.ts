@@ -1,6 +1,14 @@
 import type { Dict } from '../types';
 
 export const it: Dict = {
+  "designUpgrade.recipeTitle": "Ricette di migrazione pubblicate",
+  "designUpgrade.recipeLoad": "Trova ricette di migrazione",
+  "designUpgrade.recipeChoose": "Scegli una ricetta di migrazione",
+  "designUpgrade.recipeUse": "Usa la ricetta nel piano",
+  "designUpgrade.recipeEmpty": "Questa versione esatta non contiene ricette per la dipendenza attiva.",
+  "designUpgrade.recipeHint": "Una ricetta compila il piano modificabile. Revisione e applicazione restano separate.",
+  "designUpgrade.recipeLoaded": "Ricetta aggiunta al piano modificabile. Esaminalo prima di applicarlo.",
+
   "designUpgrade.title": "Esamina un aggiornamento del sistema di design",
   "designUpgrade.hint": "Scegli una versione pubblicata esatta, esamina l’impatto e applica le modifiche esaminate.",
   "designUpgrade.target": "Versione di destinazione",

@@ -1,6 +1,14 @@
 import type { Dict } from '../types';
 
 export const ko: Dict = {
+  "designUpgrade.recipeTitle": "게시된 마이그레이션 레시피",
+  "designUpgrade.recipeLoad": "마이그레이션 레시피 찾기",
+  "designUpgrade.recipeChoose": "마이그레이션 레시피 선택",
+  "designUpgrade.recipeUse": "계획에 레시피 사용",
+  "designUpgrade.recipeEmpty": "이 정확한 버전에는 활성 의존성에 맞는 레시피가 없습니다.",
+  "designUpgrade.recipeHint": "레시피를 사용하면 편집 가능한 계획이 채워집니다. 검토와 적용은 별도 단계입니다.",
+  "designUpgrade.recipeLoaded": "편집 가능한 계획에 레시피를 추가했습니다. 적용 전에 검토하세요.",
+
   "designUpgrade.title": "디자인 시스템 업그레이드 검토",
   "designUpgrade.hint": "게시된 정확한 버전을 선택하고 영향을 검토한 뒤 검토된 변경 사항을 적용하세요.",
   "designUpgrade.target": "대상 버전",

@@ -30,6 +30,14 @@ export const LOCALE_LABEL: Record<Locale, string> = {
 // flat (not deeply nested) so missing-key TS errors point straight at the
 // offending string instead of a generic object mismatch.
 export interface Dict {
+  "designUpgrade.recipeTitle": string;
+  "designUpgrade.recipeLoad": string;
+  "designUpgrade.recipeChoose": string;
+  "designUpgrade.recipeUse": string;
+  "designUpgrade.recipeEmpty": string;
+  "designUpgrade.recipeHint": string;
+  "designUpgrade.recipeLoaded": string;
+
   'designUpgrade.title': string;
   'designUpgrade.hint': string;
   'designUpgrade.target': string;

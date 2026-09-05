@@ -7,6 +7,7 @@ import { workspaceAccountScopedCacheKey } from '../collab/workspace-identity';
 import { applyProjectDesignRuntimeUpgrade, reviewProjectDesignRuntimeUpgrade, ProjectDesignRuntimeError,
   type ProjectDesignRuntimeScope } from '../providers/design-runtime';
 import { useT } from '../i18n';
+import { DesignRuntimeMigrationRecipes } from './DesignRuntimeMigrationRecipes';
 import { StructureDiagnostics } from './ProjectStructureReview';
 import styles from './DesignRuntimeUpgrades.module.css';
 
@@ -47,6 +48,7 @@ function UpgradeContent({ scope, state, catalog, catalogRevision, viewerOnly, ex
   const copy = Object.fromEntries(copyKeys.map((key) => [key, t(`designUpgrade.${key}`)])) as DesignRuntimeUpgradeCopy;
   const [selected, setSelected] = useState(''); const [range, setRange] = useState(''); const [editor, setEditor] = useState(emptyEditor);
   const [reviewed, setReviewed] = useState<{ review: DesignSystemUpgradeReview; state: ProjectDesignRuntimeState; catalog: readonly ProjectDesignRuntimeVersionSummary[]; editor: string; range: string; selected: string } | null>(null);
+  const [recipeBusy, setRecipeBusy] = useState(false);
   const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [message, setMessage] = useState('');
   const [diagnostics, setDiagnostics] = useState<ValidationDiagnostic[]>([]);
   const mounted = useRef(false); const epoch = useRef(0); const running = useRef(false); const abort = useRef<AbortController | null>(null);
@@ -66,7 +68,7 @@ function UpgradeContent({ scope, state, catalog, catalogRevision, viewerOnly, ex
     } catch (cause) { invalid = `${copy.invalid} ${cause instanceof Error ? cause.message : String(cause)}`; }
   }
   const validReview = reviewed && reviewed.state === state && reviewed.catalog === catalog && reviewed.editor === editor && reviewed.range === range && reviewed.selected === selected && !staleCatalog ? reviewed.review : null;
-  const locked = busy || externalBusy;
+  const locked = busy || externalBusy || recipeBusy;
   function invalidate() { setReviewed(null); setError(''); setDiagnostics([]); setMessage(''); }
   function cancel() { epoch.current += 1; abort.current?.abort(); running.current = false; setBusy(false); callbacks.current.onBusyChange?.(false); }
   useEffect(() => {
@@ -76,7 +78,7 @@ function UpgradeContent({ scope, state, catalog, catalogRevision, viewerOnly, ex
   useEffect(() => { cancel(); invalidate(); }, [state, catalog, catalogRevision]);
 
   async function perform(apply: boolean) {
-    if (running.current || externalBusy || !plan || !state || staleCatalog || (apply && (viewerOnly || !validReview?.canApply))) return;
+    if (running.current || externalBusy || recipeBusy || !plan || !state || staleCatalog || (apply && (viewerOnly || !validReview?.canApply))) return;
     const snapshot = latest.current; const token = ++epoch.current; const controller = new AbortController(); abort.current = controller;
     const current = () => mounted.current && epoch.current === token && Object.entries(snapshot).every(([key, value]) => Reflect.get(latest.current, key) === value);
     running.current = true; setBusy(true); callbacks.current.onBusyChange?.(true); setError(''); setMessage(''); setDiagnostics([]);
@@ -111,6 +113,9 @@ function UpgradeContent({ scope, state, catalog, catalogRevision, viewerOnly, ex
         invalidate(); setSelected(event.target.value); const next = targets.find((entry) => versionKey(entry) === event.target.value); setRange(next?.version ?? '');
       }}><option value="">{copy.choose}</option>{targets.map((entry) => <option key={versionKey(entry)} value={versionKey(entry)}>{entry.name} · {entry.version}</option>)}</select></label>
       <label className={styles.field}>{copy.range}<input data-testid="upgrade-range" disabled={locked || !target} value={range} onChange={(event) => { invalidate(); setRange(event.target.value); }} /></label>
+      {state && target ? <DesignRuntimeMigrationRecipes scope={scope} state={state} target={target} targetRange={range} disabled={busy || externalBusy || staleCatalog}
+        onBusyChange={(next) => { setRecipeBusy(next); callbacks.current.onBusyChange?.(next); }} onSelectionChange={invalidate}
+        onPlan={(next) => { invalidate(); setRange(next.targetRange); setEditor(json({ rules: next.rules, bindingDecisions: next.bindingDecisions })); }} /> : null}
       <label className={styles.field}>{copy.editor}<textarea data-testid="upgrade-editor" spellCheck={false} rows={10} disabled={locked || !target} value={editor} onChange={(event) => { invalidate(); setEditor(event.target.value); }} /></label>
       <p className={styles.muted}>{copy.editorHint}</p>
       <details><summary>{copy.vocabulary}</summary><pre>{examples}</pre></details>

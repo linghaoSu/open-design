@@ -1,6 +1,14 @@
 import type { Dict } from '../types';
 
 export const id: Dict = {
+  "designUpgrade.recipeTitle": "Resep migrasi yang diterbitkan",
+  "designUpgrade.recipeLoad": "Cari resep migrasi",
+  "designUpgrade.recipeChoose": "Pilih resep migrasi",
+  "designUpgrade.recipeUse": "Gunakan resep dalam rencana",
+  "designUpgrade.recipeEmpty": "Versi tepat ini tidak memiliki resep untuk dependensi aktif.",
+  "designUpgrade.recipeHint": "Resep mengisi rencana yang dapat diedit. Peninjauan dan penerapan tetap terpisah.",
+  "designUpgrade.recipeLoaded": "Resep ditambahkan ke rencana yang dapat diedit. Tinjau sebelum menerapkan.",
+
   "designUpgrade.title": "Tinjau peningkatan sistem desain",
   "designUpgrade.hint": "Pilih versi terbit yang tepat, tinjau dampaknya, lalu terapkan perubahan yang telah ditinjau.",
   "designUpgrade.target": "Versi tujuan",

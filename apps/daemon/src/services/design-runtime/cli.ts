@@ -3,6 +3,7 @@ import { parseArgs } from 'node:util';
 import {
   ProjectDesignRuntimeReviewUpgradeRequestSchema, ProjectDesignRuntimeReviewUpgradeResponseSchema,
   ProjectDesignRuntimeApplyUpgradeRequestSchema, ProjectDesignRuntimeApplyUpgradeResponseSchema,
+  ProjectDesignRuntimeMigrationRecipesResponseSchema, ProjectDesignRuntimeInstantiateMigrationRecipeRequestSchema, ProjectDesignRuntimeMigrationRecipeResponseSchema,
   createApiError,
   createApiErrorResponse,
   DesignEntityIdSchema,
@@ -80,6 +81,8 @@ export const DESIGN_RUNTIME_CLI_USAGE = `Usage:
   od design-runtime activate-dependency <projectId> --prompt-file <path|->
   od design-runtime clear-dependency <projectId>
   od design-runtime resolve-dependency <projectId>
+  od design-runtime migration-recipes <projectId> <designSystemId> <exactVersion>
+  od design-runtime use-migration-recipe <projectId> --prompt-file <path|->
   od design-runtime review-upgrade <projectId> --prompt-file <path|->
   od design-runtime apply-upgrade <projectId> --prompt-file <path|->
 
@@ -122,6 +125,9 @@ does not activate a dependency. Activate-dependency selects the exact version an
 records the declared range; resolve-dependency uses its locked version and digests.
 Initial publication requires explicit constraints. When a dependency is locked,
 omitted publication metadata preserves that locked package's metadata.
+Use-migration-recipe accepts {designSystemId,version,recipeId,planId,targetRange}
+and returns an editable plan without changing project state. Manual binding
+overlays are preserved; skipped package decisions are returned as warnings.
 Review-upgrade accepts {plan} and returns a review without changing live state.
 Apply-upgrade requires {plan,reviewId,baseDigest,planDigest} from that review.
 Both accept expectedRevision or read it once; apply never retries a conflict.
@@ -142,6 +148,8 @@ interface CommandSpec {
 
 const COMMANDS: Record<string, CommandSpec> = {
   get: {},
+  'migration-recipes': { argument: 'designSystemId', exactVersion: true },
+  'use-migration-recipe': { revisioned: true, input: ProjectDesignRuntimeInstantiateMigrationRecipeRequestSchema },
   'review-upgrade': { revisioned: true, input: ProjectDesignRuntimeReviewUpgradeRequestSchema },
   'apply-upgrade': { mutates: true, input: ProjectDesignRuntimeApplyUpgradeRequestSchema },
   compile: { mutates: true, input: ProjectDesignRuntimeCompileRequestSchema },
@@ -351,7 +359,20 @@ export async function runDesignRuntimeCli(args: string[], deps: DesignRuntimeCli
     const output = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
     const encodedTarget = encodeURIComponent(targetId ?? '');
     const mutationBody = { ...input, expectedRevision };
-    if (command === 'review-upgrade' || command === 'apply-upgrade') {
+    if (command === 'migration-recipes') {
+      const data = await request(`/versions/${encodedTarget}/${encodeURIComponent(exactVersion!)}/migrations`, ProjectDesignRuntimeMigrationRecipesResponseSchema);
+      if (json) output(data);
+      else if (!data.recipes.length) process.stdout.write('No authored migration recipes.\n');
+      else for (const recipe of data.recipes) process.stdout.write(`${recipe.id}\t${recipe.name}\tfrom ${recipe.from.version}\t${recipe.from.digest}\n`);
+      return { exitCode: 0 };
+    }
+    if (command === 'use-migration-recipe') {
+      const data = await request('/upgrades/recipes', ProjectDesignRuntimeMigrationRecipeResponseSchema, 'POST', mutationBody);
+      if (json) output(data);
+      else { process.stdout.write(`${JSON.stringify(data.plan, null, 2)}\n`); printDiagnostics(data.diagnostics); }
+      return { exitCode: 0 };
+    }
+    if (command === 'review-upgrade'  || command === 'apply-upgrade') {
       const data = command === 'review-upgrade'
         ? await request('/upgrades/review', ProjectDesignRuntimeReviewUpgradeResponseSchema, 'POST', mutationBody)
         : await request('/upgrades/apply', ProjectDesignRuntimeApplyUpgradeResponseSchema, 'POST', mutationBody);

@@ -1,6 +1,14 @@
 import type { Dict } from '../types';
 
 export const ar: Dict = {
+  "designUpgrade.recipeTitle": "وصفات الترحيل المنشورة",
+  "designUpgrade.recipeLoad": "البحث عن وصفات الترحيل",
+  "designUpgrade.recipeChoose": "اختر وصفة ترحيل",
+  "designUpgrade.recipeUse": "استخدام الوصفة في الخطة",
+  "designUpgrade.recipeEmpty": "لا يحتوي هذا الإصدار المحدد على وصفة للتبعية النشطة.",
+  "designUpgrade.recipeHint": "تملأ الوصفة الخطة القابلة للتحرير. تبقى المراجعة والتطبيق خطوتين منفصلتين.",
+  "designUpgrade.recipeLoaded": "أُضيفت الوصفة إلى الخطة القابلة للتحرير. راجعها قبل التطبيق.",
+
   "designUpgrade.title": "مراجعة ترقية نظام التصميم",
   "designUpgrade.hint": "اختر إصدارًا منشورًا محددًا، وراجع أثره، ثم طبّق التغييرات التي راجعتها.",
   "designUpgrade.target": "الإصدار المستهدف",

@@ -1,6 +1,14 @@
 import type { Dict } from '../types';
 
 export const fa: Dict = {
+  "designUpgrade.recipeTitle": "دستورهای مهاجرت منتشرشده",
+  "designUpgrade.recipeLoad": "یافتن دستورهای مهاجرت",
+  "designUpgrade.recipeChoose": "انتخاب دستور مهاجرت",
+  "designUpgrade.recipeUse": "استفاده از دستور در طرح",
+  "designUpgrade.recipeEmpty": "این نسخهٔ دقیق دستوری برای وابستگی فعال ندارد.",
+  "designUpgrade.recipeHint": "دستور، طرح قابل‌ویرایش را پر می‌کند. بررسی و اعمال همچنان دو مرحلهٔ جدا هستند.",
+  "designUpgrade.recipeLoaded": "دستور به طرح قابل‌ویرایش اضافه شد. پیش از اعمال آن را بررسی کنید.",
+
   "designUpgrade.title": "بررسی ارتقای سیستم طراحی",
   "designUpgrade.hint": "یک نسخهٔ منتشرشدهٔ دقیق انتخاب کنید، اثر آن را بررسی کنید و سپس تغییرات بررسی‌شده را اعمال کنید.",
   "designUpgrade.target": "نسخهٔ هدف",

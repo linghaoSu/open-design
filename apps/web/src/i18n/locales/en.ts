@@ -1,6 +1,14 @@
 import type { Dict } from '../types';
 
 export const en: Dict = {
+  "designUpgrade.recipeTitle": "Published migration recipes",
+  "designUpgrade.recipeLoad": "Find migration recipes",
+  "designUpgrade.recipeChoose": "Choose a migration recipe",
+  "designUpgrade.recipeUse": "Use recipe in plan",
+  "designUpgrade.recipeEmpty": "This exact version has no recipe for the active dependency.",
+  "designUpgrade.recipeHint": "Using a recipe fills the editable plan. Review and Apply remain separate.",
+  "designUpgrade.recipeLoaded": "Recipe added to the editable plan. Review it before applying.",
+
   "designUpgrade.title": "Review a design system upgrade",
   "designUpgrade.hint": "Choose an exact published version, review its impact, then apply the reviewed changes.",
   "designUpgrade.target": "Target version",

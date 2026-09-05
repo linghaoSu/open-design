@@ -1,6 +1,14 @@
 import type { Dict } from '../types';
 
 export const tr: Dict = {
+  "designUpgrade.recipeTitle": "Yayımlanmış geçiş tarifleri",
+  "designUpgrade.recipeLoad": "Geçiş tariflerini bul",
+  "designUpgrade.recipeChoose": "Bir geçiş tarifi seçin",
+  "designUpgrade.recipeUse": "Tarifi planda kullan",
+  "designUpgrade.recipeEmpty": "Bu kesin sürümde etkin bağımlılık için bir tarif yok.",
+  "designUpgrade.recipeHint": "Tarif, düzenlenebilir planı doldurur. İnceleme ve uygulama ayrı adımlar olarak kalır.",
+  "designUpgrade.recipeLoaded": "Tarif düzenlenebilir plana eklendi. Uygulamadan önce inceleyin.",
+
   "designUpgrade.title": "Tasarım sistemi yükseltmesini inceleyin",
   "designUpgrade.hint": "Yayımlanmış kesin bir sürüm seçin, etkisini inceleyin ve ardından incelenen değişiklikleri uygulayın.",
   "designUpgrade.target": "Hedef sürüm",

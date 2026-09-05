@@ -1,5 +1,8 @@
 import { z } from 'zod';
 import {
+  DesignSystemMigrationRecipeSchema,
+  DesignSystemMigrationRecipePlanResultSchema,
+  InstantiateDesignSystemMigrationRecipeRequestSchema,
   ApplyDesignSystemUpgradeRequestSchema,
   DesignSystemMigrationPlanSchema,
   DesignSystemUpgradeReviewSchema,
@@ -233,7 +236,7 @@ export const ProjectDesignRuntimePublishCurrentRequestSchema = z.object({
   expectedRevision: revisionSchema, name: z.string().min(1), version: DesignSystemSemVerSchema,
   sourcePaths: z.array(SourcePathSchema).min(1),
   constraints: packageFields.constraints.optional(), tokens: packageFields.tokens.optional(), patterns: packageFields.patterns.optional(),
-  codeCompatibility: packageFields.codeCompatibility.optional(), origin: packageFields.origin,
+  codeCompatibility: packageFields.codeCompatibility.optional(), origin: packageFields.origin, migrations: packageFields.migrations,
 }).strict().superRefine((request, ctx) => {
   const bundle = DesignSystemSourceBundleSchema.safeParse({ schemaVersion: 1, files: request.sourcePaths.map((path) => ({ path, encoding: 'utf8', content: '' })) });
   if (!bundle.success) bundle.error.issues.forEach((issue) => ctx.addIssue({ ...issue, path: ['sourcePaths', issue.path[1] ?? 0] }));
@@ -271,3 +274,18 @@ export const ProjectDesignRuntimeApplyUpgradeResponseSchema = z.object({
   if (!locked || locked.designSystemId !== target.designSystemId || locked.version !== target.version || locked.digest !== target.digest || locked.source.digest !== target.source.digest) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['state', 'lock'], message: 'Applied state must lock the reviewed target.' });
 });
 export type ProjectDesignRuntimeApplyUpgradeResponse = z.infer<typeof ProjectDesignRuntimeApplyUpgradeResponseSchema>;
+
+
+export const ProjectDesignRuntimeMigrationRecipesResponseSchema = z.object({
+  revision: revisionSchema, recipes: z.array(DesignSystemMigrationRecipeSchema),
+}).strict();
+export type ProjectDesignRuntimeMigrationRecipesResponse = z.infer<typeof ProjectDesignRuntimeMigrationRecipesResponseSchema>;
+export const ProjectDesignRuntimeInstantiateMigrationRecipeRequestSchema = z.object({
+  expectedRevision: revisionSchema, designSystemId: DesignEntityIdSchema, version: DesignSystemSemVerSchema,
+  ...InstantiateDesignSystemMigrationRecipeRequestSchema.shape,
+}).strict();
+export type ProjectDesignRuntimeInstantiateMigrationRecipeRequest = z.infer<typeof ProjectDesignRuntimeInstantiateMigrationRecipeRequestSchema>;
+export const ProjectDesignRuntimeMigrationRecipeResponseSchema = z.object({
+  revision: revisionSchema, ...DesignSystemMigrationRecipePlanResultSchema.shape,
+}).strict();
+export type ProjectDesignRuntimeMigrationRecipeResponse = z.infer<typeof ProjectDesignRuntimeMigrationRecipeResponseSchema>;

@@ -60,7 +60,7 @@ until every required milestone and invariant has direct current-state evidence.
 | 5 | Staged shared component revisions, usage/affected-screen impact, explicit publish and undo/history | A draft leaves live instances unchanged; publish changes all non-overridden instances; conflict/invalid-override tests and discoverable UI/CLI | Complete |
 | 6 | Immutable design-system versions, project dependencies, exact lock and digest/source verification | Reopen resolves same content until explicit upgrade; tampering/missing locked version diagnosed | Complete |
 | 7 | Semantic diff using stable component/token IDs | Added/removed/renamed/changed classification; removed variant/prop/token and incompatible slot are breaking | Complete |
-| 8 | Upgrade impact, deterministic migrations, review and explicit apply | Diff + graph + overrides identifies affected nodes/screens; migration validates before atomic lock/document update; failure/conflict leaves live state intact | In progress |
+| 8 | Upgrade impact, deterministic migrations, review and explicit apply | Diff + graph + overrides identifies affected nodes/screens; migration validates before atomic lock/document update; failure/conflict leaves live state intact | Complete |
 | 9 | Machine-readable handoff and persistent project-component code bindings | Manifest includes lock, target, IR, registry, bindings and change context; deterministic round-trip, package compatibility, UI/CLI export | In progress |
 | 10 | Explore/Guided project modes and generation repair loop | Structured diagnostics after generation; bounded repair; normal Explore behavior preserved; equivalent generation paths validated | In progress |
 | 11 | Pattern registry and design grammar | Pattern retrieval/configuration and slot composition validated deterministically; reusable resource-list fixture | Pending |
@@ -188,7 +188,13 @@ bindings receive proposed recipe decisions, and manual overlays are skipped with
 diagnostics. Recipe-only metadata changes do not invent affected screens, while
 selected transforms contribute their actual references to impact analysis. Root
 ran 64 daemon recipe/upgrade/diff/version cases and 15 contract cases. Public recipe
-selection is still in progress.
+listing and instantiation now share canonical HTTP, CLI and web-provider operations.
+The Versions editor loads matching recipes from the exact target package and fills
+an editable plan without reviewing or applying it. Selection changes invalidate
+existing review proof. Acceptance includes 56 CLI, 3 HTTP, 2 API contract and 34
+web/provider/locale cases. Root's full browser workflow passed in 20 seconds,
+including unchanged live state after choosing a recipe, explicit review/application,
+preserved overrides and the exact lock after reload.
 
 The prerequisite local-binding/value-transform foundation is accepted in
 `a76e97412`. It verifies exact local revisions, preserves project code in an explicit

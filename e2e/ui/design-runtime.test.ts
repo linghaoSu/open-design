@@ -4,6 +4,7 @@ import type {
   ProjectDesignRuntimeResponse, ProjectDesignRuntimeStageComponentResponse, ProjectDesignRuntimeValidateResponse,
   ProjectDesignRuntimePublishVersionResponse, ProjectDesignRuntimeVersionResponse, ProjectDesignRuntimeDependencyResponse,
   ProjectDesignRuntimeReviewUpgradeResponse, ProjectDesignRuntimeApplyUpgradeResponse,
+  DesignSystemMigrationRecipe, ProjectDesignRuntimeMigrationRecipeResponse,
   UIIRDocument,
 } from '@open-design/contracts';
 import { expect, test } from '@/playwright/suite';
@@ -288,6 +289,14 @@ export function Button({ variant = 'primary', disabled = false }: ButtonProps) {
   }
   const upgradeSource = sourceContent.replaceAll("'primary'", "'solid'");
   upgradePackage.source.files = [{ path: 'Button.tsx', encoding: 'utf8', content: upgradeSource }];
+  const migrationRecipe: DesignSystemMigrationRecipe = {
+    schemaVersion: 1, id: 'primary-to-solid', name: 'Adopt the solid Button variant',
+    from: { version: '1.0.0', digest: firstPublication.version.digest },
+    rules: [{ id: 'primary-to-solid', type: 'transform-prop', componentRef: binding.componentRef,
+      fromProp: 'variant', toProp: 'variant', valueMap: [{ from: 'primary', to: 'solid' }] }],
+    packageBindingDecisions: [{ type: 'use-target-package', bindingId: binding.id, targetBindingId: binding.id }],
+  };
+  upgradePackage.migrations = [migrationRecipe];
   const importUpgrade = await page.request.post(`${prefix}/versions`, {
     data: { expectedRevision: nextPublication.state.revision, package: upgradePackage },
   });
@@ -305,11 +314,26 @@ export function Button({ variant = 'primary', disabled = false }: ButtonProps) {
   expect(blockedReview.ok(), await blockedReview.text()).toBeTruthy();
   expect((await blockedReview.json() as ProjectDesignRuntimeReviewUpgradeResponse).review.canApply).toBe(false);
   await expect(page.getByTestId('upgrade-apply')).toBeDisabled();
-  await page.getByTestId('upgrade-editor').fill(JSON.stringify({
-    rules: [{ id: 'primary-to-solid', type: 'transform-prop', componentRef: binding.componentRef,
-      fromProp: 'variant', toProp: 'variant', valueMap: [{ from: 'primary', to: 'solid' }] }],
-    bindingDecisions: [{ type: 'use-target-package', bindingId: binding.id, targetBindingId: binding.id }],
+  await page.getByTestId('upgrade-recipes-load').click();
+  await expect(page.getByTestId('upgrade-recipe-select')).toBeEnabled();
+  await page.getByTestId('upgrade-recipe-select').selectOption(migrationRecipe.id);
+  const recipeResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `${prefix}/upgrades/recipes`);
+  await page.getByTestId('upgrade-recipe-use').click();
+  const instantiatedRecipe = await recipeResponse;
+  expect(instantiatedRecipe.ok(), await instantiatedRecipe.text()).toBeTruthy();
+  const recipeResult = await instantiatedRecipe.json() as ProjectDesignRuntimeMigrationRecipeResponse;
+  expect(recipeResult.plan.rules).toEqual(migrationRecipe.rules);
+  expect(recipeResult.skippedBindingDecisions).toEqual([]);
+  await expect(page.getByTestId('upgrade-editor')).toHaveValue(JSON.stringify({
+    rules: migrationRecipe.rules, bindingDecisions: migrationRecipe.packageBindingDecisions,
   }, null, 2));
+  await expect(page.getByTestId('upgrade-apply')).toBeDisabled();
+  const afterRecipeResponse = await page.request.get(prefix);
+  expect(afterRecipeResponse.ok(), await afterRecipeResponse.text()).toBeTruthy();
+  const afterRecipe = (await afterRecipeResponse.json() as ProjectDesignRuntimeResponse).state;
+  expect(afterRecipe.revision).toBe(upgradePublication.state.revision);
+  expect(afterRecipe.lock).toEqual(lockedState.lock);
   const reviewUpgradeResponse = page.waitForResponse((response) => response.request().method() === 'POST'
     && new URL(response.url()).pathname === `${prefix}/upgrades/review`);
   await page.getByTestId('upgrade-review').click();

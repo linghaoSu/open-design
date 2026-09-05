@@ -1,6 +1,14 @@
 import type { Dict } from "../types";
 
 export const zhTW: Dict = {
+  "designUpgrade.recipeTitle": "已發佈的遷移配方",
+  "designUpgrade.recipeLoad": "尋找遷移配方",
+  "designUpgrade.recipeChoose": "選擇遷移配方",
+  "designUpgrade.recipeUse": "將配方用於計畫",
+  "designUpgrade.recipeEmpty": "此確切版本沒有適用於目前相依項目的配方。",
+  "designUpgrade.recipeHint": "使用配方會填入可編輯的計畫。審查與套用仍須分別執行。",
+  "designUpgrade.recipeLoaded": "配方已填入可編輯的計畫。套用前請先審查。",
+
   "designUpgrade.title": "審查設計系統升級",
   "designUpgrade.hint": "選擇確切的已發佈版本，審查影響後再套用已審查的變更。",
   "designUpgrade.target": "目標版本",

@@ -122,6 +122,8 @@ All paths below are relative to `/api/projects/:id/design-runtime`:
 | Clear the active dependency explicitly | `DELETE /dependency` | `clear-dependency <projectId>` |
 | Review an exact-version migration | `POST /upgrades/review` | `review-upgrade <projectId> --prompt-file <path\|->` |
 | Apply the reviewed migration | `POST /upgrades/apply` | `apply-upgrade <projectId> --prompt-file <path\|->` |
+| List exact-package migration recipes | `GET /versions/:designSystemId/:version/migrations` | `migration-recipes <projectId> <designSystemId> <exactVersion>` |
+| Turn a matching recipe into an editable plan | `POST /upgrades/recipes` | `use-migration-recipe <projectId> --prompt-file <path\|->` |
 
 CLI commands begin with `od design-runtime` and support `--json`, `--daemon-url`,
 `--workspace`, and `--workspace-member`. Commands with request bodies read JSON from a
@@ -251,7 +253,15 @@ can be repaired by the proposal; proposed errors block application. Source and
 token coverage limitations are shown explicitly. **Apply upgrade** becomes available
 only for the unchanged applicable review. Editing the plan or refreshing project
 or catalog state invalidates that proof. Workspace viewers can review without
-applying. Reusable package-authored migration recipes remain in the delivery plan.
+applying.
+
+Choose **Load migration recipes** to retrieve recipes from the exact target package.
+Only recipes matching the current locked source version and digest are offered.
+Using a recipe fills the editable plan; it still requires explicit review and apply.
+Recipe binding decisions cover unchanged package bindings. Manual binding overlays
+are skipped and reported for an explicit choice. Package authors can include optional
+`migrations` metadata when importing or publishing a version; publishing inherits it
+from the active package unless an explicit array replaces it (`[]` clears it).
 
 ## Compatibility and identity
 

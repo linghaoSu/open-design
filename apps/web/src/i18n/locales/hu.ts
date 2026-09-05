@@ -1,6 +1,14 @@
 import type { Dict } from '../types';
 
 export const hu: Dict = {
+  "designUpgrade.recipeTitle": "Közzétett migrációs receptek",
+  "designUpgrade.recipeLoad": "Migrációs receptek keresése",
+  "designUpgrade.recipeChoose": "Migrációs recept kiválasztása",
+  "designUpgrade.recipeUse": "Recept használata a tervben",
+  "designUpgrade.recipeEmpty": "Ebben a pontos verzióban nincs recept az aktív függőséghez.",
+  "designUpgrade.recipeHint": "A recept kitölti a szerkeszthető tervet. Az áttekintés és az alkalmazás külön lépés marad.",
+  "designUpgrade.recipeLoaded": "A recept bekerült a szerkeszthető tervbe. Alkalmazás előtt tekintse át.",
+
   "designUpgrade.title": "A tervezési rendszer frissítésének áttekintése",
   "designUpgrade.hint": "Válasszon egy pontos közzétett verziót, tekintse át a hatását, majd alkalmazza az ellenőrzött módosításokat.",
   "designUpgrade.target": "Célverzió",

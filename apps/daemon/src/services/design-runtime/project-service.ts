@@ -48,6 +48,7 @@ import {
 import { createDesignSystemVersion, createProjectDesignSystemLock, resolveLockedDesignSystemsSync, verifyDesignSystemVersion, DesignSystemVersionError } from './design-system-version.js';
 import { reviewDesignSystemUpgrade, applyDesignSystemUpgrade } from './design-system-upgrade.js';
 import { resolveComponentBinding } from './binding-resolver.js';
+import { createProjectMigrationRecipeService } from './project-migration-recipes.js';
 import {
   reindexComponentBindings,
   revalidateComponentBinding,
@@ -165,6 +166,7 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
   }
 
   return {
+    ...createProjectMigrationRecipeService({ read, readAtRevision, requireVersion }),
     get: (projectId: string) => read(projectId),
 
     versions(projectId: string) {
@@ -195,13 +197,14 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
         catch { throw new ProjectDesignRuntimeError(400, 'DESIGN_RUNTIME_SOURCE_UNAVAILABLE', 'A selected project source could not be read.', { sourcePath: path }); }
       }));
       const origin = request.origin ?? active?.origin;
+      const migrations = request.migrations ?? active?.migrations;
       return publishVersion(projectId, request.expectedRevision, state, {
         schemaVersion: 1, id: registry.id, name: request.name, version: request.version,
         registry, codeIndex: { ...state.codeIndex, id: registry.id }, bindings: { ...state.bindings, id: registry.id },
         tokens: request.tokens ?? active?.tokens ?? { schemaVersion: 1, id: registry.id, tokens: [] },
         patterns: request.patterns ?? active?.patterns ?? { schemaVersion: 1, id: registry.id, patterns: [] },
         constraints, codeCompatibility: request.codeCompatibility ?? active?.codeCompatibility ?? [],
-        source: { schemaVersion: 1, files }, ...(origin === undefined ? {} : { origin }),
+        source: { schemaVersion: 1, files }, ...(origin === undefined ? {} : { origin }), ...(migrations === undefined ? {} : { migrations }),
       });
     },
 

@@ -1,6 +1,14 @@
 import type { Dict } from '../types';
 
 export const ja: Dict = {
+  "designUpgrade.recipeTitle": "公開済みの移行レシピ",
+  "designUpgrade.recipeLoad": "移行レシピを検索",
+  "designUpgrade.recipeChoose": "移行レシピを選択",
+  "designUpgrade.recipeUse": "計画にレシピを使用",
+  "designUpgrade.recipeEmpty": "この正確なバージョンには、有効な依存関係に対応するレシピがありません。",
+  "designUpgrade.recipeHint": "レシピは編集可能な計画を入力します。確認と適用は別々の操作です。",
+  "designUpgrade.recipeLoaded": "編集可能な計画にレシピを追加しました。適用前に確認してください。",
+
   "designUpgrade.title": "デザインシステムのアップグレードを確認",
   "designUpgrade.hint": "公開済みの正確なバージョンを選び、影響を確認してから変更を適用します。",
   "designUpgrade.target": "対象バージョン",

@@ -1,6 +1,14 @@
 import type { Dict } from "../types";
 
 export const zhCN: Dict = {
+  "designUpgrade.recipeTitle": "已发布的迁移配方",
+  "designUpgrade.recipeLoad": "查找迁移配方",
+  "designUpgrade.recipeChoose": "选择迁移配方",
+  "designUpgrade.recipeUse": "将配方用于计划",
+  "designUpgrade.recipeEmpty": "此确切版本没有适用于当前依赖的配方。",
+  "designUpgrade.recipeHint": "使用配方会填入可编辑的计划。审查与应用仍需分别执行。",
+  "designUpgrade.recipeLoaded": "配方已填入可编辑的计划。应用前请先审查。",
+
   "designUpgrade.title": "审查设计系统升级",
   "designUpgrade.hint": "选择确切的已发布版本，审查影响后再应用已审查的变更。",
   "designUpgrade.target": "目标版本",

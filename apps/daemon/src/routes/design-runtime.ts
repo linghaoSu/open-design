@@ -2,6 +2,7 @@ import type { Express, Request, Response } from 'express';
 import {
   ProjectDesignRuntimeReviewUpgradeRequestSchema,
   ProjectDesignRuntimeApplyUpgradeRequestSchema,
+  ProjectDesignRuntimeInstantiateMigrationRecipeRequestSchema,
   JsonValueSchema,
   DesignSystemSemVerSchema,
   ProjectDesignRuntimeImportVersionRequestSchema,
@@ -111,6 +112,8 @@ export function registerDesignRuntimeRoutes(app: Express, deps: RegisterDesignRu
   app.get(prefix, handle('read', (req) => ({ state: service.get(String(req.params.id)) })));
   app.post(`${prefix}/upgrades/review`, handle('read', (req) => service.reviewUpgrade(String(req.params.id), parseInput(ProjectDesignRuntimeReviewUpgradeRequestSchema, req.body))));
   app.post(`${prefix}/upgrades/apply`, handle('write', (req) => service.applyUpgrade(String(req.params.id), parseInput(ProjectDesignRuntimeApplyUpgradeRequestSchema, req.body))));
+  app.get(`${prefix}/versions/:designSystemId/:version/migrations`, handle('read', (req) => service.migrationRecipes(String(req.params.id), parseInput(DesignEntityIdSchema, req.params.designSystemId), parseInput(DesignSystemSemVerSchema, req.params.version))));
+  app.post(`${prefix}/upgrades/recipes`, handle('read', (req) => service.instantiateMigrationRecipe(String(req.params.id), parseInput(ProjectDesignRuntimeInstantiateMigrationRecipeRequestSchema, req.body))));
   app.get(`${prefix}/versions`, handle('read', (req) => service.versions(String(req.params.id))));
   app.get(`${prefix}/versions/:designSystemId/:version`, handle('read', (req) => service.version(String(req.params.id), parseInput(DesignEntityIdSchema, req.params.designSystemId), parseInput(DesignSystemSemVerSchema, req.params.version))));
   app.post(`${prefix}/versions`, handle('write', (req) => service.importVersion(String(req.params.id), parseInput(ProjectDesignRuntimeImportVersionRequestSchema, req.body))));

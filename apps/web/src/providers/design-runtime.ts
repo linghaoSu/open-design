@@ -2,6 +2,8 @@ import {
   ProjectDesignRuntimeReviewUpgradeRequestSchema, ProjectDesignRuntimeReviewUpgradeResponseSchema,
   ProjectDesignRuntimeApplyUpgradeRequestSchema, ProjectDesignRuntimeApplyUpgradeResponseSchema,
   type ProjectDesignRuntimeReviewUpgradeRequest, type ProjectDesignRuntimeApplyUpgradeRequest,
+  ProjectDesignRuntimeMigrationRecipesResponseSchema, ProjectDesignRuntimeInstantiateMigrationRecipeRequestSchema, ProjectDesignRuntimeMigrationRecipeResponseSchema,
+  type ProjectDesignRuntimeInstantiateMigrationRecipeRequest,
   ProjectDesignRuntimeBindRequestSchema,
   DesignEntityIdSchema, DesignSystemSemVerSchema,
   ProjectDesignRuntimeVersionsResponseSchema, ProjectDesignRuntimeVersionResponseSchema,
@@ -208,3 +210,10 @@ export const reviewProjectDesignRuntimeUpgrade = (scope: ProjectDesignRuntimeSco
 
 export const applyProjectDesignRuntimeUpgrade = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeApplyUpgradeRequest) =>
   request(scope, '/upgrades/apply', ProjectDesignRuntimeApplyUpgradeResponseSchema, 'POST', ProjectDesignRuntimeApplyUpgradeRequestSchema.parse(input));
+
+
+export const listProjectDesignRuntimeMigrationRecipes = (scope: ProjectDesignRuntimeScope, designSystemId: string, version: string) =>
+  request(scope, `/versions/${encodeURIComponent(DesignEntityIdSchema.parse(designSystemId))}/${encodeURIComponent(DesignSystemSemVerSchema.parse(version))}/migrations`, ProjectDesignRuntimeMigrationRecipesResponseSchema);
+
+export const instantiateProjectDesignRuntimeMigrationRecipe = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeInstantiateMigrationRecipeRequest) =>
+  request(scope, '/upgrades/recipes', ProjectDesignRuntimeMigrationRecipeResponseSchema, 'POST', ProjectDesignRuntimeInstantiateMigrationRecipeRequestSchema.parse(input));
