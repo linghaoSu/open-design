@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   compileProjectDesignRuntime,
+  listProjectDesignRuntimeVersions, getProjectDesignRuntimeVersion,
+  importProjectDesignRuntimeVersion, publishProjectDesignRuntimeVersion,
+  activateProjectDesignRuntimeDependency, clearProjectDesignRuntimeDependency, resolveProjectDesignRuntimeDependency,
   saveProjectDesignRuntimeDocument,
   validateProjectDesignRuntimeDocument,
   resolveProjectDesignRuntimeDocument,
@@ -26,6 +29,7 @@ import {
   validateProjectDesignRuntimeUsage,
   type ProjectDesignRuntimeScope,
 } from '../../src/providers/design-runtime';
+import { DesignSystemPackageSchema } from '@open-design/contracts';
 import { designRuntimeState } from '../helpers/design-runtime-fixtures';
 import { workspaceContextFixture } from '../helpers/workspace-context';
 
@@ -124,5 +128,63 @@ describe('project design runtime provider', () => {
     const outcome = getProjectDesignRuntime({ projectId: 'p', workspaceContext: null });
     await expect(outcome).rejects.toBeInstanceOf(ProjectDesignRuntimeError);
     await expect(outcome).rejects.toMatchObject({ status: 409, currentRevision: 7, currentDefinitionRevision: 3, diagnostics: [diagnostic], message: 'Revision changed.' });
+  });
+});
+
+
+describe('version catalog and dependency providers', () => {
+  const policy = { unknownComponents: 'error', unknownProps: 'error', invalidVariants: 'error', invalidSlots: 'error', tokens: { undeclared: 'error' }, rawCss: { colors: 'error', radius: 'error', spacing: 'error' }, interactiveHtml: { customControlsWhenBoundComponentExists: 'error' } };
+  const pkg = DesignSystemPackageSchema.parse({ schemaVersion: 1, id: 'acme.ui', name: 'Acme UI', version: '1.0.0+build.1',
+    registry: { schemaVersion: 1, id: 'acme.ui', components: [] }, codeIndex: { schemaVersion: 1, id: 'acme.ui', components: [] }, bindings: { schemaVersion: 1, id: 'acme.ui', bindings: [] },
+    tokens: { schemaVersion: 1, id: 'acme.ui', tokens: [] }, patterns: { schemaVersion: 1, id: 'acme.ui', patterns: [] },
+    constraints: { schemaVersion: 1, explore: policy, guided: policy, strict: policy }, codeCompatibility: [],
+    source: { schemaVersion: 1, files: [{ path: 'source.tsx', encoding: 'utf8', content: 'source' }] },
+  });
+  const digest = `sha256:${'a'.repeat(64)}`;
+  const version = { schemaVersion: 1, package: pkg, digest, sourceDigest: digest };
+  const summary = { id: pkg.id, name: pkg.name, version: pkg.version, digest, sourceDigest: digest };
+
+  it('uses shared exact endpoints, DTOs, workspace headers and cancellation for publication and pinning', async () => {
+    const state = designRuntimeState();
+    const scope: ProjectDesignRuntimeScope = { projectId: 'project / one', workspaceContext: workspaceContextFixture({ workspaceId: 'team-a', workspaceMemberId: 'member-a' }), signal: new AbortController().signal };
+    const publish = { expectedRevision: 1, name: pkg.name, version: pkg.version, sourcePaths: ['source.tsx'], constraints: pkg.constraints };
+    const activate = { expectedRevision: 1, designSystemId: pkg.id, version: pkg.version, range: '^1.0.0' };
+    const cases = [
+      { run: () => listProjectDesignRuntimeVersions(scope), path: '/versions', method: 'GET', body: undefined, response: { revision: 1, versions: [summary] } },
+      { run: () => getProjectDesignRuntimeVersion(scope, pkg.id, pkg.version), path: '/versions/acme.ui/1.0.0%2Bbuild.1', method: 'GET', body: undefined, response: { revision: 1, version } },
+      { run: () => importProjectDesignRuntimeVersion(scope, { expectedRevision: 1, package: pkg }), path: '/versions', method: 'POST', body: { expectedRevision: 1, package: pkg }, response: { state, version: summary } },
+      { run: () => publishProjectDesignRuntimeVersion(scope, publish), path: '/versions/publish-current', method: 'POST', body: publish, response: { state, version: summary } },
+      { run: () => activateProjectDesignRuntimeDependency(scope, activate), path: '/dependency', method: 'POST', body: activate, response: { state } },
+      { run: () => clearProjectDesignRuntimeDependency(scope, { expectedRevision: 1 }), path: '/dependency', method: 'DELETE', body: { expectedRevision: 1 }, response: { state } },
+      { run: () => resolveProjectDesignRuntimeDependency(scope), path: '/dependency/resolve', method: 'GET', body: undefined, response: { revision: 1, resolution: { schemaVersion: 1, ok: true, versions: [version], diagnostics: [] } } },
+    ];
+    for (const testCase of cases) {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(testCase.response), { status: 200 }));
+      vi.stubGlobal('fetch', fetchMock);
+      await expect(testCase.run()).resolves.toEqual(testCase.response);
+      const [url, init] = fetchMock.mock.calls[0]! as [string, RequestInit];
+      expect(url).toBe(`/api/projects/project%20%2F%20one/design-runtime${testCase.path}`);
+      expect(init.method).toBe(testCase.method);
+      expect(init.signal).toBe(scope.signal);
+      expect(new Headers(init.headers).get('x-od-workspace-id')).toBe('team-a');
+      expect(init.body === undefined ? undefined : JSON.parse(String(init.body))).toEqual(testCase.body);
+    }
+  });
+
+  it('rejects implicit versions and mismatched exact-version responses', async () => {
+    const scope = { projectId: 'project', workspaceContext: null };
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    expect(() => getProjectDesignRuntimeVersion(scope, pkg.id, 'latest')).toThrow();
+    expect(() => publishProjectDesignRuntimeVersion(scope, { expectedRevision: 1, name: pkg.name, version: '1.0.0', sourcePaths: ['../source'] })).toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ revision: 1, version: { ...version, package: { ...pkg, version: '1.1.0' } } }), { status: 200 }));
+    await expect(getProjectDesignRuntimeVersion(scope, pkg.id, pkg.version)).rejects.toThrow('different design-system version');
+  });
+
+  it('returns integrity diagnostics and revision for explicit clear recovery', async () => {
+    const response = { revision: 4, resolution: { schemaVersion: 1, ok: false, versions: [], diagnostics: [{ schemaVersion: 1, severity: 'error', code: 'ODDS5003', message: 'Frozen package missing.' }] } };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(response), { status: 200 })));
+    await expect(resolveProjectDesignRuntimeDependency({ projectId: 'project', workspaceContext: null })).resolves.toEqual(response);
   });
 });

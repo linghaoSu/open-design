@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   ProjectDesignRuntimeBindRequestSchema,
+  ProjectDesignRuntimeVersionsResponseSchema, ProjectDesignRuntimeVersionResponseSchema,
+  ProjectDesignRuntimeImportVersionRequestSchema, ProjectDesignRuntimePublishVersionResponseSchema,
+  ProjectDesignRuntimePublishCurrentRequestSchema, ProjectDesignRuntimeActivateDependencyRequestSchema,
+  ProjectDesignRuntimeDependencyResponseSchema,
   ProjectDesignRuntimeSaveDocumentRequestSchema,
   ProjectDesignRuntimeValidateDocumentRequestSchema,
   ProjectDesignRuntimeDocumentResponseSchema,
@@ -40,6 +44,8 @@ const state = {
   projectComponents: { schemaVersion: 1, id: 'project', components: [] },
   document: null,
   sharedChanges: { schemaVersion: 1, id: 'project', drafts: [], history: [] },
+  dependencies: { schemaVersion: 1, id: 'project', dependencies: [] },
+  lock: { schemaVersion: 1, id: 'project', dependencies: [] },
   registry: { schemaVersion: 1, id: 'test', components: [component] },
   codeIndex: { schemaVersion: 1, id: 'project', components: [code] },
   bindings: { schemaVersion: 1, id: 'project', bindings: [binding] },
@@ -118,5 +124,52 @@ describe('project design runtime API contracts', () => {
   it('does not let bind promote an unbound or unverified request implicitly', () => {
     expect(ProjectDesignRuntimeBindRequestSchema.safeParse({ expectedRevision: 1, binding: { ...binding, status: 'candidate', verified: false } }).success).toBe(false);
     expect(ProjectDesignRuntimeBindRequestSchema.safeParse({ expectedRevision: 1, binding: { ...binding, verified: false } }).success).toBe(false);
+  });
+});
+
+
+describe('project exact-version API contracts', () => {
+  const policy = { unknownComponents: 'error', unknownProps: 'error', invalidVariants: 'error', invalidSlots: 'error', tokens: { undeclared: 'error' }, rawCss: { colors: 'error', radius: 'error', spacing: 'error' }, interactiveHtml: { customControlsWhenBoundComponentExists: 'error' } };
+  const pkg = { schemaVersion: 1, id: 'test', name: 'Test UI', version: '1.0.0', registry: state.registry,
+    codeIndex: { ...state.codeIndex, id: 'test' }, bindings: { ...state.bindings, id: 'test' },
+    tokens: { schemaVersion: 1, id: 'test', tokens: [] }, patterns: { schemaVersion: 1, id: 'test', patterns: [] },
+    constraints: { schemaVersion: 1, explore: policy, guided: policy, strict: policy }, codeCompatibility: [],
+    source: { schemaVersion: 1, files: [{ path: 'src/Button.tsx', encoding: 'utf8', content: 'export function Button() {}' }] },
+  };
+  const digest = `sha256:${'a'.repeat(64)}`;
+  const version = { schemaVersion: 1, package: pkg, digest, sourceDigest: digest };
+  const summary = { id: 'test', name: 'Test UI', version: '1.0.0', digest, sourceDigest: digest };
+  const activate = { expectedRevision: 1, designSystemId: 'test', version: '1.0.0', range: '^1.0.0' };
+  const publish = { expectedRevision: 1, name: 'Test UI', version: '1.0.0', sourcePaths: ['src/Button.tsx'], constraints: pkg.constraints };
+  it.each([
+    [ProjectDesignRuntimeVersionsResponseSchema, { revision: 1, versions: [summary] }],
+    [ProjectDesignRuntimeVersionResponseSchema, { revision: 1, version }],
+    [ProjectDesignRuntimeImportVersionRequestSchema, { expectedRevision: 1, package: pkg }],
+    [ProjectDesignRuntimePublishVersionResponseSchema, { state, version: summary }],
+    [ProjectDesignRuntimePublishCurrentRequestSchema, publish],
+    [ProjectDesignRuntimeActivateDependencyRequestSchema, activate],
+    [ProjectDesignRuntimeDependencyResponseSchema, { revision: 1, resolution: { schemaVersion: 1, ok: true, versions: [version], diagnostics: [] } }],
+  ])('round trips one canonical publication/dependency DTO', (schema, input) => {
+    expect(schema.parse(JSON.parse(JSON.stringify(input)))).toEqual(input);
+    expect(schema.safeParse({ ...input, unknown: true }).success).toBe(false);
+  });
+
+  it('rejects implicit versions, unsafe or duplicate selected paths, and source bytes in the summary', () => {
+    for (const value of ['latest', '*', '^1.0.0']) expect(ProjectDesignRuntimeActivateDependencyRequestSchema.safeParse({ ...activate, version: value }).success).toBe(false);
+    expect(ProjectDesignRuntimeActivateDependencyRequestSchema.safeParse({ ...activate, range: 'latest' }).success).toBe(false);
+    for (const sourcePaths of [[], ['../Button.tsx'], ['/Button.tsx'], ['src/Button.tsx', 'SRC/button.tsx'], ['src', 'src/Button.tsx']]) expect(ProjectDesignRuntimePublishCurrentRequestSchema.safeParse({ ...publish, sourcePaths }).success).toBe(false);
+    expect(ProjectDesignRuntimeVersionsResponseSchema.safeParse({ revision: 1, versions: [{ ...summary, package: pkg }] }).success).toBe(false);
+    expect(ProjectDesignRuntimeImportVersionRequestSchema.safeParse({ expectedRevision: -1, package: pkg }).success).toBe(false);
+  });
+
+  it('requires one project-scoped active identity and a paired exact lock', () => {
+    const dependencies = { schemaVersion: 1, id: 'project', dependencies: [{ designSystemId: 'test', version: '^1.0.0' }] };
+    const lock = { schemaVersion: 1, id: 'project', dependencies: [{ designSystemId: 'test', version: '1.0.0', digest, source: { type: 'bundle', digest } }] };
+    expect(ProjectDesignRuntimeStateSchema.parse({ ...state, dependencies, lock }).lock).toEqual(lock);
+    expect(ProjectDesignRuntimeStateSchema.safeParse({ ...state, dependencies }).success).toBe(false);
+    expect(ProjectDesignRuntimeStateSchema.safeParse({ ...state, dependencies, lock: { ...lock, id: 'other' } }).success).toBe(false);
+    expect(ProjectDesignRuntimeStateSchema.safeParse({ ...state, dependencies, lock, registry: { ...state.registry, id: 'other' } }).success).toBe(false);
+    const plural = { ...state, dependencies: { ...dependencies, dependencies: [...dependencies.dependencies, { designSystemId: 'second', version: '1.0.0' }] }, lock: { ...lock, dependencies: [...lock.dependencies, { ...lock.dependencies[0], designSystemId: 'second' }] } };
+    expect(ProjectDesignRuntimeStateSchema.safeParse(plural).success).toBe(false);
   });
 });

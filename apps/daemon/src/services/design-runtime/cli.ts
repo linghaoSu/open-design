@@ -4,6 +4,7 @@ import {
   createApiError,
   createApiErrorResponse,
   DesignEntityIdSchema,
+  DesignSystemSemVerSchema,
   ProjectComponentDeleteRequestSchema,
   ProjectDesignRuntimeBindRequestSchema,
   ProjectDesignRuntimeCodeComponentsResponseSchema,
@@ -31,6 +32,13 @@ import {
   ProjectDesignRuntimeDeleteComponentRequestSchema,
   ProjectDesignRuntimeDetachRequestSchema,
   ProjectDesignRuntimeDetachResponseSchema,
+  ProjectDesignRuntimeVersionsResponseSchema,
+  ProjectDesignRuntimeVersionResponseSchema,
+  ProjectDesignRuntimeImportVersionRequestSchema,
+  ProjectDesignRuntimePublishCurrentRequestSchema,
+  ProjectDesignRuntimePublishVersionResponseSchema,
+  ProjectDesignRuntimeActivateDependencyRequestSchema,
+  ProjectDesignRuntimeDependencyResponseSchema,
   type ComponentReferenceOwner,
   type ReferenceGraphQueryResult,
   type SharedComponentImpact,
@@ -63,6 +71,13 @@ export const DESIGN_RUNTIME_CLI_USAGE = `Usage:
   od design-runtime undo <projectId> <componentId> --prompt-file <path|->
   od design-runtime delete <projectId> <componentId> --prompt-file <path|->
   od design-runtime detach <projectId> --prompt-file <path|->
+  od design-runtime versions <projectId>
+  od design-runtime version <projectId> <designSystemId> <exactVersion>
+  od design-runtime import-version <projectId> --prompt-file <path|->
+  od design-runtime publish-version <projectId> --prompt-file <path|->
+  od design-runtime activate-dependency <projectId> --prompt-file <path|->
+  od design-runtime clear-dependency <projectId>
+  od design-runtime resolve-dependency <projectId>
 
 Common options:
   --json                     Emit the daemon JSON response.
@@ -81,6 +96,9 @@ Publish JSON: {"expectedDefinitionRevision":0}
 Undo JSON: {"draftId":"undo-card","expectedDefinitionRevision":2,"restoreDefinitionRevision":1}
 Delete JSON: {"action":{"type":"reject"}} (alternatives: replace with replacementRef, detach, delete-instances)
 Detach JSON: {"instance":{"schemaVersion":1,"id":"card-instance","type":"instance","ref":"local:Card","overrides":[]},"mode":"guided"}
+Import version JSON: {"package":<complete DesignSystemPackage with frozen source bundle>}
+Publish version JSON: {"name":"Acme UI","version":"1.0.0","sourcePaths":["src/Button.tsx","DESIGN.md"],"constraints":<complete DesignConstraintSet>}
+Activate dependency JSON: {"designSystemId":"acme","version":"1.0.0","range":"^1.0.0"}
 
 Compile reads source files inside the project through the daemon. The JSON request
 contains project-relative paths, never source text. Mutation requests may include
@@ -90,12 +108,21 @@ Definition revisions are explicit in stage/publish/undo JSON and are never infer
 Component IDs identify local definitions; references use local:Card or ds:acme/button.
 Stage and undo save drafts for review; only publish changes live definitions.
 Detach returns a materialized node; save-document persists an edited document.
+Import-version publishes the supplied complete package; publish-version freezes the
+current registry and project-relative source files read by the daemon. Publication
+does not activate a dependency. Activate-dependency selects the exact version and
+records the declared range; resolve-dependency uses its locked version and digests.
+Initial publication requires explicit constraints. When a dependency is locked,
+omitted publication metadata preserves that locked package's metadata.
+No command selects latest or upgrades a dependency implicitly. Clear-dependency
+removes the active dependency and can recover from an unavailable locked package.
 Validation/impact errors, unresolved bindings and blocked deletion checks exit 1;
 malformed arguments exit 2. A staged draft is retained even when its impact exits 1.
 `;
 
 interface CommandSpec {
-  argument?: 'bindingId' | 'componentId' | 'componentRef' | 'draftId';
+  argument?: 'bindingId' | 'componentId' | 'componentRef' | 'draftId' | 'designSystemId';
+  exactVersion?: boolean;
   mutates?: boolean;
   input?: { parse: (value: unknown) => unknown };
   query?: boolean;
@@ -125,6 +152,13 @@ const COMMANDS: Record<string, CommandSpec> = {
   undo: { argument: 'componentId', mutates: true, input: ProjectDesignRuntimeUndoComponentRequestSchema },
   delete: { argument: 'componentId', mutates: true, input: ProjectDesignRuntimeDeleteComponentRequestSchema },
   detach: { input: ProjectDesignRuntimeDetachRequestSchema },
+  versions: {},
+  version: { argument: 'designSystemId', exactVersion: true },
+  'import-version': { mutates: true, input: ProjectDesignRuntimeImportVersionRequestSchema },
+  'publish-version': { mutates: true, input: ProjectDesignRuntimePublishCurrentRequestSchema },
+  'activate-dependency': { mutates: true, input: ProjectDesignRuntimeActivateDependencyRequestSchema },
+  'clear-dependency': { mutates: true },
+  'resolve-dependency': {},
 };
 
 interface DesignRuntimeCliDependencies {
@@ -186,6 +220,9 @@ function writeFailure(failure: CliFailure, json: boolean): void {
 
 function printState({ state }: ProjectDesignRuntimeResponse): void {
   process.stdout.write(`Revision ${state.revision}\nDesign system: ${state.registry?.id ?? '(not compiled)'}\nComponents: ${state.registry?.components.length ?? 0}\nCode components: ${state.codeIndex.components.length}\nBindings: ${state.bindings.bindings.length}\nLocal components: ${state.projectComponents.components.length}\nScreens: ${state.document?.screens.length ?? 0}\nPending drafts: ${state.sharedChanges.drafts.length}\n`);
+  const locked = state.lock.dependencies[0];
+  process.stdout.write(`Dependency: ${locked ? `${locked.designSystemId}@${locked.version}` : '(none)'}\n`);
+  if (locked) process.stdout.write(`Declared range: ${state.dependencies.dependencies[0]!.version}\nPackage digest: ${locked.digest}\nSource digest: ${locked.source.digest}\n`);
 }
 
 function diagnosticsExitCode(diagnostics: ValidationDiagnostic[]): number {
@@ -244,17 +281,18 @@ export async function runDesignRuntimeCli(args: string[], deps: DesignRuntimeCli
       if (seen.has(token.name)) invalidInput(`Duplicate option --${token.name}.`);
       seen.add(token.name);
     }
-    const [command, projectId, targetId, ...extra] = positionals;
+    const [command, projectId, targetId, exactVersion, ...extra] = positionals;
     if (values.help || command === 'help' || command === undefined) {
       process.stdout.write(DESIGN_RUNTIME_CLI_USAGE);
       return { exitCode: command === undefined && !values.help ? 2 : 0 };
     }
     if (!Object.hasOwn(COMMANDS, command)) invalidInput(`Unknown design-runtime command: ${command}.`);
     const spec = COMMANDS[command]!;
-    if (!projectId || extra.length || (spec.argument ? !targetId : targetId !== undefined)) {
-      invalidInput(`Usage: od design-runtime ${command} <projectId>${spec.argument ? ` <${spec.argument}>` : ''}.`);
+    if (!projectId || extra.length || (spec.argument ? !targetId : targetId !== undefined) || (spec.exactVersion ? !exactVersion : exactVersion !== undefined)) {
+      invalidInput(`Usage: od design-runtime ${command} <projectId>${spec.argument ? ` <${spec.argument}>` : ''}${spec.exactVersion ? ' <exactVersion>' : ''}.`);
     }
-    if (spec.argument === 'componentId' || spec.argument === 'draftId') parseInput(DesignEntityIdSchema, targetId);
+    if (spec.argument === 'componentId' || spec.argument === 'draftId' || spec.argument === 'designSystemId') parseInput(DesignEntityIdSchema, targetId);
+    if (spec.exactVersion) parseInput(DesignSystemSemVerSchema, exactVersion);
     if (spec.argument === 'componentRef') parseInput(ProjectDesignRuntimeReferencesRequestSchema, { componentRef: targetId });
     if (spec.input && !values['prompt-file']) invalidInput(`${command} requires --prompt-file <path|->.`);
     if (!spec.input && values['prompt-file'] !== undefined) invalidInput(`--prompt-file is not supported by ${command}.`);
@@ -298,6 +336,36 @@ export async function runDesignRuntimeCli(args: string[], deps: DesignRuntimeCli
     const output = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
     const encodedTarget = encodeURIComponent(targetId ?? '');
     const mutationBody = { ...input, expectedRevision };
+    if (command === 'versions') {
+      const data = await request('/versions', ProjectDesignRuntimeVersionsResponseSchema);
+      if (json) output(data);
+      else if (!data.versions.length) process.stdout.write('No published versions.\n');
+      else for (const version of data.versions) process.stdout.write(`${version.id}@${version.version}\t${version.name}\t${version.digest}\n`);
+      return { exitCode: 0 };
+    }
+    if (command === 'version') {
+      const data = await request(`/versions/${encodedTarget}/${encodeURIComponent(exactVersion!)}`, ProjectDesignRuntimeVersionResponseSchema);
+      if (data.version.package.id !== targetId || data.version.package.version !== exactVersion) {
+        throw new CliFailure(1, createApiErrorResponse(createApiError('INTERNAL_ERROR', 'Daemon returned a different design-system identity or exact version.')));
+      }
+      if (json) output(data);
+      else process.stdout.write(`${data.version.package.id}@${data.version.package.version}\n${data.version.package.name}\nPackage digest: ${data.version.digest}\nSource digest: ${data.version.sourceDigest}\nSource files: ${data.version.package.source.files.length}\n`);
+      return { exitCode: 0 };
+    }
+    if (command === 'import-version' || command === 'publish-version') {
+      const data = await request(command === 'import-version' ? '/versions' : '/versions/publish-current', ProjectDesignRuntimePublishVersionResponseSchema, 'POST', mutationBody);
+      if (json) output(data);
+      else { process.stdout.write(`Published: ${data.version.id}@${data.version.version}\nPackage digest: ${data.version.digest}\nSource digest: ${data.version.sourceDigest}\n`); printState(data); }
+      return { exitCode: 0 };
+    }
+    if (command === 'resolve-dependency') {
+      const data = await request('/dependency/resolve', ProjectDesignRuntimeDependencyResponseSchema);
+      if (json) output(data);
+      else if (!data.resolution.ok) printDiagnostics(data.resolution.diagnostics);
+      else if (!data.resolution.versions.length) process.stdout.write('No locked dependency.\n');
+      else for (const version of data.resolution.versions) process.stdout.write(`Resolved: ${version.package.id}@${version.package.version}\nPackage digest: ${version.digest}\nSource digest: ${version.sourceDigest}\n`);
+      return { exitCode: data.resolution.ok ? 0 : 1 };
+    }
     if (command === 'project-components') {
       const query = values.query === undefined ? '' : `?${new URLSearchParams({ query: values.query })}`;
       const data = await request(`/project-components${query}`, ProjectDesignRuntimeProjectComponentsResponseSchema);
@@ -391,6 +459,8 @@ export async function runDesignRuntimeCli(args: string[], deps: DesignRuntimeCli
     }
     let data: ProjectDesignRuntimeResponse;
     if (command === 'get') data = await request('', ProjectDesignRuntimeResponseSchema);
+    else if (command === 'activate-dependency') data = await request('/dependency', ProjectDesignRuntimeResponseSchema, 'POST', mutationBody);
+    else if (command === 'clear-dependency') data = await request('/dependency', ProjectDesignRuntimeResponseSchema, 'DELETE', { expectedRevision });
     else if (command === 'compile') data = await request('/compile', ProjectDesignRuntimeResponseSchema, 'POST', mutationBody);
     else if (command === 'save-document') data = await request('/document', ProjectDesignRuntimeResponseSchema, 'PUT', mutationBody);
     else if (command === 'discard') data = await request(`/component-changes/${encodedTarget}`, ProjectDesignRuntimeResponseSchema, 'DELETE', { expectedRevision });

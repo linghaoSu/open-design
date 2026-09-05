@@ -1,6 +1,14 @@
 import { isDeepStrictEqual } from 'node:util';
 import {
   ProjectDesignRuntimeBindRequestSchema,
+  ProjectDesignRuntimeImportVersionRequestSchema,
+  ProjectDesignRuntimePublishCurrentRequestSchema,
+  ProjectDesignRuntimeActivateDependencyRequestSchema,
+  type ProjectDesignRuntimeImportVersionRequest,
+  type ProjectDesignRuntimePublishCurrentRequest,
+  type ProjectDesignRuntimeActivateDependencyRequest,
+  type DesignSystemVersion,
+  type DesignSystemPackage,
   ProjectDesignRuntimeSaveDocumentRequestSchema,
   ProjectDesignRuntimeValidateDocumentRequestSchema,
   ProjectDesignRuntimeStageComponentRequestSchema,
@@ -32,6 +40,7 @@ import {
   DesignRuntimeRevisionConflictError,
   type DesignRuntimeStore,
 } from '../../storage/design-runtime-store.js';
+import { createDesignSystemVersion, createProjectDesignSystemLock, resolveLockedDesignSystemsSync, verifyDesignSystemVersion, DesignSystemVersionError } from './design-system-version.js';
 import { resolveComponentBinding } from './binding-resolver.js';
 import {
   reindexComponentBindings,
@@ -102,18 +111,130 @@ function requireProjectComponent(state: ProjectDesignRuntimeState, componentId: 
 }
 
 export function createProjectDesignRuntimeService({ store, readSource }: ProjectDesignRuntimeServiceDeps) {
-  function readAtRevision(projectId: string, expectedRevision: number): ProjectDesignRuntimeState {
+  function dependencyResolution(projectId: string, state: ProjectDesignRuntimeState) {
+    return resolveLockedDesignSystemsSync(state.dependencies, state.lock, (entry) => store.readVersion(projectId, entry.designSystemId, entry.version));
+  }
+  function activeVersion(projectId: string, state: ProjectDesignRuntimeState): DesignSystemVersion | undefined {
+    const result = dependencyResolution(projectId, state);
+    if (!result.ok) throw new ProjectDesignRuntimeError(409, 'DESIGN_RUNTIME_DEPENDENCY_INVALID', 'The exact design-system dependency cannot be verified.', { diagnostics: result.diagnostics });
+    return result.versions[0];
+  }
+  function read(projectId: string): ProjectDesignRuntimeState {
     const state = store.read(projectId);
+    const version = activeVersion(projectId, state);
+    return version ? { ...state, registry: version.package.registry, codeIndex: { ...version.package.codeIndex, id: projectId } } : state;
+  }
+  function versionSummary(version: DesignSystemVersion) {
+    return { id: version.package.id, name: version.package.name, version: version.package.version, digest: version.digest, sourceDigest: version.sourceDigest };
+  }
+  function requireVersion(projectId: string, designSystemId: string, version: string): DesignSystemVersion {
+    const result = store.readVersion(projectId, designSystemId, version);
+    if (!result) throw new ProjectDesignRuntimeError(404, 'DESIGN_RUNTIME_VERSION_NOT_FOUND', 'The exact design-system version is not in this project catalog.');
+    const diagnostics = verifyDesignSystemVersion(result);
+    if (diagnostics.length) throw new DesignSystemVersionError(diagnostics);
+    if (result.package.id !== designSystemId || result.package.version !== version) throw new DesignSystemVersionError([{ schemaVersion: 1, code: 'ODDS5001', severity: 'error', message: 'Stored version does not match its exact catalog identity.' }]);
+    return result;
+  }
+  function publishVersion(projectId: string, expectedRevision: number, state: ProjectDesignRuntimeState, pkg: DesignSystemPackage) {
+    const version = createDesignSystemVersion(pkg);
+    const previous = store.readVersion(projectId, pkg.id, pkg.version);
+    if (previous) {
+      const diagnostics = verifyDesignSystemVersion(previous);
+      if (diagnostics.length) throw new DesignSystemVersionError(diagnostics);
+    }
+    return { state: store.write(projectId, expectedRevision, state, [version]), version: versionSummary(version) };
+  }
+
+  function readAtRevision(projectId: string, expectedRevision: number): ProjectDesignRuntimeState {
+    const state = read(projectId);
     if (state.revision !== expectedRevision) throw new DesignRuntimeRevisionConflictError(expectedRevision, state.revision);
     return state;
   }
 
   return {
-    get: (projectId: string) => store.read(projectId),
+    get: (projectId: string) => read(projectId),
+
+    versions(projectId: string) {
+      const state = read(projectId);
+      return { revision: state.revision, versions: store.listVersions(projectId) };
+    },
+
+    version(projectId: string, designSystemId: string, version: string) {
+      const state = read(projectId);
+      return { revision: state.revision, version: requireVersion(projectId, designSystemId, version) };
+    },
+
+    importVersion(projectId: string, input: ProjectDesignRuntimeImportVersionRequest) {
+      const request = ProjectDesignRuntimeImportVersionRequestSchema.parse(input);
+      const state = readAtRevision(projectId, request.expectedRevision);
+      return publishVersion(projectId, request.expectedRevision, state, request.package);
+    },
+
+    async publishCurrent(projectId: string, input: ProjectDesignRuntimePublishCurrentRequest) {
+      const request = ProjectDesignRuntimePublishCurrentRequestSchema.parse(input);
+      const state = readAtRevision(projectId, request.expectedRevision);
+      const registry = requireRegistry(state);
+      const active = activeVersion(projectId, state)?.package;
+      const constraints = request.constraints ?? active?.constraints;
+      if (!constraints) throw new ProjectDesignRuntimeError(400, 'BAD_REQUEST', 'An initial publication requires explicit design constraints.');
+      const files = await Promise.all(request.sourcePaths.map(async (path) => {
+        try { return { path, encoding: 'utf8' as const, content: await readSource(projectId, path) }; }
+        catch { throw new ProjectDesignRuntimeError(400, 'DESIGN_RUNTIME_SOURCE_UNAVAILABLE', 'A selected project source could not be read.', { sourcePath: path }); }
+      }));
+      const origin = request.origin ?? active?.origin;
+      return publishVersion(projectId, request.expectedRevision, state, {
+        schemaVersion: 1, id: registry.id, name: request.name, version: request.version,
+        registry, codeIndex: { ...state.codeIndex, id: registry.id }, bindings: { ...state.bindings, id: registry.id },
+        tokens: request.tokens ?? active?.tokens ?? { schemaVersion: 1, id: registry.id, tokens: [] },
+        patterns: request.patterns ?? active?.patterns ?? { schemaVersion: 1, id: registry.id, patterns: [] },
+        constraints, codeCompatibility: request.codeCompatibility ?? active?.codeCompatibility ?? [],
+        source: { schemaVersion: 1, files }, ...(origin === undefined ? {} : { origin }),
+      });
+    },
+
+    activateDependency(projectId: string, input: ProjectDesignRuntimeActivateDependencyRequest) {
+      const request = ProjectDesignRuntimeActivateDependencyRequestSchema.parse(input);
+      const state = readAtRevision(projectId, request.expectedRevision);
+      const current = state.lock.dependencies[0];
+      if (current && (current.designSystemId !== request.designSystemId || current.version !== request.version)) {
+        throw new ProjectDesignRuntimeError(409, 'DESIGN_RUNTIME_REGISTRY_CHANGE_REQUIRES_UPGRADE', 'Changing a locked version requires a reviewed design-system upgrade.');
+      }
+      const version = requireVersion(projectId, request.designSystemId, request.version);
+      const pkg = version.package;
+      if (!current && state.registry && !isDeepStrictEqual(
+        { registry: state.registry, codeIndex: { ...state.codeIndex, id: pkg.id }, bindings: { ...state.bindings, id: pkg.id } },
+        { registry: pkg.registry, codeIndex: pkg.codeIndex, bindings: pkg.bindings },
+      )) throw new ProjectDesignRuntimeError(409, 'DESIGN_RUNTIME_REGISTRY_CHANGE_REQUIRES_UPGRADE', 'Initial pinning requires the same working component, code, and binding snapshot.');
+      const next = { ...state,
+        registry: pkg.registry, codeIndex: { ...pkg.codeIndex, id: projectId },
+        bindings: current ? state.bindings : { ...pkg.bindings, id: projectId },
+        dependencies: { schemaVersion: 1 as const, id: projectId, dependencies: [{ designSystemId: pkg.id, version: request.range }] },
+        lock: createProjectDesignSystemLock(projectId, [version]),
+      };
+      activeVersion(projectId, next);
+      assertValidProject(next);
+      return store.write(projectId, request.expectedRevision, next);
+    },
+
+    clearDependency(projectId: string, input: ProjectDesignRuntimeRevisionRequest) {
+      const { expectedRevision } = ProjectDesignRuntimeRevisionRequestSchema.parse(input);
+      // Explicit recovery can unpin an unavailable package without pretending its bytes were verified.
+      const state = store.read(projectId);
+      if (state.revision !== expectedRevision) throw new DesignRuntimeRevisionConflictError(expectedRevision, state.revision);
+      return store.write(projectId, expectedRevision, { ...state,
+        dependencies: { ...state.dependencies, dependencies: [] }, lock: { ...state.lock, dependencies: [] },
+      });
+    },
+
+    resolveDependency(projectId: string) {
+      const state = store.read(projectId);
+      return { revision: state.revision, resolution: dependencyResolution(projectId, state) };
+    },
 
     async compile(projectId: string, input: ProjectDesignRuntimeCompileRequest): Promise<ProjectDesignRuntimeState> {
       const request = ProjectDesignRuntimeCompileRequestSchema.parse(input);
       const current = readAtRevision(projectId, request.expectedRevision);
+      if (current.lock.dependencies.length) throw new ProjectDesignRuntimeError(409, 'DESIGN_RUNTIME_REGISTRY_LOCKED', 'Clear the active dependency before compiling editable registry changes.');
       if (current.registry && current.registry.id !== request.designSystemId) {
         throw new ProjectDesignRuntimeError(409, 'DESIGN_RUNTIME_REGISTRY_CHANGE_REQUIRES_UPGRADE', 'Changing the active design system requires an explicit upgrade.');
       }
@@ -144,7 +265,7 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
     },
 
     components(projectId: string, query = '') {
-      const state = store.read(projectId);
+      const state = read(projectId);
       const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
       const components = (state.registry?.components ?? []).filter((component) => {
         const text = `${component.id}\n${component.name}`.toLowerCase();
@@ -154,7 +275,7 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
     },
 
     codeComponents(projectId: string, query = '') {
-      const state = store.read(projectId);
+      const state = read(projectId);
       return { revision: state.revision, components: searchCodeComponents(state.codeIndex, query) };
     },
 
@@ -187,7 +308,7 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
     },
 
     resolve(projectId: string, id: string) {
-      const state = store.read(projectId);
+      const state = read(projectId);
       return { revision: state.revision, resolution: resolveComponentBinding(requireBinding(state, id), requireRegistry(state), state.codeIndex.components) };
     },
 
@@ -201,22 +322,22 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
 
     validateDocument(projectId: string, input: ProjectDesignRuntimeValidateDocumentRequest) {
       const request = ProjectDesignRuntimeValidateDocumentRequestSchema.parse(input);
-      const state = store.read(projectId);
+      const state = read(projectId);
       return { revision: state.revision, resolution: resolveProjectDocument({ ...componentContext(state), document: request.document }) };
     },
 
     resolveDocument(projectId: string) {
-      const state = store.read(projectId);
+      const state = read(projectId);
       return { revision: state.revision, resolution: resolveProjectDocument(componentContext(state)) };
     },
 
     references(projectId: string, componentRef: string) {
-      const state = store.read(projectId);
+      const state = read(projectId);
       return { revision: state.revision, references: queryReferenceGraph(componentContext(state), componentRef) };
     },
 
     projectComponents(projectId: string, query = '') {
-      const state = store.read(projectId);
+      const state = read(projectId);
       const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
       const components = state.projectComponents.components.filter((component) => terms.every((term) => `${component.id}\n${component.name}`.toLowerCase().includes(term)))
         .sort((a, b) => compareDesignRuntimeKeys(a.id, b.id));
@@ -224,7 +345,7 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
     },
 
     deletion(projectId: string, componentId: string) {
-      const state = store.read(projectId);
+      const state = read(projectId);
       requireProjectComponent(state, componentId);
       const analysis = analyzeComponentDeletion(componentContext(state), `local:${componentId}`);
       // A pending draft is an additional durable dependency, outside the source reference graph.
@@ -236,7 +357,7 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
     },
 
     history(projectId: string, componentId: string) {
-      const state = store.read(projectId);
+      const state = read(projectId);
       const history = getSharedComponentHistory(state.sharedChanges, `local:${componentId}`);
       if (!history.length) requireProjectComponent(state, componentId);
       return { revision: state.revision, history };
@@ -250,7 +371,7 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
     },
 
     inspectComponentChange(projectId: string, draftId: string) {
-      const state = store.read(projectId);
+      const state = read(projectId);
       const impact = inspectSharedComponentChange(componentContext(state), state.sharedChanges, draftId);
       return { revision: state.revision, draft: state.sharedChanges.drafts.find((draft) => draft.id === draftId)!, impact };
     },
@@ -296,13 +417,13 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
 
     detachInstance(projectId: string, input: ProjectDesignRuntimeDetachRequest) {
       const request = ProjectDesignRuntimeDetachRequestSchema.parse(input);
-      const state = store.read(projectId);
+      const state = read(projectId);
       return { revision: state.revision, ...detachComponentInstance(componentContext(state), request) };
     },
 
     validate(projectId: string, input: ProjectDesignRuntimeValidateRequest) {
       const request = ProjectDesignRuntimeValidateRequestSchema.parse(input);
-      const state = store.read(projectId);
+      const state = read(projectId);
       const diagnostics: ValidationDiagnostic[] = state.registry
         ? validateComponentUsage(state.registry, {
           component: request.component, props: request.props,

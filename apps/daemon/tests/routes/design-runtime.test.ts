@@ -4,6 +4,10 @@ import type { AddressInfo } from 'node:net';
 import { describe, expect, it, vi, type MockInstance } from 'vitest';
 import {
   ProjectDesignRuntimeCodeComponentsResponseSchema,
+  ProjectDesignRuntimeVersionsResponseSchema,
+  ProjectDesignRuntimeVersionResponseSchema,
+  ProjectDesignRuntimePublishVersionResponseSchema,
+  ProjectDesignRuntimeDependencyResponseSchema,
   ProjectDesignRuntimeDocumentResponseSchema,
   ProjectDesignRuntimeReferencesResponseSchema,
   ProjectDesignRuntimeProjectComponentsResponseSchema,
@@ -18,6 +22,8 @@ import {
   ProjectDesignRuntimeResponseSchema,
   ProjectDesignRuntimeValidateResponseSchema,
 } from '@open-design/contracts';
+import { createDesignSystemVersion } from '../../src/services/design-runtime/design-system-version.js';
+import { packageFixture } from '../fixtures/design-runtime/design-system-version.js';
 import { registerDesignRuntimeRoutes } from '../../src/routes/design-runtime.js';
 import { createProjectDesignRuntimeService } from '../../src/services/design-runtime/project-service.js';
 import { createDesignRuntimeStore, migrateDesignRuntimeStore } from '../../src/storage/design-runtime-store.js';
@@ -37,6 +43,8 @@ async function withRoute<T>(run: (fixture: {
   request: (method: string, suffix?: string, body?: unknown) => Promise<{ status: number; json: any }>;
   readSource: ReturnType<typeof vi.fn<(projectId: string, sourcePath: string) => Promise<string>>>;
   authorize: ReturnType<typeof vi.fn<AuthorizeProjectRequest>>;
+  catalogRead: MockInstance<ReturnType<typeof createDesignRuntimeStore>['readVersion']>;
+  catalogList: MockInstance<ReturnType<typeof createDesignRuntimeStore>['listVersions']>;
   storeRead: MockInstance<ReturnType<typeof createDesignRuntimeStore>['read']>;
 }) => Promise<T>): Promise<T> {
   const db = new Database(':memory:');
@@ -46,6 +54,8 @@ async function withRoute<T>(run: (fixture: {
   const readSource = vi.fn(async (_projectId: string, _sourcePath: string) => "export function Button(props: { variant?: 'primary' | 'secondary' }) {}");
   const store = createDesignRuntimeStore(db);
   const storeRead = vi.spyOn(store, 'read');
+  const catalogRead = vi.spyOn(store, 'readVersion');
+  const catalogList = vi.spyOn(store, 'listVersions');
   const service = createProjectDesignRuntimeService({ store, readSource });
   const authorize = vi.fn<AuthorizeProjectRequest>(async () => true);
   const app = express();
@@ -58,7 +68,7 @@ async function withRoute<T>(run: (fixture: {
     return await run({
       readSource,
       authorize,
-      storeRead,
+      storeRead, catalogRead, catalogList,
       request: async (method, suffix = '', body) => {
         const response = await fetch(`${prefix}${suffix}`, {
           method,
@@ -74,6 +84,43 @@ async function withRoute<T>(run: (fixture: {
 }
 
 describe('project design runtime HTTP routes', () => {
+  it('dispatches immutable publication, exact export and dependency lifecycle using canonical responses', async () => {
+    await withRoute(async ({ request, readSource, authorize }) => {
+      const pkg = packageFixture();
+      const imported = await request('POST', '/versions', { expectedRevision: 0, package: pkg });
+      expect(imported.status).toBe(200);
+      let state = ProjectDesignRuntimePublishVersionResponseSchema.parse(imported.json).state;
+      expect(authorize.mock.lastCall?.[3]).toEqual({ mode: 'write', capability: 'writeFiles' });
+      expect(ProjectDesignRuntimeVersionsResponseSchema.parse((await request('GET', '/versions')).json).versions[0]?.version).toBe('1.0.0');
+      expect(ProjectDesignRuntimeVersionResponseSchema.parse((await request('GET', '/versions/acme/1.0.0')).json).version.package).toEqual(createDesignSystemVersion(pkg).package);
+      expect((await request('GET', '/versions/acme/latest')).status).toBe(400);
+      expect((await request('GET', '/versions/acme/9.0.0')).status).toBe(404);
+      state = ProjectDesignRuntimeResponseSchema.parse((await request('POST', '/dependency', { expectedRevision: state.revision, designSystemId: 'acme', version: '1.0.0', range: '^1.0.0' })).json).state;
+      expect(ProjectDesignRuntimeDependencyResponseSchema.parse((await request('GET', '/dependency/resolve')).json).resolution.ok).toBe(true);
+      expect(authorize.mock.lastCall?.[3]).toEqual({ mode: 'read' });
+      readSource.mockResolvedValue(pkg.source.files.find((entry) => entry.path === 'src/Button.tsx')!.content);
+      const next = await request('POST', '/versions/publish-current', { expectedRevision: state.revision, name: pkg.name, version: '1.1.0', sourcePaths: ['src/Button.tsx'] });
+      expect(next.status).toBe(200);
+      state = ProjectDesignRuntimePublishVersionResponseSchema.parse(next.json).state;
+      expect(state.lock.dependencies[0]?.version).toBe('1.0.0');
+      expect(readSource).toHaveBeenCalledExactlyOnceWith('project', 'src/Button.tsx');
+      const blocked = await request('POST', '/dependency', { expectedRevision: state.revision, designSystemId: 'acme', version: '1.1.0', range: '^1.0.0' });
+      expect(blocked.status).toBe(409);
+      const immutable = await request('POST', '/versions', { expectedRevision: state.revision, package: { ...pkg, name: 'Overwritten' } });
+      expect(immutable.status).toBe(409);
+      expect(immutable.json.error).toMatchObject({ code: 'DESIGN_RUNTIME_VERSION_IMMUTABLE', details: { diagnostics: [{ code: 'ODDS5006' }] } });
+      const invalid = await request('POST', '/versions', { expectedRevision: state.revision, package: { ...pkg, version: '2.0.0', source: { schemaVersion: 1, files: [{ path: 'wrong.tsx', encoding: 'utf8', content: '' }] } } });
+      expect(invalid.status).toBe(400);
+      expect(invalid.json.error).toMatchObject({ code: 'DESIGN_RUNTIME_VERSION_INVALID', details: { diagnostics: expect.arrayContaining([expect.objectContaining({ code: 'ODDS5005' })]) } });
+      const conflict = await request('DELETE', '/dependency', { expectedRevision: 0 });
+      expect(conflict.status).toBe(409);
+      expect(conflict.json.error.details).toEqual({ expectedRevision: 0, currentRevision: state.revision });
+      state = ProjectDesignRuntimeResponseSchema.parse((await request('DELETE', '/dependency', { expectedRevision: state.revision })).json).state;
+      expect(state.lock.dependencies).toEqual([]);
+      expect(JSON.stringify((await request('GET')).json)).not.toContain('return null');
+    });
+  });
+
   it('dispatches compile, search, binding lifecycle, resolve, and diagnostics through shared DTOs', async () => {
     await withRoute(async ({ request, authorize, readSource }) => {
       const initial = await request('GET');
@@ -171,12 +218,14 @@ describe('project design runtime HTTP routes', () => {
   });
 
   it('authorizes every read and write before source reads or persistence access', async () => {
-    await withRoute(async ({ request, authorize, readSource, storeRead }) => {
+    await withRoute(async ({ request, authorize, readSource, storeRead, catalogRead, catalogList }) => {
       authorize.mockImplementation(async (_req, res) => {
         res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Read-only project.' } });
         return false;
       });
       const calls: [string, string, unknown?][] = [
+        ['GET', '/versions'], ['GET', '/versions/acme/1.0.0'], ['POST', '/versions', {}],
+        ['POST', '/versions/publish-current', {}], ['POST', '/dependency', {}], ['DELETE', '/dependency', {}], ['GET', '/dependency/resolve'],
         ['GET', ''], ['GET', '/components'], ['GET', '/code-components'],
         ['POST', '/compile', compileRequest],
         ['PUT', '/bindings/missing', {}], ['DELETE', '/bindings/missing', { expectedRevision: 0 }],
@@ -197,6 +246,8 @@ describe('project design runtime HTTP routes', () => {
       expect(readSource).not.toHaveBeenCalled();
       expect(authorize).toHaveBeenCalledTimes(calls.length);
       expect(storeRead).not.toHaveBeenCalled();
+      expect(catalogRead).not.toHaveBeenCalled();
+      expect(catalogList).not.toHaveBeenCalled();
       authorize.mockResolvedValue(true);
       expect(ProjectDesignRuntimeResponseSchema.parse((await request('GET')).json).state.revision).toBe(0);
     });

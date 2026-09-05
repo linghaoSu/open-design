@@ -842,6 +842,7 @@ import { registerGenuiRoutes } from './routes/genui.js';
 import { registerDesignSystemRoutes } from './routes/design-systems.js';
 import { registerDesignRuntimeRoutes } from './routes/design-runtime.js';
 import { createDesignRuntimeStore, DesignRuntimeProjectNotFoundError } from './storage/design-runtime-store.js';
+import { decodeDesignRuntimeSource } from './services/design-runtime/source-text.js';
 import { createProjectDesignRuntimeService } from './services/design-runtime/project-service.js';
 import { registerHostToolsRoutes } from './routes/host-tools.js';
 import { registerPluginAssetRoutes } from './routes/plugins/assets.js';
@@ -8466,7 +8467,7 @@ export async function startServer({
       const project = getProject(db, projectId);
       if (!project) throw new DesignRuntimeProjectNotFoundError();
       const source = await readProjectFile(PROJECTS_DIR, projectId, sourcePath, project.metadata);
-      return source.buffer.toString('utf8');
+      return decodeDesignRuntimeSource(source.buffer);
     },
   });
   registerDesignRuntimeRoutes(app, { designRuntime, authorizeProjectRequest });

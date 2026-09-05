@@ -1,5 +1,12 @@
 import {
   ProjectDesignRuntimeBindRequestSchema,
+  DesignEntityIdSchema, DesignSystemSemVerSchema,
+  ProjectDesignRuntimeVersionsResponseSchema, ProjectDesignRuntimeVersionResponseSchema,
+  ProjectDesignRuntimeImportVersionRequestSchema, ProjectDesignRuntimePublishVersionResponseSchema,
+  ProjectDesignRuntimePublishCurrentRequestSchema, ProjectDesignRuntimeActivateDependencyRequestSchema,
+  ProjectDesignRuntimeDependencyResponseSchema,
+  type ProjectDesignRuntimeImportVersionRequest, type ProjectDesignRuntimePublishCurrentRequest,
+  type ProjectDesignRuntimeActivateDependencyRequest,
   ProjectDesignRuntimeSaveDocumentRequestSchema,
   ProjectDesignRuntimeValidateDocumentRequestSchema,
   ProjectDesignRuntimeDocumentResponseSchema,
@@ -163,3 +170,31 @@ export const deleteProjectDesignRuntimeComponent = (scope: ProjectDesignRuntimeS
 
 export const detachProjectDesignRuntimeInstance = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeDetachRequest) =>
   request(scope, '/instances/detach', ProjectDesignRuntimeDetachResponseSchema, 'POST', ProjectDesignRuntimeDetachRequestSchema.parse(input));
+
+
+export const listProjectDesignRuntimeVersions = (scope: ProjectDesignRuntimeScope) =>
+  request(scope, '/versions', ProjectDesignRuntimeVersionsResponseSchema);
+
+export const getProjectDesignRuntimeVersion = (scope: ProjectDesignRuntimeScope, designSystemId: string, version: string) => {
+  const id = DesignEntityIdSchema.parse(designSystemId);
+  const exactVersion = DesignSystemSemVerSchema.parse(version);
+  return request(scope, `/versions/${encodeURIComponent(id)}/${encodeURIComponent(exactVersion)}`, ProjectDesignRuntimeVersionResponseSchema).then((result) => {
+    if (result.version.package.id !== id || result.version.package.version !== exactVersion) throw new Error('The server returned a different design-system version.');
+    return result;
+  });
+};
+
+export const importProjectDesignRuntimeVersion = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeImportVersionRequest) =>
+  request(scope, '/versions', ProjectDesignRuntimePublishVersionResponseSchema, 'POST', ProjectDesignRuntimeImportVersionRequestSchema.parse(input));
+
+export const publishProjectDesignRuntimeVersion = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimePublishCurrentRequest) =>
+  request(scope, '/versions/publish-current', ProjectDesignRuntimePublishVersionResponseSchema, 'POST', ProjectDesignRuntimePublishCurrentRequestSchema.parse(input));
+
+export const activateProjectDesignRuntimeDependency = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeActivateDependencyRequest) =>
+  request(scope, '/dependency', ProjectDesignRuntimeResponseSchema, 'POST', ProjectDesignRuntimeActivateDependencyRequestSchema.parse(input));
+
+export const clearProjectDesignRuntimeDependency = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeRevisionRequest) =>
+  request(scope, '/dependency', ProjectDesignRuntimeResponseSchema, 'DELETE', ProjectDesignRuntimeRevisionRequestSchema.parse(input));
+
+export const resolveProjectDesignRuntimeDependency = (scope: ProjectDesignRuntimeScope) =>
+  request(scope, '/dependency/resolve', ProjectDesignRuntimeDependencyResponseSchema);

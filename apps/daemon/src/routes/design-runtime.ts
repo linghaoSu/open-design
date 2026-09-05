@@ -1,6 +1,10 @@
 import type { Express, Request, Response } from 'express';
 import {
   JsonValueSchema,
+  DesignSystemSemVerSchema,
+  ProjectDesignRuntimeImportVersionRequestSchema,
+  ProjectDesignRuntimePublishCurrentRequestSchema,
+  ProjectDesignRuntimeActivateDependencyRequestSchema,
   DesignEntityIdSchema,
   ProjectComponentDeleteRequestSchema,
   ProjectDesignRuntimeSaveDocumentRequestSchema,
@@ -21,10 +25,12 @@ import type { RouteDeps } from '../server-context.js';
 import { sendApiError } from '../http/api-errors.js';
 import {
   DesignRuntimeProjectNotFoundError,
+  DesignRuntimeImmutableVersionError,
   DesignRuntimeRevisionConflictError,
 } from '../storage/design-runtime-store.js';
 import { ProjectDesignRuntimeError } from '../services/design-runtime/project-service.js';
 import { CompilerError } from '../services/design-runtime/react-compiler.js';
+import { DesignSystemVersionError } from '../services/design-runtime/design-system-version.js';
 import { SharedComponentChangeError } from '../services/design-runtime/shared-component-changes.js';
 
 export interface RegisterDesignRuntimeRoutesDeps extends RouteDeps<'designRuntime' | 'authorizeProjectRequest'> {}
@@ -50,6 +56,10 @@ function sendFailure(res: Response, error: unknown): void {
     sendApiError(res, 409, 'DESIGN_RUNTIME_REVISION_CONFLICT', error.message, {
       details: { expectedRevision: error.expectedRevision, currentRevision: error.currentRevision },
     });
+  } else if (error instanceof DesignRuntimeImmutableVersionError) {
+    sendApiError(res, 409, 'DESIGN_RUNTIME_VERSION_IMMUTABLE', error.message, { details: { designSystemId: error.designSystemId, version: error.version, diagnostics: [{ schemaVersion: 1, code: 'ODDS5006', severity: 'error', message: error.message }] } });
+  } else if (error instanceof DesignSystemVersionError) {
+    sendApiError(res, 400, 'DESIGN_RUNTIME_VERSION_INVALID', error.message, { details: JsonValueSchema.parse({ diagnostics: error.diagnostics }) });
   } else if (error instanceof ProjectDesignRuntimeError) {
     sendApiError(res, error.status, error.code, error.message,
       error.details === undefined ? {} : { details: JsonValueSchema.parse(error.details) });
@@ -92,6 +102,13 @@ export function registerDesignRuntimeRoutes(app: Express, deps: RegisterDesignRu
   };
 
   app.get(prefix, handle('read', (req) => ({ state: service.get(String(req.params.id)) })));
+  app.get(`${prefix}/versions`, handle('read', (req) => service.versions(String(req.params.id))));
+  app.get(`${prefix}/versions/:designSystemId/:version`, handle('read', (req) => service.version(String(req.params.id), parseInput(DesignEntityIdSchema, req.params.designSystemId), parseInput(DesignSystemSemVerSchema, req.params.version))));
+  app.post(`${prefix}/versions`, handle('write', (req) => service.importVersion(String(req.params.id), parseInput(ProjectDesignRuntimeImportVersionRequestSchema, req.body))));
+  app.post(`${prefix}/versions/publish-current`, handle('write', (req) => service.publishCurrent(String(req.params.id), parseInput(ProjectDesignRuntimePublishCurrentRequestSchema, req.body))));
+  app.post(`${prefix}/dependency`, handle('write', (req) => ({ state: service.activateDependency(String(req.params.id), parseInput(ProjectDesignRuntimeActivateDependencyRequestSchema, req.body)) })));
+  app.delete(`${prefix}/dependency`, handle('write', (req) => ({ state: service.clearDependency(String(req.params.id), parseInput(ProjectDesignRuntimeRevisionRequestSchema, req.body)) })));
+  app.get(`${prefix}/dependency/resolve`, handle('read', (req) => service.resolveDependency(String(req.params.id))));
   app.post(`${prefix}/compile`, handle('write', async (req) => ({
     state: await service.compile(String(req.params.id), parseInput(ProjectDesignRuntimeCompileRequestSchema, req.body)),
   })));

@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { packageFixture } from '../fixtures/design-runtime/design-system-version.js';
+import { createDesignSystemVersion, createProjectDesignSystemLock } from '../../src/services/design-runtime/design-system-version.js';
 import { closeDatabase, openDatabase } from '../../src/db.js';
 import {
   createDesignRuntimeStore,
@@ -34,7 +36,7 @@ describe('design runtime SQLite persistence', () => {
       db.exec("CREATE TABLE projects (id TEXT PRIMARY KEY); INSERT INTO projects VALUES ('project');");
       migrateDesignRuntimeStore(db);
       const store = createDesignRuntimeStore(db);
-      const { projectComponents: _components, document: _document, sharedChanges: _changes, ...legacy } = store.read('project');
+      const { projectComponents: _components, document: _document, sharedChanges: _changes, dependencies: _dependencies, lock: _lock, ...legacy } = store.read('project');
       legacy.revision = 7;
       const original = JSON.stringify(legacy);
       db.prepare('INSERT INTO project_design_runtime VALUES (?, ?, ?)').run('project', 7, original);
@@ -77,7 +79,7 @@ describe('design runtime SQLite persistence', () => {
       migrateDesignRuntimeStore(db);
       const reopened = createDesignRuntimeStore(db);
       expect(reopened.read('project')).toEqual(written);
-      expect(() => reopened.write('project', 1, { ...written, codeIndex: { ...written.codeIndex, id: 'other' }, bindings: { ...written.bindings, id: 'other' }, projectComponents: { ...written.projectComponents, id: 'other' }, sharedChanges: { ...written.sharedChanges, id: 'other' } })).toThrow('belong');
+      expect(() => reopened.write('project', 1, { ...written, codeIndex: { ...written.codeIndex, id: 'other' }, bindings: { ...written.bindings, id: 'other' }, projectComponents: { ...written.projectComponents, id: 'other' }, sharedChanges: { ...written.sharedChanges, id: 'other' }, dependencies: { ...written.dependencies, id: 'other' }, lock: { ...written.lock, id: 'other' } })).toThrow('belong');
       expect(reopened.read('project')).toEqual(written);
       db.prepare('DELETE FROM projects WHERE id = ?').run('project');
       expect(db.prepare('SELECT COUNT(*) AS count FROM project_design_runtime').get()).toEqual({ count: 0 });
@@ -86,5 +88,67 @@ describe('design runtime SQLite persistence', () => {
       db.close();
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+
+describe('project version catalog transactions', () => {
+  it('reopens exact bytes and lock, isolates project catalogs, and rolls back catalog insertion with failed CAS/immutability', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'od-design-version-store-'));
+    let db = new Database(path.join(dir, 'state.sqlite'));
+    try {
+      db.pragma('foreign_keys = ON');
+      db.exec("CREATE TABLE projects (id TEXT PRIMARY KEY); INSERT INTO projects VALUES ('project'), ('other');");
+      migrateDesignRuntimeStore(db);
+      let store = createDesignRuntimeStore(db);
+      const version = createDesignSystemVersion(packageFixture());
+      const initial = store.read('project');
+      const next = { ...initial, registry: version.package.registry,
+        codeIndex: { ...version.package.codeIndex, id: 'project' }, bindings: { ...version.package.bindings, id: 'project' },
+        dependencies: { ...initial.dependencies, dependencies: [{ designSystemId: 'acme', version: '^1.0.0' }] },
+        lock: createProjectDesignSystemLock('project', [version]),
+      };
+      const written = store.write('project', 0, next, [version]);
+      const nextVersion = createDesignSystemVersion(packageFixture('1.1.0'));
+      expect(() => store.write('project', 0, next, [nextVersion])).toThrow(DesignRuntimeRevisionConflictError);
+      expect(store.readVersion('project', 'acme', '1.1.0')).toBeNull();
+      const conflicting = createDesignSystemVersion({ ...version.package, name: 'Changed' });
+      expect(() => store.write('project', 1, written, [nextVersion, conflicting])).toThrow('immutable');
+      expect(store.readVersion('project', 'acme', '1.1.0')).toBeNull();
+      expect(store.read('project')).toEqual(written);
+      expect(store.readVersion('other', 'acme', '1.0.0')).toBeNull();
+      db.close();
+      db = new Database(path.join(dir, 'state.sqlite'));
+      db.pragma('foreign_keys = ON');
+      migrateDesignRuntimeStore(db);
+      store = createDesignRuntimeStore(db);
+      expect(store.read('project')).toEqual(written);
+      expect(store.readVersion('project', 'acme', '1.0.0')).toEqual(version);
+      expect(JSON.stringify(store.listVersions('project'))).not.toContain('return null');
+      db.prepare('DELETE FROM projects WHERE id = ?').run('project');
+      expect(db.prepare('SELECT COUNT(*) AS count FROM project_design_system_versions').get()).toEqual({ count: 0 });
+    } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('adds dependency fields to Phase4/5 rows only as a complete pair, preserving revision until CAS', () => {
+    const db = new Database(':memory:');
+    try {
+      db.exec("CREATE TABLE projects (id TEXT PRIMARY KEY); INSERT INTO projects VALUES ('project');");
+      migrateDesignRuntimeStore(db);
+      const store = createDesignRuntimeStore(db);
+      const { dependencies: _dependencies, lock: _lock, ...legacy } = store.read('project');
+      legacy.revision = 9;
+      const original = JSON.stringify(legacy);
+      db.prepare('INSERT INTO project_design_runtime VALUES (?, ?, ?)').run('project', 9, original);
+      const state = store.read('project');
+      expect(state.dependencies.dependencies).toEqual([]);
+      expect(state.lock.dependencies).toEqual([]);
+      expect(state.revision).toBe(9);
+      expect(db.prepare('SELECT state_json FROM project_design_runtime').get()).toEqual({ state_json: original });
+      expect(() => store.write('project', 8, state)).toThrow(DesignRuntimeRevisionConflictError);
+      expect(store.write('project', 9, state).revision).toBe(10);
+      db.prepare('UPDATE project_design_runtime SET state_json = ?, revision = 9').run(JSON.stringify({ ...legacy, lock: state.lock }));
+      expect(() => store.read('project')).toThrow();
+    } finally { db.close(); }
   });
 });

@@ -29,12 +29,22 @@ import {
   DesignMemberNameSchema,
   DesignRuntimeSchemaVersionSchema,
   JsonValueSchema,
+  DesignSystemPackageSchema,
+  DesignSystemVersionSchema,
+  DesignSystemSemVerSchema,
+  DesignSystemVersionRangeSchema,
+  DesignSystemDigestSchema,
+  DesignSystemSourceBundleSchema,
+  SourcePathSchema,
+  DesignSystemResolutionResultSchema,
+  ProjectDesignSystemDependenciesSchema,
+  ProjectDesignSystemLockSchema,
   ValidationDiagnosticSchema,
 } from '../design-runtime/index.js';
 
 const revisionSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 
-/** One atomically persisted project snapshot; source text remains in project files. */
+/** One atomically persisted project snapshot; frozen source bytes live in the separate version catalog. */
 export const ProjectDesignRuntimeStateSchema = z.object({
   schemaVersion: DesignRuntimeSchemaVersionSchema,
   revision: revisionSchema,
@@ -44,9 +54,20 @@ export const ProjectDesignRuntimeStateSchema = z.object({
   projectComponents: ProjectComponentRegistrySchema,
   document: UIIRDocumentSchema.nullable(),
   sharedChanges: SharedComponentChangeStateSchema,
+  dependencies: ProjectDesignSystemDependenciesSchema,
+  lock: ProjectDesignSystemLockSchema,
 }).strict().superRefine((state, ctx) => {
-  if ([state.bindings.id, state.projectComponents.id, state.sharedChanges.id].some((id) => id !== state.codeIndex.id)) {
+  if ([state.bindings.id, state.projectComponents.id, state.sharedChanges.id, state.dependencies.id, state.lock.id].some((id) => id !== state.codeIndex.id)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['bindings', 'id'], message: 'All project runtime registries and change state must share a project identity.' });
+  }
+  if (state.dependencies.dependencies.length > 1 || state.lock.dependencies.length > 1) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['lock'], message: 'This project runtime supports one active design system.' });
+  }
+  if (state.dependencies.dependencies.length !== state.lock.dependencies.length || state.dependencies.dependencies[0]?.designSystemId !== state.lock.dependencies[0]?.designSystemId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['lock'], message: 'Dependency intent and exact lock must select the same design system.' });
+  }
+  if (state.lock.dependencies.length && state.registry?.id !== state.lock.dependencies[0]?.designSystemId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['registry'], message: 'The working registry must belong to the active design system.' });
   }
   if (state.registry === null && (state.codeIndex.components.length || state.bindings.bindings.length)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['registry'], message: 'An uncompiled project cannot contain code components or bindings.' });
@@ -183,3 +204,36 @@ export const ProjectDesignRuntimeDetachResponseSchema = z.object({
   }
 });
 export type ProjectDesignRuntimeDetachResponse = z.infer<typeof ProjectDesignRuntimeDetachResponseSchema>;
+
+
+export const ProjectDesignRuntimeVersionSummarySchema = z.object({
+  id: DesignEntityIdSchema, name: z.string().min(1), version: DesignSystemSemVerSchema,
+  digest: DesignSystemDigestSchema, sourceDigest: DesignSystemDigestSchema,
+}).strict();
+export type ProjectDesignRuntimeVersionSummary = z.infer<typeof ProjectDesignRuntimeVersionSummarySchema>;
+export const ProjectDesignRuntimeVersionsResponseSchema = z.object({ revision: revisionSchema, versions: z.array(ProjectDesignRuntimeVersionSummarySchema) }).strict();
+export type ProjectDesignRuntimeVersionsResponse = z.infer<typeof ProjectDesignRuntimeVersionsResponseSchema>;
+export const ProjectDesignRuntimeVersionResponseSchema = z.object({ revision: revisionSchema, version: DesignSystemVersionSchema }).strict();
+export type ProjectDesignRuntimeVersionResponse = z.infer<typeof ProjectDesignRuntimeVersionResponseSchema>;
+export const ProjectDesignRuntimeImportVersionRequestSchema = z.object({ expectedRevision: revisionSchema, package: DesignSystemPackageSchema }).strict();
+export type ProjectDesignRuntimeImportVersionRequest = z.infer<typeof ProjectDesignRuntimeImportVersionRequestSchema>;
+export const ProjectDesignRuntimePublishVersionResponseSchema = z.object({ state: ProjectDesignRuntimeStateSchema, version: ProjectDesignRuntimeVersionSummarySchema }).strict();
+export type ProjectDesignRuntimePublishVersionResponse = z.infer<typeof ProjectDesignRuntimePublishVersionResponseSchema>;
+const packageFields = DesignSystemPackageSchema.innerType().shape;
+/** Selected paths are read as UTF-8; full-package import supports binary bundle entries. */
+export const ProjectDesignRuntimePublishCurrentRequestSchema = z.object({
+  expectedRevision: revisionSchema, name: z.string().min(1), version: DesignSystemSemVerSchema,
+  sourcePaths: z.array(SourcePathSchema).min(1),
+  constraints: packageFields.constraints.optional(), tokens: packageFields.tokens.optional(), patterns: packageFields.patterns.optional(),
+  codeCompatibility: packageFields.codeCompatibility.optional(), origin: packageFields.origin,
+}).strict().superRefine((request, ctx) => {
+  const bundle = DesignSystemSourceBundleSchema.safeParse({ schemaVersion: 1, files: request.sourcePaths.map((path) => ({ path, encoding: 'utf8', content: '' })) });
+  if (!bundle.success) bundle.error.issues.forEach((issue) => ctx.addIssue({ ...issue, path: ['sourcePaths', issue.path[1] ?? 0] }));
+});
+export type ProjectDesignRuntimePublishCurrentRequest = z.infer<typeof ProjectDesignRuntimePublishCurrentRequestSchema>;
+export const ProjectDesignRuntimeActivateDependencyRequestSchema = z.object({
+  expectedRevision: revisionSchema, designSystemId: DesignEntityIdSchema, version: DesignSystemSemVerSchema, range: DesignSystemVersionRangeSchema,
+}).strict();
+export type ProjectDesignRuntimeActivateDependencyRequest = z.infer<typeof ProjectDesignRuntimeActivateDependencyRequestSchema>;
+export const ProjectDesignRuntimeDependencyResponseSchema = z.object({ revision: revisionSchema, resolution: DesignSystemResolutionResultSchema }).strict();
+export type ProjectDesignRuntimeDependencyResponse = z.infer<typeof ProjectDesignRuntimeDependencyResponseSchema>;

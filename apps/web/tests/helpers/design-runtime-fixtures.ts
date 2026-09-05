@@ -8,6 +8,8 @@ export function emptyDesignRuntimeState(revision = 0): ProjectDesignRuntimeState
     projectComponents: { schemaVersion: 1, id: 'project', components: [] },
     document: null,
     sharedChanges: { schemaVersion: 1, id: 'project', drafts: [], history: [] },
+    dependencies: { schemaVersion: 1, id: 'project', dependencies: [] },
+    lock: { schemaVersion: 1, id: 'project', dependencies: [] },
   };
 }
 

@@ -297,17 +297,16 @@ export function createProjectDesignSystemLock(projectId: string, versions: reado
   return ProjectDesignSystemLockSchema.parse({ schemaVersion: 1, id: projectId, dependencies: versions.map((version) => ({ designSystemId: version.package.id, version: version.package.version, digest: version.digest, source: { type: 'bundle', digest: version.sourceDigest } })).sort((a, b) => compareDesignRuntimeKeys(a.designSystemId, b.designSystemId)) });
 }
 
-/** The loader receives an exact identity and digests and must load frozen package bytes only. */
-export async function resolveLockedDesignSystems(
-  dependencies: ProjectDesignSystemDependencies,
-  lock: ProjectDesignSystemLock,
-  loadExact: (entry: DesignSystemLockedDependency) => DesignSystemVersion | null | Promise<DesignSystemVersion | null>,
-): Promise<DesignSystemResolutionResult> {
+function failedResolution(diagnostics: ValidationDiagnostic[]): DesignSystemResolutionResult {
+  return { schemaVersion: 1, ok: false, versions: [], diagnostics };
+}
+
+function prepareLockedResolution(dependencies: ProjectDesignSystemDependencies, lock: ProjectDesignSystemLock):
+  { entries: DesignSystemLockedDependency[]; diagnostics: ValidationDiagnostic[] } {
   const declared = ProjectDesignSystemDependenciesSchema.safeParse(dependencies);
   const locked = ProjectDesignSystemLockSchema.safeParse(lock);
-  const failed = (diagnostics: ValidationDiagnostic[]): DesignSystemResolutionResult => ({ schemaVersion: 1, ok: false, versions: [], diagnostics });
-  if (!declared.success || !locked.success) return failed([error('ODDS5001', 'Dependency or exact lock metadata is invalid.')]);
-  if (declared.data.id !== locked.data.id) return failed([error('ODDS5001', 'Dependency declaration and lock must belong to the same project.')]);
+  if (!declared.success || !locked.success) return { entries: [], diagnostics: [error('ODDS5001', 'Dependency or exact lock metadata is invalid.')] };
+  if (declared.data.id !== locked.data.id) return { entries: [], diagnostics: [error('ODDS5001', 'Dependency declaration and lock must belong to the same project.')] };
   const intent = new Map(declared.data.dependencies.map((entry) => [entry.designSystemId, entry.version]));
   const diagnostics: ValidationDiagnostic[] = [];
   for (const entry of locked.data.dependencies) {
@@ -316,11 +315,14 @@ export async function resolveLockedDesignSystems(
     intent.delete(entry.designSystemId);
   }
   for (const id of intent.keys()) diagnostics.push(error('ODDS5001', `Declared dependency ${id} has no exact lock.`));
-  if (diagnostics.length) return failed(diagnostics);
+  return { entries: [...locked.data.dependencies].sort((a, b) => compareDesignRuntimeKeys(a.designSystemId, b.designSystemId)), diagnostics };
+}
+
+function finishLockedResolution(entries: DesignSystemLockedDependency[], loaded: (DesignSystemVersion | null)[]): DesignSystemResolutionResult {
   const versions: DesignSystemVersion[] = [];
-  for (const entry of [...locked.data.dependencies].sort((a, b) => compareDesignRuntimeKeys(a.designSystemId, b.designSystemId))) {
-    let version: DesignSystemVersion | null;
-    try { version = await loadExact(structuredClone(entry)); } catch { version = null; }
+  const diagnostics: ValidationDiagnostic[] = [];
+  for (const [index, entry] of entries.entries()) {
+    const version = loaded[index];
     if (!version) { diagnostics.push(error('ODDS5003', `Locked design system ${entry.designSystemId}@${entry.version} is unavailable.`)); continue; }
     const checked = verifyDesignSystemVersion(version);
     diagnostics.push(...checked);
@@ -330,5 +332,33 @@ export async function resolveLockedDesignSystems(
     else if (version.sourceDigest !== entry.source.digest) diagnostics.push(error('ODDS5005', 'Exact loader returned source that does not match the project lock.'));
     else versions.push(DesignSystemVersionSchema.parse(version));
   }
-  return diagnostics.length ? failed(diagnostics) : { schemaVersion: 1, ok: true, versions, diagnostics: [] };
+  return diagnostics.length ? failedResolution(diagnostics) : { schemaVersion: 1, ok: true, versions, diagnostics: [] };
+}
+
+/** The loader receives an exact identity and digests and must load frozen package bytes only. */
+export async function resolveLockedDesignSystems(
+  dependencies: ProjectDesignSystemDependencies,
+  lock: ProjectDesignSystemLock,
+  loadExact: (entry: DesignSystemLockedDependency) => DesignSystemVersion | null | Promise<DesignSystemVersion | null>,
+): Promise<DesignSystemResolutionResult> {
+  const prepared = prepareLockedResolution(dependencies, lock);
+  if (prepared.diagnostics.length) return failedResolution(prepared.diagnostics);
+  const loaded: (DesignSystemVersion | null)[] = [];
+  for (const entry of prepared.entries) {
+    try { loaded.push(await loadExact(structuredClone(entry))); } catch { loaded.push(null); }
+  }
+  return finishLockedResolution(prepared.entries, loaded);
+}
+
+/** SQLite callers use the same exact-lock evaluator without making synchronous project operations async. */
+export function resolveLockedDesignSystemsSync(
+  dependencies: ProjectDesignSystemDependencies,
+  lock: ProjectDesignSystemLock,
+  loadExact: (entry: DesignSystemLockedDependency) => DesignSystemVersion | null,
+): DesignSystemResolutionResult {
+  const prepared = prepareLockedResolution(dependencies, lock);
+  if (prepared.diagnostics.length) return failedResolution(prepared.diagnostics);
+  return finishLockedResolution(prepared.entries, prepared.entries.map((entry) => {
+    try { return loadExact(structuredClone(entry)); } catch { return null; }
+  }));
 }

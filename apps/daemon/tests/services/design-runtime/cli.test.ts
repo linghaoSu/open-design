@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ProjectComponentDefinition, ProjectDesignRuntimeState, ReferenceGraphQueryResult, ResolvedUIIRResult, SharedComponentDraft, SharedComponentImpact, ValidationDiagnostic } from '@open-design/contracts';
+import { packageFixture } from '../../fixtures/design-runtime/design-system-version.js';
+import { createDesignSystemVersion } from '../../../src/services/design-runtime/design-system-version.js';
 
 const daemonRoot = fileURLToPath(new URL('../../..', import.meta.url));
 const cliEntry = fileURLToPath(new URL('../../../src/cli.ts', import.meta.url));
@@ -34,6 +36,8 @@ function state(revision = 7): ProjectDesignRuntimeState {
     projectComponents: { schemaVersion: 1, id: 'acme', components: [] },
     document: null,
     sharedChanges: { schemaVersion: 1, id: 'acme', drafts: [], history: [] },
+    dependencies: { schemaVersion: 1, id: 'acme', dependencies: [] },
+    lock: { schemaVersion: 1, id: 'acme', dependencies: [] },
   };
 }
 
@@ -104,7 +108,7 @@ describe('od design-runtime CLI dispatcher', () => {
   it('advertises commands and JSON, stdin, workspace and revision options through real help', async () => {
     const result = await runCli(['design-runtime', '--help']);
     expect(result.code, result.stderr).toBe(0);
-    for (const text of ['compile <projectId>', 'revalidate <projectId> <bindingId>', 'save-document <projectId>', 'references <projectId> <componentRef>', 'stage <projectId>', 'publish <projectId> <draftId>', 'detach <projectId>', '--prompt-file <path|->', '--workspace <id>', '--workspace-member <id>', '--expected-revision <n>', '--json']) {
+    for (const text of ['compile <projectId>', 'revalidate <projectId> <bindingId>', 'save-document <projectId>', 'references <projectId> <componentRef>', 'stage <projectId>', 'publish <projectId> <draftId>', 'detach <projectId>', 'version <projectId> <designSystemId> <exactVersion>', 'import-version <projectId>', 'publish-version <projectId>', 'activate-dependency <projectId>', 'clear-dependency <projectId>', 'resolve-dependency <projectId>', '--prompt-file <path|->', '--workspace <id>', '--workspace-member <id>', '--expected-revision <n>', '--json']) {
       expect(result.stdout).toContain(text);
     }
     expect((await runCli(['--help'])).stdout).toContain('od design-runtime');
@@ -255,6 +259,138 @@ describe('od design-runtime CLI dispatcher', () => {
     const result = await runCli(['design-runtime', 'get', projectId, '--json', '--daemon-url', stub.url]);
     expect(result.code).toBe(1);
     expect(JSON.parse(result.stderr).error.message).toContain('Daemon response did not match the contract');
+  });
+});
+
+describe('od design-runtime version and exact dependency CLI', () => {
+  function versionFixture(exactVersion = '1.0.0') {
+    const version = createDesignSystemVersion(packageFixture(exactVersion));
+    const summary = { id: version.package.id, name: version.package.name, version: version.package.version, digest: version.digest, sourceDigest: version.sourceDigest };
+    return { version, summary };
+  }
+
+  it('lists versions and reads only the explicit exact version, including encoded SemVer build metadata', async () => {
+    const { version, summary } = versionFixture('1.0.0-beta.1+build.2');
+    const stub = await startServer((request) => ({ body: request.url.endsWith('/versions') ? { revision: 7, versions: [summary] } : { revision: 7, version } }));
+    const list = await runCli(['design-runtime', 'versions', projectId, '--json', '--daemon-url', stub.url, ...scope]);
+    expect(list.code, list.stderr).toBe(0);
+    expect(JSON.parse(list.stdout)).toEqual({ revision: 7, versions: [summary] });
+    const exact = await runCli(['design-runtime', 'version', projectId, 'acme', version.package.version, '--json', '--daemon-url', stub.url, ...scope]);
+    expect(exact.code, exact.stderr).toBe(0);
+    expect(JSON.parse(exact.stdout)).toEqual({ revision: 7, version });
+    expect(stub.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([`GET ${prefix}/versions`, `GET ${prefix}/versions/acme/1.0.0-beta.1%2Bbuild.2`]);
+    expect(stub.requests.every((request) => request.headers['x-od-workspace-member-id'] === 'member-1')).toBe(true);
+  });
+
+  it('imports a complete frozen package from a JSON file with one revision read and unchanged source bytes', async () => {
+    const { version, summary } = versionFixture();
+    const response = { state: state(8), version: summary };
+    const stub = await startServer((request) => ({ body: request.method === 'GET' ? { state: state() } : response }));
+    const file = await inputFile({ package: version.package });
+    const result = await runCli(['design-runtime', 'import-version', projectId, '--prompt-file', file, '--json', '--daemon-url', stub.url, ...scope]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual(response);
+    expect(stub.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([`GET ${prefix}`, `POST ${prefix}/versions`]);
+    expect(stub.requests[1]!.body).toEqual({ package: version.package, expectedRevision: 7 });
+    expect(stub.requests.every((request) => request.headers['x-od-workspace-id'] === 'workspace-1')).toBe(true);
+    expect(JSON.parse(result.stdout).state.lock.dependencies).toEqual([]);
+  });
+
+  it('rejects a substituted version in a successful daemon response', async () => {
+    const { version } = versionFixture('1.1.0');
+    const stub = await startServer(() => ({ body: { revision: 7, version } }));
+    const result = await runCli(['design-runtime', 'version', projectId, 'acme', '1.0.0', '--json', '--daemon-url', stub.url]);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(JSON.parse(result.stderr).error.message).toContain('different design-system identity or exact version');
+    expect(stub.requests).toHaveLength(1);
+  });
+
+  it('publishes selected project-relative paths through the daemon and prints exact identity and digests', async () => {
+    const { summary } = versionFixture();
+    const input = { name: 'Acme UI', version: '1.0.0', sourcePaths: ['src/Button.tsx', 'DESIGN.md'] };
+    const stub = await startServer(() => ({ body: { state: state(8), version: summary } }));
+    const result = await runCli(['design-runtime', 'publish-version', projectId, '--prompt-file', '-', '--expected-revision', '7', '--daemon-url', stub.url], JSON.stringify(input));
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toContain('Published: acme@1.0.0');
+    expect(result.stdout).toContain(`Package digest: ${summary.digest}`);
+    expect(result.stdout).toContain(`Source digest: ${summary.sourceDigest}`);
+    expect(result.stdout).toContain('Dependency: (none)');
+    expect(stub.requests).toHaveLength(1);
+    expect(stub.requests[0]).toMatchObject({ method: 'POST', url: `${prefix}/versions/publish-current`, body: { ...input, expectedRevision: 7 } });
+  });
+
+  it('activates explicit range/version intent, resolves the lock and clears it with CAS through the same authority', async () => {
+    const { version } = versionFixture();
+    const activated = state(8);
+    activated.dependencies.dependencies = [{ designSystemId: 'acme', version: '^1.0.0' }];
+    activated.lock.dependencies = [{ designSystemId: 'acme', version: '1.0.0', digest: version.digest, source: { type: 'bundle', digest: version.sourceDigest } }];
+    const resolution = { schemaVersion: 1, ok: true, versions: [version], diagnostics: [] };
+    const stub = await startServer((request) => ({ body: request.url.endsWith('/resolve') ? { revision: 8, resolution } : { state: request.method === 'DELETE' ? state(9) : activated } }));
+    const input = { expectedRevision: 7, designSystemId: 'acme', version: '1.0.0', range: '^1.0.0' };
+    const activate = await runCli(['design-runtime', 'activate-dependency', projectId, '--prompt-file', '-', '--json', '--daemon-url', stub.url, ...scope], JSON.stringify(input));
+    expect(activate.code, activate.stderr).toBe(0);
+    expect(JSON.parse(activate.stdout).state).toEqual(activated);
+    const resolve = await runCli(['design-runtime', 'resolve-dependency', projectId, '--json', '--daemon-url', stub.url, ...scope]);
+    expect(resolve.code, resolve.stderr).toBe(0);
+    expect(JSON.parse(resolve.stdout)).toEqual({ revision: 8, resolution });
+    const clear = await runCli(['design-runtime', 'clear-dependency', projectId, '--expected-revision', '8', '--json', '--daemon-url', stub.url, ...scope]);
+    expect(clear.code, clear.stderr).toBe(0);
+    expect(JSON.parse(clear.stdout).state.lock.dependencies).toEqual([]);
+    expect(stub.requests.map(({ method, url, body }) => ({ method, url, body }))).toEqual([
+      { method: 'POST', url: `${prefix}/dependency`, body: input },
+      { method: 'GET', url: `${prefix}/dependency/resolve`, body: undefined },
+      { method: 'DELETE', url: `${prefix}/dependency`, body: { expectedRevision: 8 } },
+    ]);
+    expect(stub.requests.every((request) => request.headers['x-od-workspace-member-id'] === 'member-1')).toBe(true);
+  });
+
+  it('returns exact-lock resolution failures without attempting to select or fetch a newer version', async () => {
+    const resolution = { schemaVersion: 1, ok: false, versions: [], diagnostics: [{ schemaVersion: 1, code: 'ODDS5003', severity: 'error', message: 'Locked acme@1.0.0 is unavailable.' }] };
+    const stub = await startServer(() => ({ body: { revision: 7, resolution } }));
+    const result = await runCli(['design-runtime', 'resolve-dependency', projectId, '--json', '--daemon-url', stub.url]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(result.stdout)).toEqual({ revision: 7, resolution });
+    expect(stub.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([`GET ${prefix}/dependency/resolve`]);
+  });
+
+  it('preserves immutable publication and aggregate revision errors without retrying', async () => {
+    const errors = [
+      { code: 'DESIGN_RUNTIME_VERSION_IMMUTABLE', message: 'Published version is immutable.', details: { designSystemId: 'acme', version: '1.0.0', diagnostics: [{ schemaVersion: 1, code: 'ODDS5006', severity: 'error', message: 'Cannot overwrite acme@1.0.0.' }] } },
+      { code: 'DESIGN_RUNTIME_REVISION_CONFLICT', message: 'Project revision changed.', details: { expectedRevision: 7, currentRevision: 8 } },
+    ];
+    const stub = await startServer((request) => ({ status: 409, body: { error: request.url.endsWith('/publish-current') ? errors[0] : errors[1] } }));
+    const publication = await runCli(['design-runtime', 'publish-version', projectId, '--prompt-file', '-', '--json', '--daemon-url', stub.url], JSON.stringify({ expectedRevision: 7, name: 'Acme', version: '1.0.0', sourcePaths: ['src/Button.tsx'] }));
+    expect(publication.code).toBe(1);
+    expect(JSON.parse(publication.stderr)).toEqual({ status: 409, error: errors[0] });
+    const clear = await runCli(['design-runtime', 'clear-dependency', projectId, '--expected-revision', '7', '--json', '--daemon-url', stub.url]);
+    expect(clear.code).toBe(1);
+    expect(JSON.parse(clear.stderr)).toEqual({ status: 409, error: errors[1] });
+    expect(stub.requests).toHaveLength(2);
+  });
+
+  it('rejects implicit latest, incomplete identities, noncanonical bundles and local path bypass before HTTP', async () => {
+    const stub = await startServer();
+    const cases = [
+      { args: ['version', projectId, 'acme'] },
+      { args: ['version', projectId, 'acme', 'latest'] },
+      { args: ['version', projectId, 'acme', '^1.0.0'] },
+      { args: ['version', projectId, 'acme', '1.0.0', 'extra'] },
+      { args: ['versions', projectId, '--query', 'latest'] },
+      { args: ['resolve-dependency', projectId, 'latest'] },
+      { args: ['activate-dependency', projectId, '--prompt-file', '-'], input: { designSystemId: 'acme', range: '^1.0.0' } },
+      { args: ['activate-dependency', projectId, '--prompt-file', '-'], input: { designSystemId: 'acme', version: 'latest', range: '*' } },
+      { args: ['publish-version', projectId, '--prompt-file', '-'], input: { name: 'Acme', version: '1.0.0', sourcePaths: ['../outside.tsx'] } },
+      { args: ['publish-version', projectId, '--prompt-file', '-'], input: { name: 'Acme', version: '1.0.0', sourcePaths: ['src/Button.tsx'], sourceText: 'inline bypass' } },
+      { args: ['import-version', projectId, '--prompt-file', '-'], input: { package: { id: 'acme', version: '1.0.0' } } },
+    ];
+    for (const entry of cases) {
+      const result = await runCli(['design-runtime', ...entry.args, '--json', '--daemon-url', stub.url], JSON.stringify(entry.input));
+      expect(result.code, entry.args.join(' ')).toBe(2);
+      expect(JSON.parse(result.stderr).error.code).toBe('BAD_REQUEST');
+    }
+    expect(stub.requests).toEqual([]);
   });
 });
 
