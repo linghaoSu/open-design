@@ -119,6 +119,7 @@ import { useProjectCollabContext } from '../collab/collab-context';
 import { createTerminal, killTerminal, listPlugins, moveWorkspaceProject } from '../state/projects';
 import { MoveToTeamConfirmDialog, moveConfirmSkipped } from './MoveToTeamConfirmDialog';
 import { DesignFilesPanel, type DesignFilesNavState } from './DesignFilesPanel';
+import { DesignRuntimePanel } from './DesignRuntimePanel';
 import {
   DesignBrowserPanel,
   labelFromUrl,
@@ -1379,6 +1380,7 @@ export function FileWorkspace({
   }, [onRefreshFiles]);
   const { locale, t } = useI18n();
   const { workspaceContext } = useProjectCollabContext();
+  const [designRuntimeOpen, setDesignRuntimeOpen] = useState(false);
   const iframeKeepAlivePool = useIframeKeepAlivePool();
   const analytics = useAnalytics();
   // P1 page_view page_name=file_manager — once per project the user lands
@@ -4096,6 +4098,13 @@ export function FileWorkspace({
         {/* Pinned to the right for project/file actions; the tab launcher sits
             next to the file tabs so its spatial relationship stays clear. */}
         <div className="ws-tabs-actions">
+          {!initialMaterializationPending ? <Button
+            data-testid="design-runtime-entry"
+            variant="ghost"
+            aria-expanded={designRuntimeOpen}
+            aria-controls="design-runtime-panel"
+            onClick={() => setDesignRuntimeOpen((open) => !open)}
+          >{t('designRuntime.title')}</Button> : null}
           {!initialMaterializationPending && fileActionsBefore ? (
             <div className="ws-tabs-file-actions-before">{fileActionsBefore}</div>
           ) : null}
@@ -4115,6 +4124,13 @@ export function FileWorkspace({
           ) : null}
         </div>
       </div>
+      {!initialMaterializationPending && designRuntimeOpen ? <DesignRuntimePanel
+        projectId={projectId}
+        workspaceContext={workspaceContext}
+        files={files}
+        viewerOnly={viewerOnly}
+        onClose={() => setDesignRuntimeOpen(false)}
+      /> : null}
       {!initialMaterializationPending && launcherOpen ? (
         <TabLauncherMenu
           anchor={launcherBtnRef.current}

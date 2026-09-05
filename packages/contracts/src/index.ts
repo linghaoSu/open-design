@@ -65,6 +65,7 @@ export * from './design-systems/components-manifest.js';
 export * from './design-systems/derived-token-outputs.js';
 export * from './design-systems/token-schema.js';
 export * from './design-runtime/index.js';
+export * from './api/design-runtime.js';
 export * from './sse/common.js';
 export * from './sse/chat.js';
 export * from './sse/collab.js';

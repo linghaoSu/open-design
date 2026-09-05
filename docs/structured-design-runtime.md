@@ -1,8 +1,15 @@
-# Structured design runtime: first implementation
+# Structured design runtime
 
-This milestone implements Phase 1 contracts and a small, internal React/TypeScript
-compiler spike. It establishes a separate structured registry without changing
-the current design-system discovery, generation, or rendering workflow.
+Projects can compile selected React/TypeScript exports into a structured component
+registry, inspect their properties, manage explicit code bindings, and validate
+property values. Open **Design runtime** from the project file workspace's tab
+bar, select source files and named exports, then choose **Compile registry**.
+The same operations are available through `od design-runtime` and the project HTTP
+API. Existing design-system discovery, generation, and rendering retain their
+current behavior.
+
+The [active delivery plan](../specs/current/structured-design-runtime.md) tracks
+the remaining inheritance, versioning, upgrade, handoff, and generation work.
 
 ## Existing extension points
 
@@ -35,20 +42,73 @@ the current design-system discovery, generation, or rendering workflow.
 - `packages/contracts/src/design-runtime/`: canonical Zod schemas and inferred
   types for component definitions/registries, code components, explicit bindings,
   instances/overrides, semantic UI documents/nodes, and validation diagnostics.
-- `apps/daemon/src/services/design-runtime/`: source-string compiler and minimal
-  deterministic component/binding validation. Keep business enforcement in the
-  daemon and keep contracts free of I/O and compiler dependencies.
+- `apps/daemon/src/services/design-runtime/`: deterministic compilation,
+  component/binding validation, index operations, and project orchestration.
+  `routes/design-runtime.ts` authorizes requests and exposes these services;
+  `storage/design-runtime-store.ts` persists aggregate snapshots in the daemon
+  database. Keep contracts free of I/O and compiler dependencies.
 - Contract tests live under `packages/contracts/tests/design-runtime/`; daemon
   tests and the source fixture live under
   `apps/daemon/tests/services/design-runtime/`. The fixture proves the Button
   registry, explicit binding, and `ODDS1003` rejection.
 
-No new workspace package is needed for one internal consumer. A later milestone
-can extract pure runtime algorithms once actual shared consumers justify that
-boundary. No public endpoint, CLI command, UI, prompt integration, registry
-persistence, reference graph, inheritance engine, version resolver, migration,
-renderer, or handoff generator ships in this change. UI/CLI parity is therefore
-not applicable until the capability is exposed in a later milestone.
+No new workspace package is needed. A later milestone can extract pure runtime
+algorithms once actual shared consumers justify that boundary. Prompt integration,
+reference graphs, inheritance, version resolution, migrations, rendering, and
+handoff remain tracked separately in the active plan.
+
+## Project workflow and persistence
+
+Compilation replaces the project's registry using the complete selection list.
+Each selection contains a project-relative source path, export name, and stable
+component/code IDs. The daemon reads each selected file once and compiles every
+export before atomically saving the new registry, code index, and bindings. A
+failed source read, unsupported type, or invalid selection leaves the prior
+snapshot intact. Source text is not copied into registry storage.
+
+The UI assigns identities once per selection and preserves them when source paths
+or exports are edited. Existing manual bindings and explicit unbound states survive
+recompilation. Removed targets become broken; changed public APIs become stale.
+Recompilation does not automatically revalidate stale, broken, or candidate
+bindings. **Bind** and **Revalidate** check the current registry and code index;
+**Unbind** retains the binding's design identity while removing its code target.
+Drift is assessed when the index is recompiled, not by a background file watcher.
+
+Every write carries `expectedRevision`. A concurrent change returns HTTP 409 with
+the expected and current revisions; callers must review the refreshed state before
+trying again. Registry identity changes require the future explicit upgrade flow.
+Read-only project members can browse metadata and validate values. Mutations use
+the existing project write authority. Persistence uses the daemon database and
+follows the root [daemon data directory contract](../AGENTS.md#daemon-data-directory-contract).
+
+All paths below are relative to `/api/projects/:id/design-runtime`:
+
+| Operation | HTTP | CLI |
+| --- | --- | --- |
+| Read persisted snapshot | `GET /` | `get <projectId>` |
+| Compile project sources | `POST /compile` | `compile <projectId> --prompt-file <path\|->` |
+| Search design/code components | `GET /components`, `GET /code-components` | `components`, `code-components` with `<projectId> --query <text>` |
+| Bind or unbind | `PUT`, `DELETE /bindings/:bindingId` | `bind <projectId> --prompt-file <path\|->`, `unbind <projectId> <bindingId>` |
+| Revalidate or resolve | `POST /bindings/:bindingId/revalidate`, `GET /bindings/:bindingId/resolve` | `revalidate`, `resolve` with `<projectId> <bindingId>` |
+| Validate property usage | `POST /validate` | `validate <projectId> --prompt-file <path\|->` |
+
+CLI commands begin with `od design-runtime` and support `--json`, `--daemon-url`,
+`--workspace`, and `--workspace-member`. Compile/bind/validate read JSON from a
+file or stdin. A write can provide `expectedRevision` in its input or
+`--expected-revision`; if both are omitted, the CLI reads the current revision once
+and sends it without retrying conflicts. Invalid usage diagnostics and unresolved
+bindings exit 1; malformed CLI input exits 2. Run `od design-runtime help` for
+complete input examples. Canonical request/response schemas live in
+`packages/contracts/src/api/design-runtime.ts`; errors use `error.details`.
+
+For example, after compiling the matching stable identities, this validates a
+usage through the same endpoint as the UI:
+
+```bash
+od design-runtime validate <projectId> --json --prompt-file - <<'JSON'
+{"component":"ds:acme/button","props":{"variant":"primary"}}
+JSON
+```
 
 ## Compatibility and identity
 
@@ -61,7 +121,7 @@ For the acceptance fixture, `Button` is an explicitly assigned stable ID, not an
 ID regenerated from the display name. Production import identity reconciliation
 remains future work.
 
-The compiler is a deterministic syntax-only spike. It accepts explicitly selected
+The compiler is deterministic and syntax-only. It accepts explicitly selected
 exports and identities, does not execute source, and does not infer bindings from
 appearance. Unsupported source types must be reported rather than represented as
 a complete, permissive component contract. The semantic IR describes hierarchy,
@@ -134,14 +194,18 @@ Run the existing contracts suite and focused daemon design-system tests before
 source changes. Then run the new narrow schema/compiler/validation tests, contract
 serialization and package export checks, and the repository-required `pnpm guard`
 and `pnpm typecheck`. Rebuild generated contract exports before testing package
-runtime imports. Tests require no LLM, browser, source execution, or server.
+runtime imports. Pure compiler tests require no source execution or LLM. Project
+service, storage, route, and CLI tests use temporary SQLite/HTTP fixtures; the UI
+witness uses the shared tools-dev Playwright suite. None require provider accounts.
 
 Focused commands:
 
 ```bash
 corepack pnpm --filter @open-design/contracts build
 corepack pnpm --filter @open-design/contracts test
-corepack pnpm --filter @open-design/daemon exec vitest run -c vitest.config.ts tests/services/design-runtime
+corepack pnpm --filter @open-design/daemon exec vitest run -c vitest.config.ts tests/services/design-runtime tests/storage/design-runtime-store.test.ts tests/routes/design-runtime.test.ts
+corepack pnpm --filter @open-design/web test tests/providers/design-runtime.test.ts tests/components/DesignRuntimePanel.test.tsx
+corepack pnpm --filter @open-design/e2e exec playwright test -c playwright.config.ts ui/design-runtime.test.ts --workers=1
 corepack pnpm guard
 corepack pnpm typecheck
 ```

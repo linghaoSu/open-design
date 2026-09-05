@@ -30,6 +30,56 @@ export const LOCALE_LABEL: Record<Locale, string> = {
 // flat (not deeply nested) so missing-key TS errors point straight at the
 // offending string instead of a generic object mismatch.
 export interface Dict {
+  'designRuntime.title': string;
+  'designRuntime.description': string;
+  'designRuntime.revision': string;
+  'designRuntime.refresh': string;
+  'designRuntime.readOnly': string;
+  'designRuntime.conflict': string;
+  'designRuntime.saved': string;
+  'designRuntime.diagnostics': string;
+  'designRuntime.allowedValues': string;
+  'designRuntime.sources': string;
+  'designRuntime.sourceHint': string;
+  'designRuntime.systemId': string;
+  'designRuntime.sourcePath': string;
+  'designRuntime.chooseSource': string;
+  'designRuntime.exportName': string;
+  'designRuntime.identities': string;
+  'designRuntime.identityHint': string;
+  'designRuntime.componentId': string;
+  'designRuntime.codeId': string;
+  'designRuntime.packageName': string;
+  'designRuntime.addSource': string;
+  'designRuntime.compile': string;
+  'designRuntime.empty': string;
+  'designRuntime.components': string;
+  'designRuntime.component': string;
+  'designRuntime.slots': string;
+  'designRuntime.required': string;
+  'designRuntime.optional': string;
+  'designRuntime.multiple': string;
+  'designRuntime.single': string;
+  'designRuntime.binding': string;
+  'designRuntime.status': string;
+  'designRuntime.codeComponent': string;
+  'designRuntime.propMappings': string;
+  'designRuntime.bind': string;
+  'designRuntime.unbind': string;
+  'designRuntime.revalidate': string;
+  'designRuntime.resolve': string;
+  'designRuntime.resolved': string;
+  'designRuntime.validate': string;
+  'designRuntime.includeProp': string;
+  'designRuntime.valueType': string;
+  'designRuntime.valid': string;
+  'designRuntime.props': string;
+  'designRuntime.status.bound': string;
+  'designRuntime.status.unbound': string;
+  'designRuntime.status.candidate': string;
+  'designRuntime.status.stale': string;
+  'designRuntime.status.broken': string;
+  'designRuntime.boundTarget': string;
   // Workspace invite acceptance (C lane)
   'invite.header.eyebrow': string;
   'invite.loading': string;

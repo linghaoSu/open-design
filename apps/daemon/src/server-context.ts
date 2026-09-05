@@ -3,6 +3,7 @@ import type { SkillInfo } from './skills.js';
 import type { DesignSystemSummary } from './design-systems/index.js';
 import type { RoutineRoutesService } from './routes/routine.js';
 import type { OpenDesignPublicMetadataService } from './services/open-design-public-metadata.js';
+import type { ProjectDesignRuntimeService } from './services/design-runtime/project-service.js';
 import type { ResourceHubPrincipal } from './collab/resource-principal.js';
 import type {
   AuthorizeProjectRequest,
@@ -159,6 +160,7 @@ export interface TelemetryDeps {
 
 export interface ServerContext {
   db: any;
+  designRuntime: ProjectDesignRuntimeService;
   design: any;
   http: HttpDeps;
   paths: PathDeps;

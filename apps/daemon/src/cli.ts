@@ -5,6 +5,7 @@ import { basename } from 'node:path';
 import { runDaemonCliStartup, startDaemonRuntime } from './daemon-startup.js';
 import { runLiveArtifactsMcpServer } from './mcp-live-artifacts-server.js';
 import { runArtifactsCli } from './artifacts-cli.js';
+import { runDesignRuntimeCli } from './services/design-runtime/cli.js';
 import { runResource } from './resource-cli.js';
 import { runProjectHandoff } from './handoff-cli.js';
 import { runConnectorsToolCli } from './tools-connectors-cli.js';
@@ -416,6 +417,7 @@ const SUBCOMMAND_MAP = {
   skill: runSkills,
   skills: runSkills,
   'design-systems': runDesignSystems,
+  'design-runtime': runDesignRuntime,
   resource: runResource,
   craft: runCraft,
   diagnostics: runDiagnostics,
@@ -429,6 +431,11 @@ const SUBCOMMAND_MAP = {
   library: runLibrary,
   figma: runFigma,
 };
+
+async function runDesignRuntime(args) {
+  const { exitCode } = await runDesignRuntimeCli(args, { workspaceHeaders: workspaceHeadersFromExplicitFlags });
+  process.exitCode = exitCode;
+}
 
 function printStrategyHelp() {
   console.log(`Usage:
@@ -980,6 +987,10 @@ function printRootHelp() {
 
   od tools design-systems read --path <manifest-declared-path>
       Read active design-system pull-layer files through daemon wrapper commands.
+
+  od design-runtime <get|compile|components|code-components|bind|unbind|revalidate|resolve|validate> <projectId> [options]
+      Compile component registries and manage explicit code bindings through
+      the project daemon API. Use --prompt-file <path|-> for JSON requests.
 
   od mcp live-artifacts
       Start the MCP server exposing live-artifact and connector tools.

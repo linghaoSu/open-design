@@ -54,9 +54,9 @@ until every required milestone and invariant has direct current-state evidence.
 | --- | --- | --- | --- |
 | 0 | Current discovery, project selection, prompt paths, API, CLI, schemas and baseline inspected | First implementation note and recorded baseline checks | Complete |
 | 1 | Versioned component, binding, instance/override, semantic UI and diagnostic schemas | Canonical schema, JSON round-trip and rejection tests | Complete |
-| 2 | Component registry compiler using deterministic React/TypeScript extraction; reusable multi-component source fixture | Multiple selected exports compile atomically; names, exports, paths, requiredness, enums, reliable defaults and provenance retained; no source execution | In progress |
-| 3 | Code component index, search/inspect, explicit bind/unbind/resolve/validate, persisted binding state | Stable ID resolution; missing/changed source marks broken/stale; HTTP, UI, CLI and restart persistence tests | In progress |
-| 4 | Project component definitions, override-only instances, deterministic reference graph | Button → ApplicationCard → two screens traversal; inheritance/reset, direct/transitive usage, cycles, dangling refs and safe delete/detach rules | Pending |
+| 2 | Component registry compiler using deterministic React/TypeScript extraction; reusable multi-component source fixture | Multiple selected exports compile atomically; names, exports, paths, requiredness, enums, reliable defaults and provenance retained; no source execution | Complete |
+| 3 | Code component index, search/inspect, explicit bind/unbind/resolve/validate, persisted binding state | Stable ID resolution; missing/changed source marks broken/stale on recompile; HTTP, UI, CLI and restart persistence tests | Complete |
+| 4 | Project component definitions, override-only instances, deterministic reference graph | Button → ApplicationCard → two screens traversal; inheritance/reset, direct/transitive usage, cycles, dangling refs and safe delete/detach rules | In progress |
 | 5 | Staged shared component revisions, usage/affected-screen impact, explicit publish and undo/history | A draft leaves live instances unchanged; publish changes all non-overridden instances; conflict/invalid-override tests and discoverable UI/CLI | Pending |
 | 6 | Immutable design-system versions, project dependencies, exact lock and digest/source verification | Reopen resolves same content until explicit upgrade; tampering/missing locked version diagnosed | Pending |
 | 7 | Semantic diff using stable component/token IDs | Added/removed/renamed/changed classification; removed variant/prop/token and incompatible slot are breaking | Pending |
@@ -96,11 +96,22 @@ The following are part of the final result, not optional placeholders:
 
 ## Current task boundary
 
-Work starts with multi-component compilation and pure index/binding operations.
-Then persist and expose those operations as a complete web/CLI/HTTP feature. The
-reference graph and versioning follow on the same canonical identities. Internal
-foundation commits can land independently; their corresponding phase remains
-incomplete until its listed product and validation evidence exists.
+Multi-component compilation, index/binding operations, and their persisted
+web/CLI/HTTP feature are accepted. Current work adds project-local inheritance and
+the reference graph, followed by staged shared changes and versioning on the same
+canonical identities. Internal foundation commits can land independently; their
+corresponding phase remains incomplete until its listed product and validation
+evidence exists.
+
+Phase 2/3 acceptance includes 88 focused contract tests, 147 daemon design-runtime
+tests, the existing 16 project CLI tests, 30 web provider/panel/locale tests, and
+one real browser workflow through the production project API. The browser witness
+creates source files, compiles from the workspace entry, unbinds/rebinds, validates,
+and reloads persisted state. It ran with the shared tools-dev harness and installed
+Chrome through a local scratch configuration because the pinned Playwright browser
+was unavailable. `pnpm install --frozen-lockfile`, `pnpm guard`, and full
+`pnpm typecheck` passed. See `docs/structured-design-runtime.md` for the public
+workflow and `e2e/ui/design-runtime.test.ts` for the browser witness.
 
 The original brief's conceptual names describe responsibilities, not a demand to
 create empty packages or placeholder files. Keep algorithms inside the daemon
