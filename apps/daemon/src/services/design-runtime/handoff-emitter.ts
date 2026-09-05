@@ -4,7 +4,7 @@ import { compileScript, compileTemplate, parse as parseSfc } from '@vue/compiler
 import {
   EmitHandoffCodeRequestSchema, HandoffCodeResultSchema, HandoffManifestSchema,
   type CodeComponentDefinition, type ComponentBinding, type EmitHandoffCodeRequest, type HandoffCodeFile,
-  type HandoffCodeResult, type HandoffManifest, type HandoffScreenOutput, type JsonScalar,
+  type HandoffCodeResult, type HandoffManifest, type HandoffSnapshot, type HandoffScreenOutput, type JsonScalar,
   type UIIRNode, type ValidationDiagnostic,
 } from '@open-design/contracts';
 import { materializeBindingProps } from './binding-resolver.js';
@@ -26,34 +26,43 @@ export function materializeHandoffCalls(input: HandoffManifest): MaterializedHan
   if (!parsed.success) return { ok: false, diagnostics: [handoffDiagnostic('ODDS7001', `Invalid handoff manifest: ${parsed.error.message}`)] };
   const rebuilt = createHandoff(handoffRequest(parsed.data));
   if (!rebuilt.manifest?.ready) return { ok: false, diagnostics: rebuilt.diagnostics };
-  const manifest = rebuilt.manifest; const snapshot = manifest.snapshot;
+  const manifest = rebuilt.manifest;
+  const calls = materializeDocumentCodeCalls(manifest.snapshot, manifest.framework, rebuilt.diagnostics);
+  return calls.ok ? { ...calls, manifest } : calls;
+}
+
+/** Canonical prop/slot application shared by proven production handoff and verified semantic preview. */
+export function materializeDocumentCodeCalls(snapshot: HandoffSnapshot, framework: 'react' | 'vue', initialDiagnostics: ValidationDiagnostic[] = []):
+  | { ok: true; screens: { id: string; nodes: HandoffCodeNode[] }[]; diagnostics: ValidationDiagnostic[] }
+  | { ok: false; diagnostics: ValidationDiagnostic[] } {
   const index = composeProjectCodeIndex(snapshot.baseCodeIndex, snapshot.projectCodeIndex);
-  const diagnostics = [...rebuilt.diagnostics];
+  const diagnostics = [...initialDiagnostics];
   const visit = (node: UIIRNode): HandoffCodeNode | undefined => {
     if (node.type === 'text') return { type: 'text', sourceNodeId: node.id, text: node.text };
-    const binding = manifest.coverage.find((entry) => entry.componentRef === node.ref)?.binding;
+    const binding = snapshot.bindings.bindings.find((entry) => entry.componentRef === node.ref && entry.framework === framework);
     if (binding?.status !== 'bound') { diagnostics.push(handoffDiagnostic('ODDS3004', 'Code emission requires a verified production relationship.', node.ref)); return; }
-    const code = index.components.find((entry) => entry.id === binding.codeComponentId)!;
+    const code = index.components.find((entry) => entry.id === binding.codeComponentId);
+    if (!code) { diagnostics.push(handoffDiagnostic('ODDS3001', 'Referenced production component is unavailable.', node.ref)); return; }
     const props = node.type === 'component' ? node.props ?? {} : Object.fromEntries(node.overrides.map((override) => [override.path[1], override.value]));
     const materialized = materializeBindingProps(binding, snapshot.registry, index.components, props, snapshot.projectComponents);
     if (!materialized.ok) { diagnostics.push(...materialized.diagnostics); return; }
     // These names are framework control fields and cannot deliver ordinary declared props.
     for (const name of Object.keys(code.props)) {
-      if (name === 'key' || name === 'ref' || manifest.framework === 'vue' && (name === 'ref_for' || name === 'ref_key' || name.startsWith('onVnode') || name.includes('-'))) diagnostics.push(handoffDiagnostic('ODDS7001', `Code property ${name} has framework-specific behavior unsupported by deterministic emission.`, node.ref));
+      if (name === 'key' || name === 'ref' || framework === 'vue' && (name === 'ref_for' || name === 'ref_key' || name.startsWith('onVnode') || name.includes('-'))) diagnostics.push(handoffDiagnostic('ODDS7001', `Code property ${name} has framework-specific behavior unsupported by deterministic emission.`, node.ref));
     }
     const slots: Record<string, HandoffCodeNode[]> = Object.create(null);
     if (node.type === 'component') {
       for (const mapping of [...(binding.slotMappings ?? [])].sort((left, right) => compare(left.codeSlot, right.codeSlot))) {
         if (!Object.hasOwn(node.slots ?? {}, mapping.designSlot)) continue;
         const name = mapping.codeSlot;
-        if (manifest.framework === 'react' && (name === 'key' || name === 'ref') || manifest.framework === 'vue' && (name.startsWith('_') || name === '$stable')) diagnostics.push(handoffDiagnostic('ODDS7001', `Code slot ${name} is reserved by the target framework.`, node.ref));
+        if (framework === 'react' && (name === 'key' || name === 'ref') || framework === 'vue' && (name.startsWith('_') || name === '$stable')) diagnostics.push(handoffDiagnostic('ODDS7001', `Code slot ${name} is reserved by the target framework.`, node.ref));
         slots[name] = node.slots![mapping.designSlot]!.map(visit).filter((child): child is HandoffCodeNode => child !== undefined);
       }
     }
     return { type: 'component', sourceNodeId: node.id, componentRef: node.ref, codeComponent: code, binding, props: materialized.props, slots };
   };
   const screens = snapshot.document.screens.map((screen) => ({ id: screen.id, nodes: screen.children.map(visit).filter((node): node is HandoffCodeNode => node !== undefined) }));
-  return diagnostics.some((diagnostic) => diagnostic.severity === 'error') ? { ok: false, diagnostics } : { ok: true, manifest, screens, diagnostics };
+  return diagnostics.some((diagnostic) => diagnostic.severity === 'error') ? { ok: false, diagnostics } : { ok: true, screens, diagnostics };
 }
 
 /** All requested screen files succeed together. This function never writes to the target repository. */
@@ -62,20 +71,24 @@ export function emitHandoffCode(input: EmitHandoffCodeRequest): HandoffCodeResul
   if (!parsed.success) return { schemaVersion: 1, ok: false, files: [], diagnostics: [handoffDiagnostic('ODDS7001', `Invalid code output request: ${parsed.error.message}`)] };
   const calls = materializeHandoffCalls(parsed.data.manifest);
   if (!calls.ok) return { schemaVersion: 1, ok: false, files: [], diagnostics: calls.diagnostics };
-  const { manifest } = calls; const diagnostics = [...calls.diagnostics];
-  const outputs = parsed.data.outputs;
-  const screens = new Map(calls.screens.map((screen) => [screen.id, screen]));
+  return emitMaterializedCode(calls.manifest.framework, calls.screens, [...calls.manifest.snapshot.baseCodeIndex.components, ...calls.manifest.snapshot.projectCodeIndex.components], parsed.data.outputs, calls.diagnostics);
+}
+
+/** Emits previously materialized calls. Callers retain their own explicit source-proof provenance. */
+export function emitMaterializedCode(framework: 'react' | 'vue', materializedScreens: { id: string; nodes: HandoffCodeNode[] }[], codeComponents: CodeComponentDefinition[], outputs: HandoffScreenOutput[], initialDiagnostics: ValidationDiagnostic[] = []): HandoffCodeResult {
+  const diagnostics = [...initialDiagnostics];
+  const screens = new Map(materializedScreens.map((screen) => [screen.id, screen]));
   const seenScreens = new Set<string>(); const paths = new Set<string>();
-  const codePaths = [...manifest.snapshot.baseCodeIndex.components, ...manifest.snapshot.projectCodeIndex.components].map((component) => pathKey(component.sourcePath));
+  const codePaths = codeComponents.map((component) => pathKey(component.sourcePath));
   for (const output of outputs) {
     if (!screens.has(output.screenId) || seenScreens.has(output.screenId)) diagnostics.push(handoffDiagnostic('ODDS7001', `Each output must identify a unique handoff screen: ${output.screenId}.`));
     seenScreens.add(output.screenId);
     const key = pathKey(output.sourcePath);
     if ([...paths, ...codePaths].some((existing) => pathCollides(existing, key))) diagnostics.push(handoffDiagnostic('ODDS7001', `Output ${output.sourcePath} collides with another output or registered production source.`));
     paths.add(key);
-    const extension = manifest.framework === 'react' ? '.tsx' : '.vue';
-    if (!output.sourcePath.endsWith(extension)) diagnostics.push(handoffDiagnostic('ODDS7001', `A ${manifest.framework} output must use ${extension}: ${output.sourcePath}.`));
-    if (manifest.framework === 'vue' ? output.exportName !== 'default' : !identifier(output.exportName)) diagnostics.push(handoffDiagnostic('ODDS7001', 'React outputs require an explicit identifier export; Vue SFC outputs require the default export.'));
+    const extension = framework === 'react' ? '.tsx' : '.vue';
+    if (!output.sourcePath.endsWith(extension)) diagnostics.push(handoffDiagnostic('ODDS7001', `A ${framework} output must use ${extension}: ${output.sourcePath}.`));
+    if (framework === 'vue' ? output.exportName !== 'default' : !identifier(output.exportName)) diagnostics.push(handoffDiagnostic('ODDS7001', 'React outputs require an explicit identifier export; Vue SFC outputs require the default export.'));
   }
   if (seenScreens.size !== screens.size) diagnostics.push(handoffDiagnostic('ODDS7001', 'Output paths must cover every handoff screen exactly once.'));
   if (diagnostics.some((diagnostic) => diagnostic.severity === 'error')) return { schemaVersion: 1, ok: false, files: [], diagnostics };
@@ -83,9 +96,9 @@ export function emitHandoffCode(input: EmitHandoffCodeRequest): HandoffCodeResul
   for (const output of [...outputs].sort((left, right) => compare(left.sourcePath, right.sourcePath))) {
     try {
       const nodes = screens.get(output.screenId)!.nodes;
-      const content = emitScreen(manifest.framework, output, nodes);
-      validateGeneratedSource(manifest.framework, output.sourcePath, content);
-      files.push({ ...output, language: manifest.framework === 'react' ? 'tsx' : 'vue', content });
+      const content = emitScreen(framework, output, nodes);
+      validateGeneratedSource(framework, output.sourcePath, content);
+      files.push({ ...output, language: framework === 'react' ? 'tsx' : 'vue', content });
     } catch (error) { diagnostics.push(handoffDiagnostic('ODDS7001', `Cannot emit ${output.sourcePath}: ${error instanceof Error ? error.message : String(error)}`)); }
   }
   return HandoffCodeResultSchema.parse({ schemaVersion: 1, ok: !diagnostics.some((diagnostic) => diagnostic.severity === 'error'), files: diagnostics.some((diagnostic) => diagnostic.severity === 'error') ? [] : files, diagnostics });

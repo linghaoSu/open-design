@@ -193,9 +193,15 @@ export function reviewDesignSystemUpgrade(context: DesignSystemUpgradeContext, f
 
 /** No I/O: callers persist this reviewed result and their aggregate CAS in one transaction. */
 export function applyDesignSystemUpgrade(context: DesignSystemUpgradeContext, from: DesignSystemVersion, to: DesignSystemVersion, input: ApplyDesignSystemUpgradeRequest, limits: DesignRuntimeLimits = {}): DesignSystemUpgradeResult {
+  const result = prepareReviewedDesignSystemUpgrade(context, from, to, input, limits);
+  if (!result.review.canApply) throw new DesignSystemUpgradeError('VALIDATION_FAILED', 'The proposed upgrade has unresolved diagnostics.', result.review.diagnostics, result.review);
+  return result;
+}
+
+/** Read-only prepared snapshots for visual review. Diagnostics still govern whether Apply is allowed. */
+export function prepareReviewedDesignSystemUpgrade(context: DesignSystemUpgradeContext, from: DesignSystemVersion, to: DesignSystemVersion, input: ApplyDesignSystemUpgradeRequest, limits: DesignRuntimeLimits = {}): DesignSystemUpgradeResult {
   const request = ApplyDesignSystemUpgradeRequestSchema.parse(input);
   const result = compute(context, from, to, request.plan, limits);
   if (result.review.id !== request.reviewId || result.review.baseDigest !== request.baseDigest || result.review.planDigest !== request.planDigest) throw new DesignSystemUpgradeError('CONFLICT', 'The project or migration plan changed after review.', [failure('Create a fresh impact review before applying the upgrade.')], result.review);
-  if (!result.review.canApply) throw new DesignSystemUpgradeError('VALIDATION_FAILED', 'The proposed upgrade has unresolved diagnostics.', result.review.diagnostics, result.review);
   return DesignSystemUpgradeResultSchema.parse({ schemaVersion: 1, ...result });
 }

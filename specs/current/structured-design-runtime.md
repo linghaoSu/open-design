@@ -301,6 +301,18 @@ reopened them and verified the same daemon declarations. It passed in 33.8 secon
 inspected. Generation execution and repair remain separate acceptance tasks.
 Repository guard and workspace/root-script typechecks passed at this checkpoint.
 
+The Phase 13 preview core is accepted independently of its pending public surface.
+Canonical results preserve the full graph/review impact roster alongside selected
+screen samples, current/proposed locks, exact source evidence and explicitly named
+tool runtimes. Semantic previews expand shared definitions through frozen DS source;
+production handoff previews require current implementation and installed-package
+proof. The shared emitter supplies actual React/Vue calls to a bounded browser bundle
+without executing component code in the daemon. Source and authority drift abort the
+response. Root ran 61 preview/emitter/upgrade daemon cases and 3 contract cases;
+the agent also ran the broader handoff/validator regression set and a frozen install.
+Guard and workspace typechecks passed. Browser sandboxing, public UI/API/CLI and
+visible before/after acceptance remain required before Phase 13 is complete.
+
 Phase 2/3 acceptance includes 88 focused contract tests, 147 daemon design-runtime
 tests, the existing 16 project CLI tests, 30 web provider/panel/locale tests, and
 one real browser workflow through the production project API. The browser witness
