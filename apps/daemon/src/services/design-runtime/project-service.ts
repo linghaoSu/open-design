@@ -549,7 +549,8 @@ export function createProjectDesignRuntimeService({ store, readSource, observeTa
     detachInstance(projectId: string, input: ProjectDesignRuntimeDetachRequest) {
       const request = ProjectDesignRuntimeDetachRequestSchema.parse(input);
       const state = read(projectId);
-      return { revision: state.revision, ...detachComponentInstance(componentContext(state), request) };
+      // The public mode field remains accepted for compatibility; saved project policy owns the operation.
+      return { revision: state.revision, ...detachComponentInstance(componentContext(state), { ...request, mode: state.validationSettings.mode }) };
     },
 
     validate(projectId: string, input: ProjectDesignRuntimeValidateRequest) {

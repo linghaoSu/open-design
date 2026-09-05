@@ -57,7 +57,6 @@ function ProjectStructurePanelContent({ scope, state, viewerOnly, externalBusy =
   const [replacementRef, setReplacementRef] = useState('');
   const [extraction, setExtraction] = useState<Extraction | null>(null);
   const [detachId, setDetachId] = useState('');
-  const [detachMode, setDetachMode] = useState<'explore' | 'guided' | 'strict'>('guided');
   const [detached, setDetached] = useState<{ source: ComponentInstance; node: UIIRNode; revision: number } | null>(null);
   const mounted = useRef(true);
   const running = useRef(false);
@@ -210,12 +209,10 @@ function ProjectStructurePanelContent({ scope, state, viewerOnly, externalBusy =
                 <label className={styles.field}>{t('semanticEditor.instance')}<select disabled={locked} data-testid="structure-detach-instance" value={selectedInstance?.id ?? ''} onChange={(event) => { setDetachId(event.target.value); setDetached(null); }}>
                   {instances.map((instance) => <option key={instance.id} value={instance.id}>{instance.id} · {instance.ref}</option>)}
                 </select></label>
-                <label className={styles.field}>{t('projectStructure.detachMode')}<select disabled={locked} data-testid="structure-detach-mode" value={detachMode} onChange={(event) => { setDetachMode(event.target.value as typeof detachMode); setDetached(null); }}>
-                  {(['explore', 'guided', 'strict'] as const).map((mode) => <option key={mode} value={mode}>{t(`projectStructure.${mode}`)}</option>)}
-                </select></label>
+                <label className={styles.field}>{t('projectStructure.detachMode')}<output data-testid="structure-detach-mode">{t(`projectStructure.${state.validationSettings.mode}`)}</output></label>
               </div>
               <Button disabled={locked || !selectedInstance} data-testid="structure-preview-detach" onClick={() => {
-                if (selectedInstance) void perform((authority) => detachProjectDesignRuntimeInstance(authority, { instance: selectedInstance, mode: detachMode }), (result) => {
+                if (selectedInstance) void perform((authority) => detachProjectDesignRuntimeInstance(authority, { instance: selectedInstance, mode: state.validationSettings.mode }), (result) => {
                   setDiagnostics(result.diagnostics); setDetached(result.node ? { source: structuredClone(selectedInstance), node: result.node, revision: result.revision } : null);
                 }, true);
               }}>{t('projectStructure.previewDetach')}</Button>

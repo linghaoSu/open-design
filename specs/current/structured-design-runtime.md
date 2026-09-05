@@ -259,6 +259,13 @@ validation screenshot was inspected, and full `pnpm guard` and `pnpm typecheck`
 passed. Automatic generation completion and bounded repair remain in progress;
 these explicit operations alone do not complete Phase 10 or 12.
 
+The saved-mode authority also covers instance detachment. A real route regression
+first reproduced a saved Strict project accepting a caller's Explore override; the
+service now uses the stored mode, and Structure displays that mode without an
+override control. Root ran all six validation HTTP cases and four focused
+detach/deletion web cases. The pure engine retains its explicit mode input for
+internal callers; the legacy public field is accepted only for compatibility.
+
 The exact-lock pattern runtime core is accepted. Search and retrieval verify the
 immutable package; instantiation applies declared defaults, property mappings and
 slot configuration, then validates the complete destination document. Supplied local

@@ -372,6 +372,8 @@ Select source files, identify their output exports and map outputs to semantic s
 then run validation. Results show source locations, diagnostic codes, coverage and
 measured reuse counts. Workspace viewers can inspect and validate without changing
 settings. Conflicting settings edits retain the draft for explicit review.
+Instance detachment uses the saved project mode too: a caller cannot bypass Strict
+by passing a weaker mode. Structure shows the effective mode as a read-only value.
 
 `validate-artifacts` accepts source paths/languages and output mappings. The daemon
 reads their actual bytes, the saved mode, exact package and installed dependency

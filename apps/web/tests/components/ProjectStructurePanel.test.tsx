@@ -80,6 +80,15 @@ beforeEach(() => vi.resetAllMocks());
 afterEach(() => { cleanup(); resetWorkspaceAccountGeneration(); });
 
 describe('ProjectStructurePanel', () => {
+  it('displays the saved Strict detach policy without an editable mode override', async () => {
+    const state = initialState(); state.validationSettings.mode = 'strict';
+    vi.mocked(provider.detachProjectDesignRuntimeInstance).mockResolvedValue({ revision: 1, node: null, origins: [], diagnostics: [] });
+    render(<Harness initial={state} />);
+    expect(screen.getByTestId('structure-detach-mode').tagName).toBe('OUTPUT');
+    expect(screen.getByTestId('structure-detach-mode').textContent).toBe('Strict');
+    fireEvent.click(screen.getByTestId('structure-preview-detach'));
+    await waitFor(() => expect(provider.detachProjectDesignRuntimeInstance).toHaveBeenCalledWith(expect.objectContaining(scope), { instance: state.document!.screens[0]!.children[0], mode: 'strict' }));
+  });
   it('stages a shared default without changing published definitions, then publishes explicitly with both screens listed', async () => {
     const stored = mockWrites(); const accepted = vi.fn();
     render(<StrictMode><Harness accepted={accepted} /></StrictMode>);
@@ -265,7 +274,7 @@ describe('ProjectStructurePanel', () => {
     render(<Harness />);
     fireEvent.click(screen.getByTestId('structure-preview-detach'));
     await screen.findByTestId('structure-adopt-detach');
-    expect(provider.detachProjectDesignRuntimeInstance).toHaveBeenCalledWith(expect.objectContaining(scope), { instance: initialState().document!.screens[0]!.children[0], mode: 'guided' });
+    expect(provider.detachProjectDesignRuntimeInstance).toHaveBeenCalledWith(expect.objectContaining(scope), { instance: initialState().document!.screens[0]!.children[0], mode: 'explore' });
     expect((screen.getByTestId('semantic-text-derived-root') as HTMLTextAreaElement).disabled).toBe(true);
     expect(provider.saveProjectDesignRuntimeDocument).not.toHaveBeenCalled();
     fireEvent.click(screen.getByTestId('structure-adopt-detach'));

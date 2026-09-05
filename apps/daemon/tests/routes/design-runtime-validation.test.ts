@@ -43,6 +43,18 @@ async function withValidation(run: (context: {
 const selection = (fixture: ReturnType<typeof validationFixture>, expectedRevision = 1) => ({ expectedRevision, sources: fixture.sources.map(({ sourceText: _bytes, ...file }) => file), outputs: fixture.outputs });
 
 describe('project validation authority, saved modes and dependency recovery', () => {
+  it('uses saved mode for detach even when a caller requests a weaker mode', () => withValidation(async ({ request, store }) => {
+    const body = { mode: 'explore', instance: { schemaVersion: 1, type: 'instance', id: 'detach-button', ref: 'ds:acme/button', overrides: [{ schemaVersion: 1, path: ['props', 'label'], value: 'Continue' }] } };
+    const strict = await request('POST', '/instances/detach', body);
+    expect(strict.status).toBe(200);
+    expect(strict.json).toMatchObject({ revision: 1, node: null, diagnostics: [expect.objectContaining({ code: 'ODDS4006' })] });
+    const state = store.read('project');
+    expect((await request('PUT', '/validation/settings', { expectedRevision: state.revision, settings: { ...state.validationSettings, mode: 'explore' } })).status).toBe(200);
+    const explore = await request('POST', '/instances/detach', { ...body, mode: 'strict' });
+    expect(explore.status).toBe(200);
+    expect(explore.json).toMatchObject({ revision: 2, node: { type: 'component', ref: 'ds:acme/button', props: { label: 'Continue' } }, diagnostics: [] });
+    expect(store.read('project').revision).toBe(2);
+  }));
   it('validates real selected bytes, effective locked policy and installed facts without writes', () => withValidation(async ({ fixture, store, files, request, authorize }) => {
     const before = store.read('project');
     const response = await request('POST', '/validation/artifacts', selection(fixture));

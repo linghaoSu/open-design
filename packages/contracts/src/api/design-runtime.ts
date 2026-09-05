@@ -259,6 +259,7 @@ export const ProjectDesignRuntimeDeleteComponentRequestSchema = z.object({
   expectedRevision: revisionSchema, action: ProjectComponentDeleteRequestSchema.innerType().shape.action,
 }).strict();
 export type ProjectDesignRuntimeDeleteComponentRequest = z.infer<typeof ProjectDesignRuntimeDeleteComponentRequestSchema>;
+/** The legacy mode field is accepted but ignored; the daemon applies the saved project mode. */
 export const ProjectDesignRuntimeDetachRequestSchema = ComponentDetachRequestSchema;
 export type ProjectDesignRuntimeDetachRequest = z.infer<typeof ProjectDesignRuntimeDetachRequestSchema>;
 export const ProjectDesignRuntimeDetachResponseSchema = z.object({
