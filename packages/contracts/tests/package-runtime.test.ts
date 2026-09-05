@@ -106,6 +106,10 @@ describe('@open-design/contracts package runtime shape', () => {
     // importing `../src/api/handoff` would not catch.
     expect(handoff.HANDOFF_SCHEMA_VERSION).toBe(2);
     expect(contracts.HANDOFF_SCHEMA_VERSION).toBe(2);
+    expect(contracts.DESIGN_RUNTIME_SCHEMA_VERSION).toBe(1);
+    expect(contracts.ComponentRegistrySchema.parse({ schemaVersion: 1, id: 'test', components: [] })).toEqual({
+      schemaVersion: 1, id: 'test', components: [],
+    });
     expect(critique.defaultCritiqueConfig()).toMatchObject({
       enabled: false,
       protocolVersion: critique.CRITIQUE_PROTOCOL_VERSION,
