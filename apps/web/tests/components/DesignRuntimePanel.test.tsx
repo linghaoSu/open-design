@@ -38,6 +38,17 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('DesignRuntimePanel', () => {
+  it.each(['constructor', 'toString'])('validates a required %s prop without reading Object.prototype', async (name) => {
+    const state = designRuntimeState();
+    state.registry!.components[0]!.props = { [name]: { type: 'boolean', required: true } };
+    state.codeIndex.components[0]!.props = state.registry!.components[0]!.props;
+    vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state });
+    render(<DesignRuntimePanel {...panelProps} />);
+    await screen.findByTestId('design-runtime-component-select');
+    fireEvent.click(screen.getByTestId('design-runtime-validate'));
+    await waitFor(() => expect(provider.validateProjectDesignRuntimeUsage).toHaveBeenCalledOnce());
+    expect(vi.mocked(provider.validateProjectDesignRuntimeUsage).mock.calls[0]![1].props).toEqual({ [name]: false });
+  });
   it('compiles multiple selected project exports with identities retained across export edits', async () => {
     vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state: emptyDesignRuntimeState() });
     render(<DesignRuntimePanel {...panelProps} />);

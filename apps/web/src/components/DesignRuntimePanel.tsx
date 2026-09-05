@@ -242,7 +242,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
     if (!state || !selectedComponent) return;
     const props: Record<string, JsonValue> = {};
     for (const [name, definition] of Object.entries(selectedComponent.props)) {
-      const draft = propDrafts[name] ?? initialPropDraft(definition);
+      const draft = Object.hasOwn(propDrafts, name) ? propDrafts[name]! : initialPropDraft(definition);
       if (draft.included) props[name] = propValue(draft);
     }
     void perform((authority) => validateProjectDesignRuntimeUsage(authority, { component: componentRef, props }), (result) => {
@@ -356,7 +356,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
                 <legend>{t('designRuntime.propMappings')}</legend>
                 {Object.keys(selectedComponent.props).map((name) => <label className={styles.mapping} key={name}>
                   <code>{name}</code><span aria-hidden="true">→</span>
-                  <select aria-label={`${t('designRuntime.propMappings')}: ${name}`} value={mappings[name] ?? name} onChange={(event) => setMappings((current) => ({ ...current, [name]: event.target.value }))}>
+                  <select aria-label={`${t('designRuntime.propMappings')}: ${name}`} value={Object.hasOwn(mappings, name) ? mappings[name] : name} onChange={(event) => setMappings((current) => ({ ...current, [name]: event.target.value }))}>
                     {!Object.hasOwn(selectedCode.props, name) ? <option value={name}>{name}</option> : null}
                     {Object.keys(selectedCode.props).map((codeProp) => <option key={codeProp} value={codeProp}>{codeProp}</option>)}
                   </select>
@@ -382,7 +382,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
               <h3>{t('designRuntime.validate')}</h3>
               <fieldset disabled={busy}>
                 {Object.entries(selectedComponent.props).map(([name, definition]) => {
-                  const draft = propDrafts[name] ?? initialPropDraft(definition);
+                  const draft = Object.hasOwn(propDrafts, name) ? propDrafts[name]! : initialPropDraft(definition);
                   const update = (patch: Partial<PropDraft>) => setPropDrafts((current) => ({ ...current, [name]: { ...draft, ...patch } }));
                   const kinds = definition.type === 'enum' ? [...new Set(definition.values.map(scalarKind))] : [definition.type];
                   return <div key={name} className={styles.propInput}>
