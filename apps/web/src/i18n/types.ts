@@ -30,6 +30,33 @@ export const LOCALE_LABEL: Record<Locale, string> = {
 // flat (not deeply nested) so missing-key TS errors point straight at the
 // offending string instead of a generic object mismatch.
 export interface Dict {
+  'semanticEditor.title': string;
+  'semanticEditor.screen': string;
+  'semanticEditor.screenName': string;
+  'semanticEditor.template': string;
+  'semanticEditor.text': string;
+  'semanticEditor.component': string;
+  'semanticEditor.instance': string;
+  'semanticEditor.reference': string;
+  'semanticEditor.addNode': string;
+  'semanticEditor.moveUp': string;
+  'semanticEditor.moveDown': string;
+  'semanticEditor.extract': string;
+  'semanticEditor.newComponent': string;
+  'semanticEditor.override': string;
+  'semanticEditor.reset': string;
+  'semanticEditor.inherited': string;
+  'semanticEditor.unset': string;
+  'semanticEditor.missingReference': string;
+  'semanticEditor.unknownProp': string;
+  'semanticEditor.unknownSlot': string;
+  'semanticEditor.invalidNumber': string;
+  'semanticEditor.noChoices': string;
+  'semanticEditor.maxNodes': string;
+  'semanticEditor.drivenBy': string;
+  'semanticEditor.mappedConflict': string;
+  'semanticEditor.invalidChild': string;
+  'semanticEditor.invalidValue': string;
   'designRuntime.title': string;
   'designRuntime.description': string;
   'designRuntime.revision': string;
