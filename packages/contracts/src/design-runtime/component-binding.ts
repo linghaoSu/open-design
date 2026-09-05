@@ -12,6 +12,15 @@ import {
 } from './common.js';
 import { ComponentPropsSchema } from './component-registry.js';
 
+/** Source-proven capability, independent from the design system's allowed child references. */
+export const CodeComponentSlotDefinitionSchema = z.object({
+  kind: z.enum(['react-node', 'vue-slot']),
+  required: z.boolean(),
+  multiple: z.boolean(),
+  source: SourceProvenanceSchema.optional(),
+}).strict();
+export type CodeComponentSlotDefinition = z.infer<typeof CodeComponentSlotDefinitionSchema>;
+
 export const CodeComponentDefinitionSchema = z.object({
   schemaVersion: DesignRuntimeSchemaVersionSchema,
   id: CodeIdentitySchema,
@@ -21,8 +30,14 @@ export const CodeComponentDefinitionSchema = z.object({
   sourcePath: SourcePathSchema,
   packageName: z.string().min(1).optional(),
   props: ComponentPropsSchema,
+  slots: z.record(DesignMemberNameSchema, CodeComponentSlotDefinitionSchema).optional(),
   source: SourceProvenanceSchema.optional(),
-}).strict();
+}).strict().superRefine((component, ctx) => {
+  Object.entries(component.slots ?? {}).forEach(([name, slot]) => {
+    if (Object.hasOwn(component.props, name)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['slots', name], message: 'Code props and slots cannot share a member name.' });
+    if (slot.kind !== (component.framework === 'react' ? 'react-node' : 'vue-slot')) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['slots', name, 'kind'], message: 'Code slot capability must match its framework.' });
+  });
+});
 export type CodeComponentDefinition = z.infer<typeof CodeComponentDefinitionSchema>;
 
 export const ComponentPropMappingSchema = z.object({
@@ -33,6 +48,13 @@ export const ComponentPropMappingSchema = z.object({
 }).strict();
 export type ComponentPropMapping = z.infer<typeof ComponentPropMappingSchema>;
 
+export const ComponentSlotMappingSchema = z.object({
+  designSlot: DesignMemberNameSchema,
+  codeSlot: DesignMemberNameSchema,
+  source: SourceProvenanceSchema.optional(),
+}).strict();
+export type ComponentSlotMapping = z.infer<typeof ComponentSlotMappingSchema>;
+
 const bindingFields = {
   schemaVersion: DesignRuntimeSchemaVersionSchema,
   id: CodeIdentitySchema,
@@ -40,6 +62,7 @@ const bindingFields = {
   framework: ComponentFrameworkSchema,
   source: SourceProvenanceSchema.optional(),
   propMappings: z.array(ComponentPropMappingSchema).optional(),
+  slotMappings: z.array(ComponentSlotMappingSchema).optional(),
 };
 
 /** `verified` means valid against the current code contract, not previously verified. */
@@ -58,6 +81,12 @@ export const ComponentBindingSchema = z.discriminatedUnion('status', [
     }
     designProps.add(mapping.designProp);
     codeProps.add(mapping.codeProp);
+  });
+  const designSlots = new Set<string>();
+  const codeSlots = new Set<string>();
+  binding.slotMappings?.forEach((mapping, index) => {
+    if (designSlots.has(mapping.designSlot) || codeSlots.has(mapping.codeSlot)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['slotMappings', index], message: 'Slot mappings must be one-to-one.' });
+    designSlots.add(mapping.designSlot); codeSlots.add(mapping.codeSlot);
   });
 });
 export type ComponentBinding = z.infer<typeof ComponentBindingSchema>;

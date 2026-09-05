@@ -22,7 +22,7 @@ function acceptsDesignDomain(design: ComponentPropDefinition, code: ComponentPro
 
 /**
  * Resolves an explicit, already schema-validated binding against supplied metadata.
- * This syntax-only spike does not inspect source files, implement slots/value transforms,
+ * This source contract resolver does not inspect source files or implement value transforms,
  * or materialize design defaults. Omittable mapped props must share the code default.
  */
 export function resolveComponentBinding(
@@ -63,9 +63,6 @@ export function resolveComponentBinding(
   if (!component) {
     return failure('ODDS3001', `Design reference ${binding.componentRef} does not resolve uniquely.`, ['componentRef']);
   }
-  if (Object.keys(component.slots ?? {}).length > 0) {
-    return failure('ODDS3001', 'Slot bindings are unsupported without a code slot contract.', ['slots']);
-  }
   const codeMatches = codeComponents.filter((candidate) => candidate.id === binding.codeComponentId);
   const codeComponent = codeMatches.length === 1 ? codeMatches[0] : undefined;
   if (!codeComponent) {
@@ -76,6 +73,33 @@ export function resolveComponentBinding(
   }
   if (!codeComponent.exportName.trim() || !codeComponent.sourcePath.trim()) {
     return failure('ODDS3001', 'Code component export metadata is incomplete.', ['codeComponentId']);
+  }
+
+  const designSlots = component.slots ?? {};
+  const codeSlots = codeComponent.slots ?? {};
+  if (Object.keys(designSlots).length && !Object.keys(codeSlots).length) {
+    return failure('ODDS3001', 'Slot bindings are unsupported without a code slot contract.', ['slots']);
+  }
+  const mappedDesignSlots = new Set<string>();
+  const mappedCodeSlots = new Set<string>();
+  for (const [index, mapping] of (binding.slotMappings ?? []).entries()) {
+    const path = ['slotMappings', index];
+    const design = Object.hasOwn(designSlots, mapping.designSlot) ? designSlots[mapping.designSlot] : undefined;
+    const code = Object.hasOwn(codeSlots, mapping.codeSlot) ? codeSlots[mapping.codeSlot] : undefined;
+    if (!design || !code || mappedDesignSlots.has(mapping.designSlot) || mappedCodeSlots.has(mapping.codeSlot)) {
+      return failure('ODDS3001', 'Slot mappings must identify unique declared design and code slots.', path);
+    }
+    if (code.kind !== (binding.framework === 'react' ? 'react-node' : 'vue-slot')
+      || (design.multiple && !code.multiple) || (code.required && !design.required)) {
+      return failure('ODDS3001', `Design slot ${mapping.designSlot} cannot satisfy code slot ${mapping.codeSlot}.`, path);
+    }
+    mappedDesignSlots.add(mapping.designSlot); mappedCodeSlots.add(mapping.codeSlot);
+  }
+  for (const name of Object.keys(designSlots)) {
+    if (!mappedDesignSlots.has(name)) return failure('ODDS3001', `Design slot ${name} requires an explicit code slot mapping.`, ['slotMappings']);
+  }
+  for (const [name, slot] of Object.entries(codeSlots)) {
+    if (slot.required && !mappedCodeSlots.has(name)) return failure('ODDS3001', `Required code slot ${name} has no design slot mapping.`, ['slotMappings']);
   }
 
   const mappings = new Map<string, string>();

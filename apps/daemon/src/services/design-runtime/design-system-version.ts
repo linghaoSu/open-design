@@ -22,7 +22,8 @@ import {
   type UIIRNode,
   type ValidationDiagnostic,
 } from '@open-design/contracts';
-import { compileReactComponent, CompilerError } from './react-compiler.js';
+import { CompilerError } from './react-compiler.js';
+import { extractSourceCodeComponent } from './source-compiler.js';
 import { resolveComponentBinding } from './binding-resolver.js';
 import { acceptsComponentPropertyDomain, validateComponentProperties } from './component-validator.js';
 import { compareDesignRuntimeKeys } from './reference-graph.js';
@@ -152,15 +153,27 @@ export function validateDesignSystemPackage(input: DesignSystemPackage): Validat
   for (const component of pkg.registry.components) {
     verifyPath(component.source?.sourcePath);
     verifyPropSources(component.props);
+    for (const slot of Object.values(component.slots ?? {})) verifyPath(slot.source?.sourcePath);
+    for (const story of component.stories ?? []) {
+      verifyPath(story.source.sourcePath);
+      for (const argType of Object.values(story.argTypes)) verifyPath(argType.source.sourcePath);
+    }
   }
   for (const component of pkg.codeIndex.components) {
     verifyPath(component.sourcePath);
     verifyPath(component.source?.sourcePath);
     verifyPropSources(component.props);
+    for (const slot of Object.values(component.slots ?? {})) verifyPath(slot.source?.sourcePath);
   }
-  for (const binding of pkg.bindings.bindings) verifyPath(binding.source?.sourcePath);
+  for (const binding of pkg.bindings.bindings) {
+    verifyPath(binding.source?.sourcePath);
+    for (const mapping of binding.slotMappings ?? []) verifyPath(mapping.source?.sourcePath);
+  }
   for (const token of pkg.tokens.tokens) verifyPath(token.source?.sourcePath);
-  for (const pattern of pkg.patterns.patterns) verifyPropSources(pattern.props);
+  for (const pattern of pkg.patterns.patterns) {
+    verifyPropSources(pattern.props);
+    for (const slot of Object.values(pattern.slots)) verifyPath(slot.source?.sourcePath);
+  }
   for (const component of pkg.registry.components) for (const [name, slot] of Object.entries(component.slots ?? {})) {
     for (const ref of slot.accepts) if (ref !== 'text' && !components.has(ref)) diagnostics.push(error('ODDS4002', `Slot ${component.id}.${name} accepts missing or external component ${ref}.`));
   }
@@ -176,14 +189,15 @@ export function validateDesignSystemPackage(input: DesignSystemPackage): Validat
       if (code && !verifiedCodeIds.has(code.id)) {
         verifiedCodeIds.add(code.id);
         const bytes = files.get(code.sourcePath);
-        if (code.framework !== 'react') diagnostics.push(error('ODDS5007', `Verified ${code.framework} source metadata is unsupported by the current compiler.`));
-        else if (bytes) {
+        if (bytes) {
           try {
             const text = bytes.toString('utf8');
             if (!Buffer.from(text, 'utf8').equals(bytes)) throw new DesignSystemVersionError([error('ODDS5005', `Code source ${code.sourcePath} is not UTF-8 text.`)]);
-            const compiled = compileReactComponent({ sourceText: text, sourcePath: code.sourcePath, exportName: code.exportName, componentId: 'source-verification', codeComponentId: code.id, designSystemId: pkg.id, ...(code.packageName === undefined ? {} : { packageName: code.packageName }) });
+            const extracted = extractSourceCodeComponent({ framework: code.framework, sourceText: text, sourcePath: code.sourcePath, exportName: code.exportName, codeComponentId: code.id, ...(code.packageName === undefined ? {} : { packageName: code.packageName }) });
             const propFacts = (props: typeof code.props) => Object.fromEntries(Object.entries(props).map(([name, { source: _source, ...definition }]) => [name, definition]));
-            if (canonicalDesignSystemJson(propFacts(compiled.codeComponent.props)) !== canonicalDesignSystemJson(propFacts(code.props))) diagnostics.push(error('ODDS5007', `Verified code metadata ${code.id} contradicts its frozen source props.`, ['codeIndex', code.id, 'props']));
+            const slotFacts = (slots: typeof code.slots) => Object.fromEntries(Object.entries(slots ?? {}).map(([name, { source: _source, ...definition }]) => [name, definition]));
+            if (canonicalDesignSystemJson(propFacts(extracted.props)) !== canonicalDesignSystemJson(propFacts(code.props))) diagnostics.push(error('ODDS5007', `Verified code metadata ${code.id} contradicts its frozen source props.`, ['codeIndex', code.id, 'props']));
+            if (canonicalDesignSystemJson(slotFacts(extracted.slots)) !== canonicalDesignSystemJson(slotFacts(code.slots))) diagnostics.push(error('ODDS5007', `Verified code metadata ${code.id} contradicts its frozen source slots.`, ['codeIndex', code.id, 'slots']));
           } catch (caught) {
             if (caught instanceof DesignSystemVersionError) diagnostics.push(...caught.diagnostics);
             else if (caught instanceof CompilerError) diagnostics.push(error('ODDS5007', `Frozen code cannot verify ${code.id}: ${caught.message}`, ['codeIndex', code.id]));

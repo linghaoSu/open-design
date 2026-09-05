@@ -112,6 +112,31 @@ describe('explicit component binding operations', () => {
 });
 
 describe('code index binding invalidation', () => {
+  it.each(['add', 'remove', 'requiredness', 'cardinality'] as const)('marks compatible slot %s changes stale', (change) => {
+    const { index, code, bindings, binding, registry } = fixture();
+    code.slots = { children: { kind: 'react-node', required: true, multiple: false } };
+    registry.components[0]!.slots = { body: { accepts: ['text'], required: true, multiple: false } };
+    binding.slotMappings = [{ designSlot: 'body', codeSlot: 'children' }];
+    const next = structuredClone(index);
+    const slots = next.components[0]!.slots!;
+    if (change === 'add') slots.footer = { kind: 'react-node', required: false, multiple: true };
+    if (change === 'remove') code.slots.footer = { kind: 'react-node', required: false, multiple: true };
+    if (change === 'requiredness') slots.children!.required = false;
+    if (change === 'cardinality') slots.children!.multiple = true;
+    expect(reindexComponentBindings(bindings, index, next, registry).bindings[0]).toMatchObject({ status: 'stale', verified: false });
+    expect(binding.status).toBe('bound');
+  });
+
+  it('keeps verification when only slot provenance or member ordering changes', () => {
+    const { index, code, bindings, registry } = fixture();
+    code.slots = { children: { kind: 'react-node', required: false, multiple: true }, footer: { kind: 'react-node', required: false, multiple: false } };
+    const next: CodeComponentIndex = { ...index, components: [{ ...code, slots: {
+      footer: { ...code.slots.footer!, source: { kind: 'typescript', sourcePath: 'types/Shared.ts', line: 42 } },
+      children: { ...code.slots.children!, source: { kind: 'typescript', sourcePath: code.sourcePath, line: 500 } },
+    } }] };
+    expect(reindexComponentBindings(bindings, index, next, registry)).toEqual(bindings);
+  });
+
   it('preserves verification for unrelated additions, display names, provenance, property and enum order changes', () => {
     const { index, code, bindings, registry } = fixture();
     const next: CodeComponentIndex = { ...index, components: [{

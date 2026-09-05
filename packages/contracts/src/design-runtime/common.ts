@@ -34,7 +34,7 @@ export const JsonValueSchema: z.ZodType<JsonValue> = z.lazy(() => z.union([
 ]));
 
 export const SourceProvenanceSchema = z.object({
-  kind: z.enum(['typescript', 'manual', 'agent']),
+  kind: z.enum(['typescript', 'manual', 'agent', 'storybook', 'vue']),
   sourcePath: SourcePathSchema,
   exportName: z.string().min(1).optional(),
   line: z.number().int().positive().optional(),

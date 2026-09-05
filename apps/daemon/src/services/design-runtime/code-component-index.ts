@@ -140,6 +140,8 @@ function publicContract(component: CodeComponentDefinition): string {
       ...(prop.type === 'enum' ? { values: prop.values.map((value) => JSON.stringify(value)).sort() } : {}),
     }];
   });
+  const slots = Object.entries(component.slots ?? {}).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .map(([name, { kind, required, multiple }]) => [name, { kind, required, multiple }]);
   return JSON.stringify({
     id: component.id,
     framework: component.framework,
@@ -147,6 +149,7 @@ function publicContract(component: CodeComponentDefinition): string {
     sourcePath: component.sourcePath,
     packageName: component.packageName,
     props,
+    slots,
   });
 }
 

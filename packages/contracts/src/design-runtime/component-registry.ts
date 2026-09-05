@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ComponentStoryDefinitionSchema } from './component-stories.js';
 import {
   ComponentReferenceSchema,
   DesignEntityIdSchema,
@@ -40,6 +41,7 @@ export const ComponentSlotDefinitionSchema = z.object({
   accepts: z.array(z.union([z.literal('text'), ComponentReferenceSchema])).min(1),
   required: z.boolean(),
   multiple: z.boolean(),
+  source: SourceProvenanceSchema.optional(),
 }).strict();
 export type ComponentSlotDefinition = z.infer<typeof ComponentSlotDefinitionSchema>;
 
@@ -51,6 +53,13 @@ export const ComponentDefinitionSchema = z.object({
   slots: z.record(DesignMemberNameSchema, ComponentSlotDefinitionSchema).optional(),
   states: z.array(DesignMemberNameSchema).optional(),
   source: SourceProvenanceSchema.optional(),
+  stories: z.array(ComponentStoryDefinitionSchema).superRefine((stories, ctx) => {
+    const ids = new Set<string>();
+    stories.forEach((story, index) => {
+      if (ids.has(story.id)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [index, 'id'], message: 'Story identities must be unique within a component.' });
+      ids.add(story.id);
+    });
+  }).optional(),
 }).strict();
 export type ComponentDefinition = z.infer<typeof ComponentDefinitionSchema>;
 
