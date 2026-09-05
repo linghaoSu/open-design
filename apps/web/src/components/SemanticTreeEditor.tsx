@@ -223,7 +223,7 @@ function NodeEditor({ node, onChange, children, ...context }: Catalog & EditorAc
   const textMapping = context.mappedTargets?.find((mapping) => mapping.nodeId === node.id && mapping.path[0] === 'text');
   return <article className={styles.node}>
     <header className={styles.header}>
-      <div><strong>{t(`semanticEditor.${node.type}`)}{definition ? ` · ${definition.name}` : ''}</strong><code className={styles.identity}>{node.id}</code></div>
+      <div className={styles.identityGroup}><strong>{t(`semanticEditor.${node.type}`)}{definition ? ` · ${definition.name}` : ''}</strong><code className={styles.identity} title={node.id}>{node.id}</code></div>
       <div className={styles.actions}>
         {context.onExtractComponent ? <Button disabled={context.disabled} onClick={() => context.onExtractComponent?.(node)}>{t('semanticEditor.extract')}</Button> : null}
         {children}
