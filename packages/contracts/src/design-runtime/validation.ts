@@ -24,6 +24,11 @@ export const DesignDiagnosticCodeSchema = z.enum([
   'ODDS3004', // UnverifiedBinding
   'ODDS4001', // InvalidOverride
   'ODDS4002', // DanglingComponentReference
+  'ODDS4003', // ReferenceCycle
+  'ODDS4004', // ReferencedComponentDelete
+  'ODDS4005', // InvalidPropMapping
+  'ODDS4006', // ForbiddenDetach
+  'ODDS4007', // ReferenceTraversalLimit
   'ODDS5001', // DesignSystemVersionMismatch
   'ODDS5002', // BreakingUpgradeWithoutMigration
 ]);
