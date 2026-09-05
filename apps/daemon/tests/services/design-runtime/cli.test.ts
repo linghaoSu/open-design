@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { ProjectDesignRuntimeState, ValidationDiagnostic } from '@open-design/contracts';
+import type { ProjectComponentDefinition, ProjectDesignRuntimeState, ReferenceGraphQueryResult, ResolvedUIIRResult, SharedComponentDraft, SharedComponentImpact, ValidationDiagnostic } from '@open-design/contracts';
 
 const daemonRoot = fileURLToPath(new URL('../../..', import.meta.url));
 const cliEntry = fileURLToPath(new URL('../../../src/cli.ts', import.meta.url));
@@ -31,6 +31,9 @@ function state(revision = 7): ProjectDesignRuntimeState {
     registry: { schemaVersion: 1, id: 'acme', components: [{ schemaVersion: 1, id: 'button', name: 'Button', props: {} }] },
     codeIndex: { schemaVersion: 1, id: 'acme', components: [{ schemaVersion: 1, id: 'acme/Button', framework: 'react', name: 'Button', exportName: 'Button', sourcePath: 'src/Button.tsx', props: {} }] },
     bindings: { schemaVersion: 1, id: 'acme', bindings: [{ schemaVersion: 1, id: 'binding:acme/Button', componentRef: 'ds:acme/button', framework: 'react', status: 'bound', verified: true, codeComponentId: 'acme/Button' }] },
+    projectComponents: { schemaVersion: 1, id: 'acme', components: [] },
+    document: null,
+    sharedChanges: { schemaVersion: 1, id: 'acme', drafts: [], history: [] },
   };
 }
 
@@ -81,11 +84,27 @@ const compileRequest = {
 };
 const scope = ['--workspace', 'workspace-1', '--workspace-member', 'member-1'];
 
+function sharedFixture() {
+  const definition: ProjectComponentDefinition = { schemaVersion: 1, id: 'Card', name: 'Card', revision: 1, props: {}, propMappings: [], template: { schemaVersion: 1, id: 'label', type: 'text', text: 'Current' } };
+  const proposed: ProjectComponentDefinition = { ...definition, revision: 2, template: { ...definition.template, type: 'text', text: 'Proposed' } };
+  const draft: SharedComponentDraft = { schemaVersion: 1, id: 'edit-card', componentRef: 'local:Card', baseDefinition: definition, proposedDefinition: proposed, source: { type: 'edit' } };
+  const owner = { kind: 'screen' as const, documentId: 'design', screenId: 'screen' };
+  const usage = { schemaVersion: 1 as const, owner, nodeId: 'card-instance', target: 'local:Card', path: ['screens', 0, 'children', 0] };
+  const references: ReferenceGraphQueryResult = { schemaVersion: 1, target: 'local:Card', directUsages: [usage], transitiveUsages: [owner], affectedScreens: [owner], chains: [[usage]], cycles: [], diagnostics: [] };
+  const resolved: ResolvedUIIRResult = { schemaVersion: 1, document: { schemaVersion: 1, id: 'design', screens: [] }, origins: [], diagnostics: [] };
+  const impact: SharedComponentImpact = { schemaVersion: 1, componentRef: 'local:Card', baseRevision: 1, proposedRevision: 2, usages: references, current: resolved, proposed: resolved, diagnostics: [] };
+  const current = state();
+  current.projectComponents.components = [definition];
+  current.document = { schemaVersion: 1, id: 'design', screens: [] };
+  current.sharedChanges.drafts = [draft];
+  return { definition, proposed, draft, references, resolved, impact, current };
+}
+
 describe('od design-runtime CLI dispatcher', () => {
   it('advertises commands and JSON, stdin, workspace and revision options through real help', async () => {
     const result = await runCli(['design-runtime', '--help']);
     expect(result.code, result.stderr).toBe(0);
-    for (const text of ['compile <projectId>', 'revalidate <projectId> <bindingId>', '--prompt-file <path|->', '--workspace <id>', '--workspace-member <id>', '--expected-revision <n>', '--json']) {
+    for (const text of ['compile <projectId>', 'revalidate <projectId> <bindingId>', 'save-document <projectId>', 'references <projectId> <componentRef>', 'stage <projectId>', 'publish <projectId> <draftId>', 'detach <projectId>', '--prompt-file <path|->', '--workspace <id>', '--workspace-member <id>', '--expected-revision <n>', '--json']) {
       expect(result.stdout).toContain(text);
     }
     expect((await runCli(['--help'])).stdout).toContain('od design-runtime');
@@ -236,5 +255,143 @@ describe('od design-runtime CLI dispatcher', () => {
     const result = await runCli(['design-runtime', 'get', projectId, '--json', '--daemon-url', stub.url]);
     expect(result.code).toBe(1);
     expect(JSON.parse(result.stderr).error.message).toContain('Daemon response did not match the contract');
+  });
+});
+
+describe('od design-runtime document and shared component CLI', () => {
+  it('saves a document from a local JSON file with one CAS read and workspace scope on both calls', async () => {
+    const { current } = sharedFixture();
+    const stub = await startServer((request) => ({ body: { state: { ...current, revision: request.method === 'GET' ? 7 : 8 } } }));
+    const input = { document: current.document };
+    const file = await inputFile(input);
+    const result = await runCli(['design-runtime', 'save-document', projectId, '--prompt-file', file, '--json', '--daemon-url', stub.url, ...scope]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout).state.revision).toBe(8);
+    expect(stub.requests.map(({ method, url }) => `${method} ${url}`)).toEqual([`GET ${prefix}`, `PUT ${prefix}/document`]);
+    expect(stub.requests[1]!.body).toEqual({ ...input, expectedRevision: 7 });
+    for (const request of stub.requests) expect(request.headers).toMatchObject({ 'x-od-workspace-id': 'workspace-1', 'x-od-workspace-member-id': 'member-1' });
+  });
+
+  it('reads all document, local component, usage, history and draft views through canonical endpoints', async () => {
+    const fixture = sharedFixture();
+    const cases = [
+      { command: 'resolve-document', args: [], path: '/document/resolve', body: { revision: 7, resolution: fixture.resolved } },
+      { command: 'project-components', args: ['--query', 'Card + header'], path: '/project-components?query=Card+%2B+header', body: { revision: 7, components: [fixture.definition] } },
+      { command: 'references', args: ['local:Card'], path: '/references?componentRef=local%3ACard', body: { revision: 7, references: fixture.references } },
+      { command: 'deletion', args: ['Card'], path: '/project-components/Card/deletion', body: { revision: 7, analysis: { schemaVersion: 1, componentRef: 'local:Card', canDelete: false, usages: fixture.references, diagnostics: [] } } },
+      { command: 'history', args: ['Card'], path: '/project-components/Card/history', body: { revision: 7, history: [{ schemaVersion: 1, componentRef: 'local:Card', definition: fixture.definition, changeId: null }] } },
+      { command: 'inspect', args: ['edit-card'], path: '/component-changes/edit-card', body: { revision: 7, draft: fixture.draft, impact: fixture.impact } },
+    ];
+    const stub = await startServer((request) => ({ body: cases.find((entry) => `${prefix}${entry.path}` === request.url)!.body }));
+    for (const entry of cases) {
+      const result = await runCli(['design-runtime', entry.command, projectId, ...entry.args, '--json', '--daemon-url', stub.url, ...scope]);
+      expect(result.code, `${entry.command}: ${result.stderr}`).toBe(entry.command === 'deletion' ? 1 : 0);
+      expect(JSON.parse(result.stdout)).toEqual(entry.body);
+      expect(result.stderr).toBe('');
+    }
+    expect(stub.requests.map(({ method, url }) => `${method} ${url}`)).toEqual(cases.map((entry) => `GET ${prefix}${entry.path}`));
+    expect(stub.requests.every((request) => request.headers['x-od-workspace-member-id'] === 'member-1')).toBe(true);
+  });
+
+  it('validates a document and materializes an instance from stdin without fetching or changing state', async () => {
+    const fixture = sharedFixture();
+    const node = fixture.definition.template;
+    const detachResponse = { revision: 7, node, origins: [{ nodeId: node.id, sourceNodeId: node.id, instancePath: [{ instanceId: 'card-instance', componentRef: 'local:Card', definitionRevision: 1 }] }], diagnostics: [] };
+    const stub = await startServer((request) => ({ body: request.url.endsWith('/detach') ? detachResponse : { revision: 7, resolution: fixture.resolved } }));
+    const requests = [
+      { command: 'validate-document', input: { document: fixture.current.document }, path: '/document/validate' },
+      { command: 'detach', input: { instance: { schemaVersion: 1, id: 'card-instance', type: 'instance', ref: 'local:Card', overrides: [] }, mode: 'guided' }, path: '/instances/detach' },
+    ];
+    for (const entry of requests) {
+      const result = await runCli(['design-runtime', entry.command, projectId, '--prompt-file', '-', '--json', '--daemon-url', stub.url], JSON.stringify(entry.input));
+      expect(result.code, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toHaveProperty('revision', 7);
+    }
+    expect(stub.requests.map(({ method, url, body }) => ({ method, url, body }))).toEqual(requests.map((entry) => ({ method: 'POST', url: `${prefix}${entry.path}`, body: entry.input })));
+  });
+
+  it('stages, publishes, discards, stages undo and deletes using explicit CAS and unchanged definition intent', async () => {
+    const fixture = sharedFixture();
+    const published = { ...fixture.current, revision: 8, projectComponents: { ...fixture.current.projectComponents, components: [fixture.proposed] }, sharedChanges: { ...fixture.current.sharedChanges, drafts: [], history: [{ schemaVersion: 1 as const, componentRef: 'local:Card', definition: fixture.proposed, changeId: fixture.draft.id }] } };
+    const undo = { ...fixture.draft, id: 'undo-card', baseDefinition: fixture.proposed, proposedDefinition: { ...fixture.definition, revision: 3 }, source: { type: 'undo' as const, definitionRevision: 1 } };
+    const undoState = { ...published, sharedChanges: { ...published.sharedChanges, drafts: [undo], history: [...published.sharedChanges.history, { schemaVersion: 1 as const, componentRef: 'local:Card', definition: fixture.definition, changeId: null }] } };
+    const cases = [
+      { command: 'stage', args: [], path: '/component-changes', method: 'POST', input: { draftId: fixture.draft.id, expectedDefinitionRevision: 1, definition: fixture.proposed }, response: { state: fixture.current, draft: fixture.draft, impact: fixture.impact } },
+      { command: 'publish', args: ['edit-card'], path: '/component-changes/edit-card/publish', method: 'POST', input: { expectedDefinitionRevision: 1 }, response: { state: published, impact: fixture.impact } },
+      { command: 'discard', args: ['edit-card'], path: '/component-changes/edit-card', method: 'DELETE', input: undefined, response: { state: published } },
+      { command: 'undo', args: ['Card'], path: '/project-components/Card/undo', method: 'POST', input: { draftId: 'undo-card', expectedDefinitionRevision: 2, restoreDefinitionRevision: 1 }, response: { state: undoState, draft: undo, impact: { ...fixture.impact, baseRevision: 2, proposedRevision: 3 } } },
+      { command: 'delete', args: ['Card'], path: '/project-components/Card', method: 'DELETE', input: { action: { type: 'replace', replacementRef: 'ds:acme/button' } }, response: { state: published } },
+    ];
+    const stub = await startServer((request) => ({ body: cases.find((entry) => `${prefix}${entry.path}` === request.url)!.response }));
+    for (const entry of cases) {
+      const result = await runCli(['design-runtime', entry.command, projectId, ...entry.args, ...(entry.input ? ['--prompt-file', '-'] : []), '--expected-revision', '7', '--json', '--daemon-url', stub.url, ...scope], JSON.stringify(entry.input));
+      expect(result.code, `${entry.command}: ${result.stderr}`).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual(entry.response);
+    }
+    expect(stub.requests.map(({ method, url, body }) => ({ method, url, body }))).toEqual(cases.map((entry) => ({ method: entry.method, url: `${prefix}${entry.path}`, body: { ...entry.input, expectedRevision: 7 } })));
+    expect(stub.requests.every((request) => request.headers['x-od-workspace-id'] === 'workspace-1')).toBe(true);
+  });
+
+  it('prints useful impact, reference chains and retained-draft diagnostics when a staged change is blocked', async () => {
+    const fixture = sharedFixture();
+    const diagnostic: ValidationDiagnostic = { schemaVersion: 1, code: 'ODDS1003', severity: 'error', message: 'Existing override is invalid.', nodeId: 'card-instance' };
+    const impact = { ...fixture.impact, proposed: { ...fixture.resolved, document: null, diagnostics: [diagnostic] }, diagnostics: [diagnostic] };
+    const stub = await startServer(() => ({ body: { state: fixture.current, draft: fixture.draft, impact } }));
+    const result = await runCli(['design-runtime', 'stage', projectId, '--prompt-file', '-', '--daemon-url', stub.url], JSON.stringify({ expectedRevision: 7, draftId: fixture.draft.id, expectedDefinitionRevision: 1, definition: fixture.proposed }));
+    expect(result.code).toBe(1);
+    expect(result.stderr).toBe('');
+    for (const text of ['Draft saved: edit-card', 'definition revision 1 -> 2', '1 affected screens', 'design/screen', 'Chain: local:Card <- design/screen', 'ODDS1003']) expect(result.stdout).toContain(text);
+    expect(stub.requests).toHaveLength(1);
+  });
+
+  it('returns validation and strict detach errors as canonical JSON with exit 1', async () => {
+    const fixture = sharedFixture();
+    const diagnostics = [{ schemaVersion: 1, code: 'ODDS4006', severity: 'error', message: 'Strict mode rejects design-system detach.' }];
+    const stub = await startServer((request) => ({ body: request.url.endsWith('/detach')
+      ? { revision: 7, node: null, origins: [], diagnostics }
+      : { revision: 7, resolution: { ...fixture.resolved, document: null, diagnostics } } }));
+    for (const entry of [
+      { command: 'validate-document', input: { document: fixture.current.document } },
+      { command: 'detach', input: { instance: { schemaVersion: 1, id: 'button-instance', type: 'instance', ref: 'ds:acme/button', overrides: [] }, mode: 'strict' } },
+    ]) {
+      const result = await runCli(['design-runtime', entry.command, projectId, '--prompt-file', '-', '--json', '--daemon-url', stub.url], JSON.stringify(entry.input));
+      expect(result.code).toBe(1);
+      expect(result.stderr).toBe('');
+      expect(result.stdout).toContain('ODDS4006');
+    }
+    expect(stub.requests).toHaveLength(2);
+  });
+
+  it('preserves component revision conflict details without retrying publication', async () => {
+    const body = { error: { code: 'DESIGN_RUNTIME_COMPONENT_CHANGE_CONFLICT', message: 'The published component revision changed.', details: { expectedDefinitionRevision: 1, currentDefinitionRevision: 2, diagnostics: [] } } };
+    const stub = await startServer((request) => request.method === 'GET' ? { body: { state: state() } } : { status: 409, body });
+    const result = await runCli(['design-runtime', 'publish', projectId, 'edit-card', '--prompt-file', '-', '--json', '--daemon-url', stub.url], JSON.stringify({ expectedDefinitionRevision: 1 }));
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.stderr)).toEqual({ status: 409, ...body });
+    expect(stub.requests.map(({ method }) => method)).toEqual(['GET', 'POST']);
+    expect(stub.requests[1]!.body).toEqual({ expectedRevision: 7, expectedDefinitionRevision: 1 });
+  });
+
+  it('rejects missing definition intent, unsafe delete intent and unsupported options before any HTTP', async () => {
+    const fixture = sharedFixture();
+    const stub = await startServer();
+    const cases = [
+      { args: ['publish', projectId, 'edit-card', '--prompt-file', '-'], input: {} },
+      { args: ['stage', projectId, '--prompt-file', '-'], input: { draftId: 'edit-card', definition: fixture.proposed } },
+      { args: ['delete', projectId, 'Card', '--prompt-file', '-'], input: { action: { type: 'replace', replacementRef: 'local:Card' } } },
+      { args: ['undo', projectId, 'Card', '--prompt-file', '-'], input: { draftId: 'undo-card', expectedDefinitionRevision: 2, restoreDefinitionRevision: 2 } },
+      { args: ['detach', projectId, '--prompt-file', '-', '--expected-revision', '7'], input: {} },
+      { args: ['references', projectId, 'Card'] },
+      { args: ['history', projectId, 'local:Card'] },
+      { args: ['inspect', projectId, 'edit-card', 'extra'] },
+      { args: ['resolve-document', projectId, 'extra'] },
+      { args: ['deletion', projectId] },
+    ];
+    for (const entry of cases) {
+      const result = await runCli(['design-runtime', ...entry.args, '--json', '--daemon-url', stub.url], JSON.stringify(entry.input));
+      expect(result.code, entry.args.join(' ')).toBe(2);
+      expect(JSON.parse(result.stderr).error.code).toBe('BAD_REQUEST');
+    }
+    expect(stub.requests).toEqual([]);
   });
 });

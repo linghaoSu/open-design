@@ -5,6 +5,9 @@ export function emptyDesignRuntimeState(revision = 0): ProjectDesignRuntimeState
     schemaVersion: 1, revision, registry: null,
     codeIndex: { schemaVersion: 1, id: 'project', components: [] },
     bindings: { schemaVersion: 1, id: 'project', bindings: [] },
+    projectComponents: { schemaVersion: 1, id: 'project', components: [] },
+    document: null,
+    sharedChanges: { schemaVersion: 1, id: 'project', drafts: [], history: [] },
   };
 }
 
@@ -15,7 +18,7 @@ export function designRuntimeState(revision = 1): ProjectDesignRuntimeState {
     disabled: { type: 'boolean' as const, required: false, default: false },
   };
   return {
-    schemaVersion: 1, revision,
+    ...emptyDesignRuntimeState(revision),
     registry: { schemaVersion: 1, id: 'test', components: [{ schemaVersion: 1, id: 'button', name: 'Button', props, source }] },
     codeIndex: { schemaVersion: 1, id: 'project', components: [{
       schemaVersion: 1, id: 'code/Button', framework: 'react', name: 'Button', sourcePath: source.sourcePath,

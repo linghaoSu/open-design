@@ -82,6 +82,10 @@ export const API_ERROR_CODES = [
   'DESIGN_RUNTIME_INVALID_BINDING',
   'DESIGN_RUNTIME_SOURCE_UNAVAILABLE',
   'DESIGN_RUNTIME_COMPILATION_FAILED',
+  'DESIGN_RUNTIME_VALIDATION_FAILED',
+  'DESIGN_RUNTIME_COMPONENT_NOT_FOUND',
+  'DESIGN_RUNTIME_COMPONENT_CHANGE_NOT_FOUND',
+  'DESIGN_RUNTIME_COMPONENT_CHANGE_CONFLICT',
   // Handoff (`POST /api/projects/:id/handoff`): the requested conversation
   // is not in the project, or has no messages to synthesize a handoff from.
   'CONVERSATION_NOT_FOUND',

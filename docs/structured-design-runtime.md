@@ -2,14 +2,16 @@
 
 Projects can compile selected React/TypeScript exports into a structured component
 registry, inspect their properties, manage explicit code bindings, and validate
-property values. Open **Design runtime** from the project file workspace's tab
+property values. They can also compose semantic screens and reusable project
+components, inspect affected screens, and explicitly publish shared revisions.
+Open **Design runtime** from the project file workspace's tab
 bar, select source files and named exports, then choose **Compile registry**.
 The same operations are available through `od design-runtime` and the project HTTP
 API. Existing design-system discovery, generation, and rendering retain their
 current behavior.
 
 The [active delivery plan](../specs/current/structured-design-runtime.md) tracks
-the remaining inheritance, versioning, upgrade, handoff, and generation work.
+acceptance and the remaining versioning, upgrade, handoff, and generation work.
 
 ## Existing extension points
 
@@ -54,7 +56,7 @@ the remaining inheritance, versioning, upgrade, handoff, and generation work.
 
 No new workspace package is needed. A later milestone can extract pure runtime
 algorithms once actual shared consumers justify that boundary. Prompt integration,
-reference graphs, inheritance, version resolution, migrations, rendering, and
+version resolution, migrations, production rendering, and
 handoff remain tracked separately in the active plan.
 
 ## Project workflow and persistence
@@ -65,6 +67,8 @@ component/code IDs. The daemon reads each selected file once and compiles every
 export before atomically saving the new registry, code index, and bindings. A
 failed source read, unsupported type, or invalid selection leaves the prior
 snapshot intact. Source text is not copied into registry storage.
+Recompilation also validates the existing project definitions and document against
+the proposed registry before committing it.
 
 The UI assigns identities once per selection and preserves them when source paths
 or exports are edited. Existing manual bindings and explicit unbound states survive
@@ -91,13 +95,26 @@ All paths below are relative to `/api/projects/:id/design-runtime`:
 | Bind or unbind | `PUT`, `DELETE /bindings/:bindingId` | `bind <projectId> --prompt-file <path\|->`, `unbind <projectId> <bindingId>` |
 | Revalidate or resolve | `POST /bindings/:bindingId/revalidate`, `GET /bindings/:bindingId/resolve` | `revalidate`, `resolve` with `<projectId> <bindingId>` |
 | Validate property usage | `POST /validate` | `validate <projectId> --prompt-file <path\|->` |
+| Save or validate a semantic document | `PUT /document`, `POST /document/validate` | `save-document`, `validate-document` with `<projectId> --prompt-file <path\|->` |
+| Resolve the saved document | `GET /document/resolve` | `resolve-document <projectId>` |
+| Search project definitions | `GET /project-components` | `project-components <projectId> --query <text>` |
+| Inspect references and affected screens | `GET /references?componentRef=...` | `references <projectId> <componentRef>` |
+| Review deletion or published history | `GET /project-components/:componentId/deletion`, `GET /project-components/:componentId/history` | `deletion`, `history` with `<projectId> <componentId>` |
+| Stage a shared definition | `POST /component-changes` | `stage <projectId> --prompt-file <path\|->` |
+| Inspect or discard a staged definition | `GET`, `DELETE /component-changes/:draftId` | `inspect`, `discard` with `<projectId> <draftId>` |
+| Publish a reviewed definition | `POST /component-changes/:draftId/publish` | `publish <projectId> <draftId> --prompt-file <path\|->` |
+| Stage an earlier revision as new content | `POST /project-components/:componentId/undo` | `undo <projectId> <componentId> --prompt-file <path\|->` |
+| Delete, replace, detach or remove referencing instances | `DELETE /project-components/:componentId` | `delete <projectId> <componentId> --prompt-file <path\|->` |
+| Derive a detached subtree for review | `POST /instances/detach` | `detach <projectId> --prompt-file <path\|->` |
 
 CLI commands begin with `od design-runtime` and support `--json`, `--daemon-url`,
-`--workspace`, and `--workspace-member`. Compile/bind/validate read JSON from a
+`--workspace`, and `--workspace-member`. Commands with request bodies read JSON from a
 file or stdin. A write can provide `expectedRevision` in its input or
 `--expected-revision`; if both are omitted, the CLI reads the current revision once
 and sends it without retrying conflicts. Invalid usage diagnostics and unresolved
-bindings exit 1; malformed CLI input exits 2. Run `od design-runtime help` for
+bindings exit 1; malformed CLI input exits 2. Staging can return exit 1 for blocking
+impact diagnostics while retaining the draft for repair. Definition revisions are
+explicit in stage, publish and undo inputs. Run `od design-runtime help` for
 complete input examples. Canonical request/response schemas live in
 `packages/contracts/src/api/design-runtime.ts`; errors use `error.details`.
 
@@ -109,6 +126,43 @@ od design-runtime validate <projectId> --json --prompt-file - <<'JSON'
 {"component":"ds:acme/button","props":{"variant":"primary"}}
 JSON
 ```
+
+## Screens and shared revisions
+
+Open the **Project structure** tab to add screens, text, design-system components
+and local component instances. The editor keeps edits in a local document draft;
+**Validate document** checks it, and **Save document** persists it. A reset removes
+an instance's explicit override, restoring the currently published inherited value.
+
+Project definitions have a single semantic template and an explicit public property
+schema. Map each public property to a template property or text node; mapped values
+are supplied by the public default or instance override. A mapped template target
+cannot also carry a competing static value. Local definitions can reference other
+local definitions through instances. The daemon rejects cycles, dangling references,
+invalid mappings and incompatible slot composition.
+
+Select a shared component, edit its template or public defaults, and choose
+**Stage change**. The published definition and live instances remain unchanged.
+The impact panel lists direct usages, dependency chains, affected screens and
+proposed validation errors. **Publish change** requires the current reviewed
+snapshot and a valid whole project. It advances the definition revision, records
+immutable history and preserves all source instance overrides. **Stage undo**
+copies an earlier revision into a new draft; publishing it advances the revision
+again instead of rewriting history.
+
+**Extract shared component** copies the selected subtree into a component draft.
+Stage and publish it, then explicitly adopt the published component in the screen
+draft and save the document. Adoption checks that the selected source is unchanged.
+Detachment follows the same review/adopt/save flow. Referenced definitions cannot
+be silently deleted: choose replacement, detachment or instance removal explicitly.
+Rewrites of surviving shared definitions advance their revisions and history in the
+same transaction. Pending drafts on removed or rewritten definitions block deletion.
+
+Refresh and conflict handling preserve edited drafts. The user explicitly rebases
+or discards conflicting content before saving again. The aggregate includes the
+local registry, source document, pending changes and history. Older snapshots gain
+the new empty fields on read without changing their revision; the next successful
+write persists the complete shape.
 
 ## Compatibility and identity
 
@@ -179,8 +233,16 @@ V1 instance overrides are an array of versioned records such as
 `{ schemaVersion: 1, path: ['props', 'title'], value: 'Production' }`.
 The tuple path avoids dotted-key ambiguity. Only whole-prop overrides are
 represented; removing a record expresses reset. Resolution, inheritance, and
-editing are future work. UI documents contain versioned screens and semantic
+editing are implemented by the project component service and semantic editors.
+UI documents contain versioned screens and semantic
 component/text/instance nodes, with unique node IDs across all screens.
+
+`resolveProjectDocument` expands local definitions, materializes defaults and
+overrides, validates slot composition and returns deterministic node origins.
+`queryReferenceGraph` follows actual source references with bounded traversal.
+The shared-change service validates every proposed definition and screen before
+publication. These checks are independent of production source rendering, token
+validation and generation repair, which remain separate milestones.
 
 The executable acceptance test is
 `apps/daemon/tests/services/design-runtime/acceptance.test.ts`. It compiles the
@@ -204,7 +266,7 @@ Focused commands:
 corepack pnpm --filter @open-design/contracts build
 corepack pnpm --filter @open-design/contracts test
 corepack pnpm --filter @open-design/daemon exec vitest run -c vitest.config.ts tests/services/design-runtime tests/storage/design-runtime-store.test.ts tests/routes/design-runtime.test.ts
-corepack pnpm --filter @open-design/web test tests/providers/design-runtime.test.ts tests/components/DesignRuntimePanel.test.tsx
+corepack pnpm --filter @open-design/web test tests/providers/design-runtime.test.ts tests/components/DesignRuntimePanel.test.tsx tests/components/SemanticTreeEditor.test.tsx tests/components/ProjectStructurePanel.test.tsx
 corepack pnpm --filter @open-design/e2e exec playwright test -c playwright.config.ts ui/design-runtime.test.ts --workers=1
 corepack pnpm guard
 corepack pnpm typecheck

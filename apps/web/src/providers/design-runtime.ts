@@ -1,5 +1,22 @@
 import {
   ProjectDesignRuntimeBindRequestSchema,
+  ProjectDesignRuntimeSaveDocumentRequestSchema,
+  ProjectDesignRuntimeValidateDocumentRequestSchema,
+  ProjectDesignRuntimeDocumentResponseSchema,
+  ProjectDesignRuntimeReferencesRequestSchema,
+  ProjectDesignRuntimeReferencesResponseSchema,
+  ProjectDesignRuntimeProjectComponentsResponseSchema,
+  ProjectDesignRuntimeDeletionResponseSchema,
+  ProjectDesignRuntimeHistoryResponseSchema,
+  ProjectDesignRuntimeStageComponentRequestSchema,
+  ProjectDesignRuntimeStageComponentResponseSchema,
+  ProjectDesignRuntimeChangeResponseSchema,
+  ProjectDesignRuntimePublishComponentRequestSchema,
+  ProjectDesignRuntimePublishComponentResponseSchema,
+  ProjectDesignRuntimeUndoComponentRequestSchema,
+  ProjectDesignRuntimeDeleteComponentRequestSchema,
+  ProjectDesignRuntimeDetachRequestSchema,
+  ProjectDesignRuntimeDetachResponseSchema,
   ProjectDesignRuntimeCodeComponentsResponseSchema,
   ProjectDesignRuntimeCompileRequestSchema,
   ProjectDesignRuntimeComponentsResponseSchema,
@@ -11,6 +28,13 @@ import {
   ValidationDiagnosticSchema,
   type ApiErrorResponse,
   type ProjectDesignRuntimeBindRequest,
+  type ProjectDesignRuntimeSaveDocumentRequest,
+  type ProjectDesignRuntimeValidateDocumentRequest,
+  type ProjectDesignRuntimeStageComponentRequest,
+  type ProjectDesignRuntimePublishComponentRequest,
+  type ProjectDesignRuntimeUndoComponentRequest,
+  type ProjectDesignRuntimeDeleteComponentRequest,
+  type ProjectDesignRuntimeDetachRequest,
   type ProjectDesignRuntimeCompileRequest,
   type ProjectDesignRuntimeRevisionRequest,
   type ProjectDesignRuntimeValidateRequest,
@@ -29,6 +53,7 @@ export interface ProjectDesignRuntimeScope {
 export class ProjectDesignRuntimeError extends Error {
   readonly diagnostics: ValidationDiagnostic[];
   readonly currentRevision: number | undefined;
+  readonly currentDefinitionRevision: number | undefined;
 
   constructor(readonly status: number, readonly apiError: ApiErrorResponse['error']) {
     super(apiError.message);
@@ -38,6 +63,7 @@ export class ProjectDesignRuntimeError extends Error {
     const diagnostics = ValidationDiagnosticSchema.array().safeParse(details.diagnostics);
     this.diagnostics = diagnostics.success ? diagnostics.data : [];
     this.currentRevision = typeof details.currentRevision === 'number' ? details.currentRevision : undefined;
+    this.currentDefinitionRevision = typeof details.currentDefinitionRevision === 'number' ? details.currentDefinitionRevision : undefined;
   }
 }
 
@@ -94,3 +120,46 @@ export const searchProjectDesignRuntimeComponents = (scope: ProjectDesignRuntime
 
 export const searchProjectDesignRuntimeCodeComponents = (scope: ProjectDesignRuntimeScope, query = '') =>
   request(scope, `/code-components?query=${encodeURIComponent(query)}`, ProjectDesignRuntimeCodeComponentsResponseSchema);
+
+
+export const saveProjectDesignRuntimeDocument = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeSaveDocumentRequest) =>
+  request(scope, '/document', ProjectDesignRuntimeResponseSchema, 'PUT', ProjectDesignRuntimeSaveDocumentRequestSchema.parse(input));
+
+export const validateProjectDesignRuntimeDocument = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeValidateDocumentRequest) =>
+  request(scope, '/document/validate', ProjectDesignRuntimeDocumentResponseSchema, 'POST', ProjectDesignRuntimeValidateDocumentRequestSchema.parse(input));
+
+export const resolveProjectDesignRuntimeDocument = (scope: ProjectDesignRuntimeScope) =>
+  request(scope, '/document/resolve', ProjectDesignRuntimeDocumentResponseSchema);
+
+export const getProjectDesignRuntimeReferences = (scope: ProjectDesignRuntimeScope, componentRef: string) =>
+  request(scope, `/references?componentRef=${encodeURIComponent(ProjectDesignRuntimeReferencesRequestSchema.parse({ componentRef }).componentRef)}`, ProjectDesignRuntimeReferencesResponseSchema);
+
+export const searchProjectDesignRuntimeProjectComponents = (scope: ProjectDesignRuntimeScope, query = '') =>
+  request(scope, `/project-components?query=${encodeURIComponent(query)}`, ProjectDesignRuntimeProjectComponentsResponseSchema);
+
+export const getProjectDesignRuntimeDeletion = (scope: ProjectDesignRuntimeScope, componentId: string) =>
+  request(scope, `/project-components/${encodeURIComponent(componentId)}/deletion`, ProjectDesignRuntimeDeletionResponseSchema);
+
+export const getProjectDesignRuntimeHistory = (scope: ProjectDesignRuntimeScope, componentId: string) =>
+  request(scope, `/project-components/${encodeURIComponent(componentId)}/history`, ProjectDesignRuntimeHistoryResponseSchema);
+
+export const stageProjectDesignRuntimeComponent = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeStageComponentRequest) =>
+  request(scope, '/component-changes', ProjectDesignRuntimeStageComponentResponseSchema, 'POST', ProjectDesignRuntimeStageComponentRequestSchema.parse(input));
+
+export const getProjectDesignRuntimeChange = (scope: ProjectDesignRuntimeScope, draftId: string) =>
+  request(scope, `/component-changes/${encodeURIComponent(draftId)}`, ProjectDesignRuntimeChangeResponseSchema);
+
+export const publishProjectDesignRuntimeComponent = (scope: ProjectDesignRuntimeScope, draftId: string, input: ProjectDesignRuntimePublishComponentRequest) =>
+  request(scope, `/component-changes/${encodeURIComponent(draftId)}/publish`, ProjectDesignRuntimePublishComponentResponseSchema, 'POST', ProjectDesignRuntimePublishComponentRequestSchema.parse(input));
+
+export const discardProjectDesignRuntimeComponent = (scope: ProjectDesignRuntimeScope, draftId: string, input: ProjectDesignRuntimeRevisionRequest) =>
+  request(scope, `/component-changes/${encodeURIComponent(draftId)}`, ProjectDesignRuntimeResponseSchema, 'DELETE', ProjectDesignRuntimeRevisionRequestSchema.parse(input));
+
+export const undoProjectDesignRuntimeComponent = (scope: ProjectDesignRuntimeScope, componentId: string, input: ProjectDesignRuntimeUndoComponentRequest) =>
+  request(scope, `/project-components/${encodeURIComponent(componentId)}/undo`, ProjectDesignRuntimeStageComponentResponseSchema, 'POST', ProjectDesignRuntimeUndoComponentRequestSchema.parse(input));
+
+export const deleteProjectDesignRuntimeComponent = (scope: ProjectDesignRuntimeScope, componentId: string, input: ProjectDesignRuntimeDeleteComponentRequest) =>
+  request(scope, `/project-components/${encodeURIComponent(componentId)}`, ProjectDesignRuntimeResponseSchema, 'DELETE', ProjectDesignRuntimeDeleteComponentRequestSchema.parse(input));
+
+export const detachProjectDesignRuntimeInstance = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeDetachRequest) =>
+  request(scope, '/instances/detach', ProjectDesignRuntimeDetachResponseSchema, 'POST', ProjectDesignRuntimeDetachRequestSchema.parse(input));

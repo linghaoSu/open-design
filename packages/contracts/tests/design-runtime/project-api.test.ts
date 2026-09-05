@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import {
   ProjectDesignRuntimeBindRequestSchema,
+  ProjectDesignRuntimeSaveDocumentRequestSchema,
+  ProjectDesignRuntimeValidateDocumentRequestSchema,
+  ProjectDesignRuntimeDocumentResponseSchema,
+  ProjectDesignRuntimeReferencesRequestSchema,
+  ProjectDesignRuntimeReferencesResponseSchema,
+  ProjectDesignRuntimeProjectComponentsResponseSchema,
+  ProjectDesignRuntimeDeletionResponseSchema,
+  ProjectDesignRuntimeHistoryResponseSchema,
+  ProjectDesignRuntimeStageComponentRequestSchema,
+  ProjectDesignRuntimeStageComponentResponseSchema,
+  ProjectDesignRuntimeChangeResponseSchema,
+  ProjectDesignRuntimePublishComponentRequestSchema,
+  ProjectDesignRuntimePublishComponentResponseSchema,
+  ProjectDesignRuntimeUndoComponentRequestSchema,
+  ProjectDesignRuntimeDeleteComponentRequestSchema,
+  ProjectDesignRuntimeDetachRequestSchema,
+  ProjectDesignRuntimeDetachResponseSchema,
   ProjectDesignRuntimeCodeComponentsResponseSchema,
   ProjectDesignRuntimeCompileRequestSchema,
   ProjectDesignRuntimeComponentsResponseSchema,
@@ -20,13 +37,40 @@ const code = { schemaVersion: 1, id: 'ui/Button', framework: 'react', name: 'But
 const binding = { schemaVersion: 1, id: 'binding/button', componentRef: 'ds:test/button', framework: 'react', status: 'bound', verified: true, codeComponentId: 'ui/Button' };
 const state = {
   schemaVersion: 1, revision: 1,
+  projectComponents: { schemaVersion: 1, id: 'project', components: [] },
+  document: null,
+  sharedChanges: { schemaVersion: 1, id: 'project', drafts: [], history: [] },
   registry: { schemaVersion: 1, id: 'test', components: [component] },
   codeIndex: { schemaVersion: 1, id: 'project', components: [code] },
   bindings: { schemaVersion: 1, id: 'project', bindings: [binding] },
 };
 
+const document = { schemaVersion: 1, id: 'design', screens: [] };
+const definition = { schemaVersion: 1, id: 'Local', name: 'Local', revision: 1, props: {}, propMappings: [], template: { schemaVersion: 1, type: 'text', id: 'text', text: 'Local' } };
+const draft = { schemaVersion: 1, id: 'create-local', componentRef: 'local:Local', baseDefinition: null, proposedDefinition: definition, source: { type: 'edit' } };
+const references = { schemaVersion: 1, target: 'local:Local', directUsages: [], transitiveUsages: [], affectedScreens: [], chains: [], cycles: [], diagnostics: [] };
+const resolution = { schemaVersion: 1, document, origins: [], diagnostics: [] };
+const impact = { schemaVersion: 1, componentRef: 'local:Local', baseRevision: 0, proposedRevision: 1, usages: references, current: resolution, proposed: resolution, diagnostics: [] };
+
 describe('project design runtime API contracts', () => {
   it.each([
+    { name: 'save document', schema: ProjectDesignRuntimeSaveDocumentRequestSchema, value: { expectedRevision: 1, document } },
+    { name: 'validate document', schema: ProjectDesignRuntimeValidateDocumentRequestSchema, value: { document } },
+    { name: 'resolved document', schema: ProjectDesignRuntimeDocumentResponseSchema, value: { revision: 1, resolution } },
+    { name: 'reference query', schema: ProjectDesignRuntimeReferencesRequestSchema, value: { componentRef: 'local:Local' } },
+    { name: 'references', schema: ProjectDesignRuntimeReferencesResponseSchema, value: { revision: 1, references } },
+    { name: 'local components', schema: ProjectDesignRuntimeProjectComponentsResponseSchema, value: { revision: 1, components: [definition] } },
+    { name: 'deletion analysis', schema: ProjectDesignRuntimeDeletionResponseSchema, value: { revision: 1, analysis: { schemaVersion: 1, componentRef: 'local:Local', canDelete: true, usages: references, diagnostics: [] } } },
+    { name: 'definition history', schema: ProjectDesignRuntimeHistoryResponseSchema, value: { revision: 1, history: [{ schemaVersion: 1, componentRef: 'local:Local', definition, changeId: 'create-local' }] } },
+    { name: 'stage definition', schema: ProjectDesignRuntimeStageComponentRequestSchema, value: { expectedRevision: 1, draftId: draft.id, expectedDefinitionRevision: 0, definition } },
+    { name: 'staged definition', schema: ProjectDesignRuntimeStageComponentResponseSchema, value: { state, draft, impact } },
+    { name: 'inspect change', schema: ProjectDesignRuntimeChangeResponseSchema, value: { revision: 1, draft, impact } },
+    { name: 'publish request', schema: ProjectDesignRuntimePublishComponentRequestSchema, value: { expectedRevision: 1, expectedDefinitionRevision: 0 } },
+    { name: 'published change', schema: ProjectDesignRuntimePublishComponentResponseSchema, value: { state, impact } },
+    { name: 'undo request', schema: ProjectDesignRuntimeUndoComponentRequestSchema, value: { expectedRevision: 1, draftId: 'undo-local', expectedDefinitionRevision: 2, restoreDefinitionRevision: 1 } },
+    { name: 'delete request', schema: ProjectDesignRuntimeDeleteComponentRequestSchema, value: { expectedRevision: 1, action: { type: 'detach' } } },
+    { name: 'detach request', schema: ProjectDesignRuntimeDetachRequestSchema, value: { instance: { schemaVersion: 1, type: 'instance', id: 'instance', ref: 'local:Local', overrides: [] }, mode: 'strict' } },
+    { name: 'detach response', schema: ProjectDesignRuntimeDetachResponseSchema, value: { revision: 1, node: definition.template, origins: [{ nodeId: 'text', sourceNodeId: 'text', instancePath: [] }], diagnostics: [] } },
     { name: 'state', schema: ProjectDesignRuntimeStateSchema, value: state },
     { name: 'state response', schema: ProjectDesignRuntimeResponseSchema, value: { state } },
     { name: 'compile', schema: ProjectDesignRuntimeCompileRequestSchema, value: compile },
@@ -60,6 +104,15 @@ describe('project design runtime API contracts', () => {
     }
     expect(ProjectDesignRuntimeCompileRequestSchema.safeParse({ ...compile, selections: [{ ...selection, sourceText: 'code' }] }).success).toBe(false);
     expect(ProjectDesignRuntimeCompileRequestSchema.safeParse({ ...compile, selections: [selection, selection] }).success).toBe(false);
+  });
+
+  it('preserves canonical stage and undo revision refinements and project ownership', () => {
+    expect(ProjectDesignRuntimeStageComponentRequestSchema.safeParse({ expectedRevision: 1, draftId: draft.id, expectedDefinitionRevision: 1, definition }).success).toBe(false);
+    expect(ProjectDesignRuntimeUndoComponentRequestSchema.safeParse({ expectedRevision: 1, draftId: 'undo', expectedDefinitionRevision: 2, restoreDefinitionRevision: 2 }).success).toBe(false);
+    expect(ProjectDesignRuntimeStateSchema.safeParse({ ...state, projectComponents: { ...state.projectComponents, id: 'other' } }).success).toBe(false);
+    expect(ProjectDesignRuntimeStateSchema.safeParse({ ...state, sharedChanges: { ...state.sharedChanges, id: 'other' } }).success).toBe(false);
+    const { document: _document, ...legacy } = state;
+    expect(ProjectDesignRuntimeStateSchema.safeParse(legacy).success).toBe(false);
   });
 
   it('does not let bind promote an unbound or unverified request implicitly', () => {

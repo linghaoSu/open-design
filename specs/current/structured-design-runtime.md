@@ -56,10 +56,10 @@ until every required milestone and invariant has direct current-state evidence.
 | 1 | Versioned component, binding, instance/override, semantic UI and diagnostic schemas | Canonical schema, JSON round-trip and rejection tests | Complete |
 | 2 | Component registry compiler using deterministic React/TypeScript extraction; reusable multi-component source fixture | Multiple selected exports compile atomically; names, exports, paths, requiredness, enums, reliable defaults and provenance retained; no source execution | Complete |
 | 3 | Code component index, search/inspect, explicit bind/unbind/resolve/validate, persisted binding state | Stable ID resolution; missing/changed source marks broken/stale on recompile; HTTP, UI, CLI and restart persistence tests | Complete |
-| 4 | Project component definitions, override-only instances, deterministic reference graph | Button → ApplicationCard → two screens traversal; inheritance/reset, direct/transitive usage, cycles, dangling refs and safe delete/detach rules | In progress |
-| 5 | Staged shared component revisions, usage/affected-screen impact, explicit publish and undo/history | A draft leaves live instances unchanged; publish changes all non-overridden instances; conflict/invalid-override tests and discoverable UI/CLI | Pending |
-| 6 | Immutable design-system versions, project dependencies, exact lock and digest/source verification | Reopen resolves same content until explicit upgrade; tampering/missing locked version diagnosed | Pending |
-| 7 | Semantic diff using stable component/token IDs | Added/removed/renamed/changed classification; removed variant/prop/token and incompatible slot are breaking | Pending |
+| 4 | Project component definitions, override-only instances, deterministic reference graph | Button → ApplicationCard → two screens traversal; inheritance/reset, direct/transitive usage, cycles, dangling refs and safe delete/detach rules | Complete |
+| 5 | Staged shared component revisions, usage/affected-screen impact, explicit publish and undo/history | A draft leaves live instances unchanged; publish changes all non-overridden instances; conflict/invalid-override tests and discoverable UI/CLI | Complete |
+| 6 | Immutable design-system versions, project dependencies, exact lock and digest/source verification | Reopen resolves same content until explicit upgrade; tampering/missing locked version diagnosed | In progress |
+| 7 | Semantic diff using stable component/token IDs | Added/removed/renamed/changed classification; removed variant/prop/token and incompatible slot are breaking | In progress |
 | 8 | Upgrade impact, deterministic migrations, review and explicit apply | Diff + graph + overrides identifies affected nodes/screens; migration validates before atomic lock/document update; failure/conflict leaves live state intact | Pending |
 | 9 | Machine-readable handoff and persistent project-component code bindings | Manifest includes lock, target, IR, registry, bindings and change context; deterministic round-trip, package compatibility, UI/CLI export | Pending |
 | 10 | Explore/Guided project modes and generation repair loop | Structured diagnostics after generation; bounded repair; normal Explore behavior preserved; equivalent generation paths validated | Pending |
@@ -96,12 +96,25 @@ The following are part of the final result, not optional placeholders:
 
 ## Current task boundary
 
-Multi-component compilation, index/binding operations, and their persisted
-web/CLI/HTTP feature are accepted. Current work adds project-local inheritance and
-the reference graph, followed by staged shared changes and versioning on the same
-canonical identities. Internal foundation commits can land independently; their
+Multi-component compilation, index/binding operations, project-local inheritance,
+reference graphs and staged shared changes have accepted web/CLI/HTTP surfaces.
+Current work adds immutable versions, semantic diff and the remaining compiler
+formats on the same canonical identities. Internal foundation commits can land independently; their
 corresponding phase remains incomplete until its listed product and validation
 evidence exists.
+
+The Phase 4 reference/resolution core and semantic tree editor are accepted, as is
+the Phase 5 immutable draft, impact, publication and undo core (`3c68936db`).
+The project structure UI and 14 additional HTTP/CLI operations are accepted with
+48 focused contract cases, 29 state/core daemon cases, 39 dispatcher cases,
+49 web cases and the existing 19 locale checks. The real browser workflow now
+stages and publishes a shared Button default through the live UI, displays two
+affected screens, verifies retained overrides, reopens persisted state, and stages
+and publishes undo as revision 3. The shared tools-dev browser test passed in
+12.8 seconds (45.5 seconds including harness startup/cleanup) using installed
+Chrome; screenshots cover the workspace entry and staged impact panel.
+Full `pnpm guard` and `pnpm typecheck` passed. Phase 6 immutable package/lock and
+Phase 7 semantic diff foundations are being developed independently.
 
 Phase 2/3 acceptance includes 88 focused contract tests, 147 daemon design-runtime
 tests, the existing 16 project CLI tests, 30 web provider/panel/locale tests, and

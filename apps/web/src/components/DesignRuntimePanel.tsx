@@ -25,6 +25,7 @@ import {
   type ProjectDesignRuntimeScope,
 } from '../providers/design-runtime';
 import { useT } from '../i18n';
+import { ProjectStructurePanel } from './ProjectStructurePanel';
 import styles from './DesignRuntimePanel.module.css';
 
 interface Props {
@@ -100,6 +101,8 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
   const [propDrafts, setPropDrafts] = useState<Record<string, PropDraft>>({});
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(true);
+  const [structureBusy, setStructureBusy] = useState(false);
+  const [tab, setTab] = useState<'code' | 'structure'>('code');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [diagnostics, setDiagnostics] = useState<ValidationDiagnostic[] | null>(null);
@@ -264,10 +267,14 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
         </div>
         <div className={styles.actions}>
           {state ? <span className={styles.muted}>{t('designRuntime.revision', { revision: state.revision })}</span> : null}
-          <Button disabled={busy} onClick={() => void perform(getProjectDesignRuntime, ({ state: nextState }) => adoptState(nextState, state === null))}>{t('designRuntime.refresh')}</Button>
+          <Button disabled={busy || structureBusy} onClick={() => void perform(getProjectDesignRuntime, ({ state: nextState }) => adoptState(nextState, state === null))}>{t('designRuntime.refresh')}</Button>
           <Button variant="ghost" onClick={onClose}>{t('common.close')}</Button>
         </div>
       </header>
+      <div role="tablist" aria-label={t('designRuntime.title')} className={styles.actions}>
+        <Button role="tab" id={`${inputId}-code-tab`} aria-controls={`${inputId}-code`} aria-selected={tab === 'code'} disabled={busy || structureBusy} data-testid="design-runtime-code-tab" onClick={() => setTab('code')}>{t('projectStructure.codeTab')}</Button>
+        <Button role="tab" id={`${inputId}-structure-tab`} aria-controls={`${inputId}-structure`} aria-selected={tab === 'structure'} disabled={busy || structureBusy} data-testid="design-runtime-structure-tab" onClick={() => setTab('structure')}>{t('projectStructure.title')}</Button>
+      </div>
       {viewerOnly ? <p className={styles.notice}>{t('designRuntime.readOnly')}</p> : null}
       {busy ? <p role="status">{t('common.loading')}</p> : null}
       {error ? <p className={styles.error} role="alert">{error}</p> : null}
@@ -279,6 +286,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
           {diagnostic.allowedValues ? <span>{t('designRuntime.allowedValues')}: {diagnostic.allowedValues.map((value) => JSON.stringify(value)).join(', ')}</span> : null}
         </li>)}
       </ul> : null}
+      <div id={`${inputId}-code`} role="tabpanel" aria-labelledby={`${inputId}-code-tab`} hidden={tab !== 'code'}>
       <div className={styles.columns}>
         <form className={styles.card} onSubmit={(event) => { event.preventDefault(); compile(); }}>
           <h3>{t('designRuntime.sources')}</h3>
@@ -411,6 +419,10 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
             </form> : null}
           </>}
         </div>
+      </div>
+      </div>
+      <div id={`${inputId}-structure`} role="tabpanel" aria-labelledby={`${inputId}-structure-tab`} hidden={tab !== 'structure'}>
+        {state ? <ProjectStructurePanel scope={scope} state={state} viewerOnly={viewerOnly} externalBusy={busy} onState={(next) => adoptState(next)} onBusyChange={setStructureBusy} /> : null}
       </div>
     </section>
   );

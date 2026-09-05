@@ -988,7 +988,9 @@ function printRootHelp() {
   od tools design-systems read --path <manifest-declared-path>
       Read active design-system pull-layer files through daemon wrapper commands.
 
-  od design-runtime <get|compile|components|code-components|bind|unbind|revalidate|resolve|validate> <projectId> [options]
+  od design-runtime <command> <projectId> [options]
+                         Compile components, edit documents, inspect references, and stage/publish shared revisions.
+                         Run od design-runtime --help for all document, component, binding, and history commands.
       Compile component registries and manage explicit code bindings through
       the project daemon API. Use --prompt-file <path|-> for JSON requests.
 

@@ -43,14 +43,24 @@ export function createDesignRuntimeStore(db: Database.Database): DesignRuntimeSt
   function read(projectId: string): ProjectDesignRuntimeState {
     if (!projectExists.get(projectId)) throw new DesignRuntimeProjectNotFoundError();
     const row = select.get(projectId) as { revision: number; state_json: string } | undefined;
-    const state = ProjectDesignRuntimeStateSchema.parse(row ? JSON.parse(row.state_json) : {
+    const additions = {
+      projectComponents: { schemaVersion: 1, id: projectId, components: [] },
+      document: null,
+      sharedChanges: { schemaVersion: 1, id: projectId, drafts: [], history: [] },
+    };
+    const persisted: unknown = row ? JSON.parse(row.state_json) : {
       schemaVersion: 1,
       revision: 0,
       registry: null,
       codeIndex: { schemaVersion: 1, id: projectId, components: [] },
       bindings: { schemaVersion: 1, id: projectId, bindings: [] },
-    });
-    if (state.codeIndex.id !== projectId || state.bindings.id !== projectId || (row && state.revision !== row.revision)) {
+      ...additions,
+    };
+    // Only the complete legacy shape receives additive defaults. Partial new snapshots remain errors.
+    const legacy = persisted !== null && typeof persisted === 'object' && !Array.isArray(persisted)
+      && ['projectComponents', 'document', 'sharedChanges'].every((key) => !Object.hasOwn(persisted, key));
+    const state = ProjectDesignRuntimeStateSchema.parse(legacy ? { ...persisted, ...additions } : persisted);
+    if (state.codeIndex.id !== projectId || state.bindings.id !== projectId || state.projectComponents.id !== projectId || state.sharedChanges.id !== projectId || (row && state.revision !== row.revision)) {
       throw new Error('Persisted design runtime identity or revision is inconsistent.');
     }
     return state;
@@ -62,7 +72,7 @@ export function createDesignRuntimeStore(db: Database.Database): DesignRuntimeSt
       throw new DesignRuntimeRevisionConflictError(expectedRevision, current.revision);
     }
     const next = ProjectDesignRuntimeStateSchema.parse({ ...state, revision: expectedRevision + 1 });
-    if (next.codeIndex.id !== projectId || next.bindings.id !== projectId) {
+    if (next.codeIndex.id !== projectId || next.bindings.id !== projectId || next.projectComponents.id !== projectId || next.sharedChanges.id !== projectId) {
       throw new Error('Design runtime state must belong to its project.');
     }
     if (current.revision === 0) {

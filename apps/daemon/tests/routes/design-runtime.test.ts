@@ -4,6 +4,15 @@ import type { AddressInfo } from 'node:net';
 import { describe, expect, it, vi, type MockInstance } from 'vitest';
 import {
   ProjectDesignRuntimeCodeComponentsResponseSchema,
+  ProjectDesignRuntimeDocumentResponseSchema,
+  ProjectDesignRuntimeReferencesResponseSchema,
+  ProjectDesignRuntimeProjectComponentsResponseSchema,
+  ProjectDesignRuntimeDeletionResponseSchema,
+  ProjectDesignRuntimeHistoryResponseSchema,
+  ProjectDesignRuntimeStageComponentResponseSchema,
+  ProjectDesignRuntimeChangeResponseSchema,
+  ProjectDesignRuntimePublishComponentResponseSchema,
+  ProjectDesignRuntimeDetachResponseSchema,
   ProjectDesignRuntimeComponentsResponseSchema,
   ProjectDesignRuntimeResolveResponseSchema,
   ProjectDesignRuntimeResponseSchema,
@@ -15,6 +24,13 @@ import { createDesignRuntimeStore, migrateDesignRuntimeStore } from '../../src/s
 import type { AuthorizeProjectRequest } from '../../src/collab/project-request-authority.js';
 
 const selection = { sourcePath: 'src/Button.tsx', exportName: 'Button', componentId: 'button', codeComponentId: 'ui/Button' };
+const localDefinition = {
+  schemaVersion: 1 as const, id: 'LocalButton', name: 'Local Button', revision: 1,
+  props: { variant: { type: 'enum' as const, values: ['primary', 'secondary'], required: false, default: 'primary' } },
+  template: { schemaVersion: 1 as const, type: 'component' as const, id: 'button-template', ref: 'ds:test/button' },
+  propMappings: [{ prop: 'variant', nodeId: 'button-template', path: ['props', 'variant'] as ['props', string] }],
+};
+const semanticDocument = { schemaVersion: 1, id: 'design', screens: [{ schemaVersion: 1, type: 'screen', id: 'Applications', children: [{ schemaVersion: 1, type: 'instance', id: 'submit', ref: 'local:LocalButton', overrides: [] }] }] };
 const compileRequest = { expectedRevision: 0, designSystemId: 'test', selections: [selection] };
 
 async function withRoute<T>(run: (fixture: {
@@ -90,6 +106,50 @@ describe('project design runtime HTTP routes', () => {
     });
   });
 
+  it('dispatches document, graph, staging, publish, undo, history and explicit deletion through shared DTOs', async () => {
+    await withRoute(async ({ request }) => {
+      let state = ProjectDesignRuntimeResponseSchema.parse((await request('POST', '/compile', compileRequest)).json).state;
+      expect(ProjectDesignRuntimeDocumentResponseSchema.parse((await request('GET', '/document/resolve')).json).resolution.document!.screens).toEqual([]);
+      const staged = ProjectDesignRuntimeStageComponentResponseSchema.parse((await request('POST', '/component-changes', { expectedRevision: state.revision, draftId: 'create-local', expectedDefinitionRevision: 0, definition: localDefinition })).json);
+      state = staged.state;
+      expect(state.document).toBeNull();
+      expect(state.projectComponents.components).toEqual([]);
+      expect(ProjectDesignRuntimeChangeResponseSchema.parse((await request('GET', '/component-changes/create-local')).json).impact.diagnostics).toEqual([]);
+      state = ProjectDesignRuntimePublishComponentResponseSchema.parse((await request('POST', '/component-changes/create-local/publish', { expectedRevision: state.revision, expectedDefinitionRevision: 0 })).json).state;
+      expect(state.document).toBeNull();
+      expect(ProjectDesignRuntimeProjectComponentsResponseSchema.parse((await request('GET', '/project-components?query=local%20button')).json).components).toHaveLength(1);
+      state = ProjectDesignRuntimeResponseSchema.parse((await request('PUT', '/document', { expectedRevision: state.revision, document: semanticDocument })).json).state;
+      const references = ProjectDesignRuntimeReferencesResponseSchema.parse((await request('GET', '/references?componentRef=local%3ALocalButton')).json).references;
+      expect(references.affectedScreens).toEqual([{ kind: 'screen', documentId: 'design', screenId: 'Applications' }]);
+      const invalidDocument = structuredClone(semanticDocument);
+      invalidDocument.screens[0]!.children[0]!.ref = 'local:Missing';
+      expect(ProjectDesignRuntimeDocumentResponseSchema.parse((await request('POST', '/document/validate', { document: invalidDocument })).json).resolution.document).toBeNull();
+      const invalidSave = await request('PUT', '/document', { expectedRevision: state.revision, document: invalidDocument });
+      expect(invalidSave.status).toBe(400);
+      expect(invalidSave.json.error.details.diagnostics[0].code).toBe('ODDS4002');
+      const detached = ProjectDesignRuntimeDetachResponseSchema.parse((await request('POST', '/instances/detach', { instance: semanticDocument.screens[0]!.children[0], mode: 'guided' })).json);
+      expect(detached.node).toMatchObject({ type: 'component', ref: 'ds:test/button', props: { variant: 'primary' } });
+      expect(ProjectDesignRuntimeResponseSchema.parse((await request('GET')).json).state).toEqual(state);
+      const edited = { ...localDefinition, revision: 2, props: { variant: { ...localDefinition.props.variant, default: 'secondary' } } };
+      state = ProjectDesignRuntimeStageComponentResponseSchema.parse((await request('POST', '/component-changes', { expectedRevision: state.revision, draftId: 'edit-local', expectedDefinitionRevision: 1, definition: edited })).json).state;
+      const conflict = await request('POST', '/component-changes/edit-local/publish', { expectedRevision: state.revision, expectedDefinitionRevision: 0 });
+      expect(conflict.status).toBe(409);
+      expect(conflict.json.error).toMatchObject({ code: 'DESIGN_RUNTIME_COMPONENT_CHANGE_CONFLICT', details: { expectedDefinitionRevision: 0, currentDefinitionRevision: 1 } });
+      state = ProjectDesignRuntimePublishComponentResponseSchema.parse((await request('POST', '/component-changes/edit-local/publish', { expectedRevision: state.revision, expectedDefinitionRevision: 1 })).json).state;
+      expect(ProjectDesignRuntimeHistoryResponseSchema.parse((await request('GET', '/project-components/LocalButton/history')).json).history.map((entry) => entry.definition.revision)).toEqual([1, 2]);
+      const undo = ProjectDesignRuntimeStageComponentResponseSchema.parse((await request('POST', '/project-components/LocalButton/undo', { expectedRevision: state.revision, draftId: 'undo-local', expectedDefinitionRevision: 2, restoreDefinitionRevision: 1 })).json);
+      expect(undo.draft.proposedDefinition).toMatchObject({ revision: 3, props: { variant: { default: 'primary' } } });
+      state = ProjectDesignRuntimeResponseSchema.parse((await request('DELETE', '/component-changes/undo-local', { expectedRevision: undo.state.revision })).json).state;
+      expect(ProjectDesignRuntimeDeletionResponseSchema.parse((await request('GET', '/project-components/LocalButton/deletion')).json).analysis.canDelete).toBe(false);
+      expect((await request('DELETE', '/project-components/LocalButton', { expectedRevision: state.revision, action: { type: 'reject' } })).status).toBe(400);
+      state = ProjectDesignRuntimeResponseSchema.parse((await request('DELETE', '/project-components/LocalButton', { expectedRevision: state.revision, action: { type: 'detach' } })).json).state;
+      expect(state.projectComponents.components).toEqual([]);
+      expect(state.document!.screens[0]!.children[0]).toMatchObject({ type: 'component', props: { variant: 'secondary' } });
+      expect(ProjectDesignRuntimeHistoryResponseSchema.parse((await request('GET', '/project-components/LocalButton/history')).json).history).toHaveLength(2);
+      expect((await request('GET', '/component-changes/undo-local')).status).toBe(404);
+    });
+  });
+
   it('rejects source text, path traversal and duplicate selections before reading project files', async () => {
     await withRoute(async ({ request, readSource }) => {
       for (const selections of [
@@ -123,6 +183,13 @@ describe('project design runtime HTTP routes', () => {
         ['POST', '/bindings/missing/revalidate', { expectedRevision: 0 }],
         ['GET', '/bindings/missing/resolve'],
         ['POST', '/validate', { component: 'ds:test/button', props: {} }],
+        ['PUT', '/document', {}], ['POST', '/document/validate', {}], ['GET', '/document/resolve'],
+        ['GET', '/references?componentRef=local%3ALocalButton'], ['GET', '/project-components'],
+        ['GET', '/project-components/LocalButton/deletion'], ['GET', '/project-components/LocalButton/history'],
+        ['POST', '/component-changes', {}], ['GET', '/component-changes/draft'],
+        ['POST', '/component-changes/draft/publish', {}], ['DELETE', '/component-changes/draft', {}],
+        ['POST', '/project-components/LocalButton/undo', {}], ['DELETE', '/project-components/LocalButton', {}],
+        ['POST', '/instances/detach', {}],
       ];
       for (const [method, suffix, body] of calls) {
         expect((await request(method, suffix, body)).status).toBe(403);

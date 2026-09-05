@@ -1,6 +1,16 @@
 import type { Express, Request, Response } from 'express';
 import {
   JsonValueSchema,
+  DesignEntityIdSchema,
+  ProjectComponentDeleteRequestSchema,
+  ProjectDesignRuntimeSaveDocumentRequestSchema,
+  ProjectDesignRuntimeValidateDocumentRequestSchema,
+  ProjectDesignRuntimeReferencesRequestSchema,
+  ProjectDesignRuntimeStageComponentRequestSchema,
+  ProjectDesignRuntimePublishComponentRequestSchema,
+  ProjectDesignRuntimeUndoComponentRequestSchema,
+  ProjectDesignRuntimeDeleteComponentRequestSchema,
+  ProjectDesignRuntimeDetachRequestSchema,
   ProjectDesignRuntimeBindRequestSchema,
   ProjectDesignRuntimeCompileRequestSchema,
   ProjectDesignRuntimeRevisionRequestSchema,
@@ -15,6 +25,7 @@ import {
 } from '../storage/design-runtime-store.js';
 import { ProjectDesignRuntimeError } from '../services/design-runtime/project-service.js';
 import { CompilerError } from '../services/design-runtime/react-compiler.js';
+import { SharedComponentChangeError } from '../services/design-runtime/shared-component-changes.js';
 
 export interface RegisterDesignRuntimeRoutesDeps extends RouteDeps<'designRuntime' | 'authorizeProjectRequest'> {}
 
@@ -42,6 +53,15 @@ function sendFailure(res: Response, error: unknown): void {
   } else if (error instanceof ProjectDesignRuntimeError) {
     sendApiError(res, error.status, error.code, error.message,
       error.details === undefined ? {} : { details: JsonValueSchema.parse(error.details) });
+  } else if (error instanceof SharedComponentChangeError) {
+    const status = error.code === 'CONFLICT' ? 409 : error.code === 'NOT_FOUND' ? 404 : 400;
+    const code = error.code === 'CONFLICT' ? 'DESIGN_RUNTIME_COMPONENT_CHANGE_CONFLICT' : error.code === 'NOT_FOUND' ? 'DESIGN_RUNTIME_COMPONENT_CHANGE_NOT_FOUND' : 'DESIGN_RUNTIME_VALIDATION_FAILED';
+    sendApiError(res, status, code, error.message, { details: JsonValueSchema.parse({
+      diagnostics: error.diagnostics,
+      ...(error.impact === undefined ? {} : { impact: error.impact }),
+      ...(error.expectedDefinitionRevision === undefined ? {} : { expectedDefinitionRevision: error.expectedDefinitionRevision }),
+      ...(error.currentDefinitionRevision === undefined ? {} : { currentDefinitionRevision: error.currentDefinitionRevision }),
+    }) });
   } else if (error instanceof CompilerError) {
     sendApiError(res, 400, 'DESIGN_RUNTIME_COMPILATION_FAILED', error.message, {
       details: {
@@ -59,6 +79,8 @@ function sendFailure(res: Response, error: unknown): void {
 export function registerDesignRuntimeRoutes(app: Express, deps: RegisterDesignRuntimeRoutesDeps): void {
   const prefix = '/api/projects/:id/design-runtime';
   const service = deps.designRuntime;
+  const componentId = (req: Request) => parseInput(DesignEntityIdSchema, req.params.componentId);
+  const draftId = (req: Request) => parseInput(DesignEntityIdSchema, req.params.draftId);
   const handle = (mode: 'read' | 'write', action: (req: Request) => unknown | Promise<unknown>) => async (req: Request, res: Response) => {
     try {
       if (!await deps.authorizeProjectRequest(req, res, String(req.params.id),
@@ -92,6 +114,25 @@ export function registerDesignRuntimeRoutes(app: Express, deps: RegisterDesignRu
   })));
   app.get(`${prefix}/bindings/:bindingId/resolve`, handle('read', (req) =>
     service.resolve(String(req.params.id), String(req.params.bindingId))));
+  app.put(`${prefix}/document`, handle('write', (req) => ({ state: service.saveDocument(String(req.params.id), parseInput(ProjectDesignRuntimeSaveDocumentRequestSchema, req.body)) })));
+  app.post(`${prefix}/document/validate`, handle('read', (req) => service.validateDocument(String(req.params.id), parseInput(ProjectDesignRuntimeValidateDocumentRequestSchema, req.body))));
+  app.get(`${prefix}/document/resolve`, handle('read', (req) => service.resolveDocument(String(req.params.id))));
+  app.get(`${prefix}/references`, handle('read', (req) => service.references(String(req.params.id), parseInput(ProjectDesignRuntimeReferencesRequestSchema, req.query).componentRef)));
+  app.get(`${prefix}/project-components`, handle('read', (req) => service.projectComponents(String(req.params.id), parseInput(ProjectDesignRuntimeSearchRequestSchema, req.query).query)));
+  app.get(`${prefix}/project-components/:componentId/deletion`, handle('read', (req) => service.deletion(String(req.params.id), componentId(req))));
+  app.get(`${prefix}/project-components/:componentId/history`, handle('read', (req) => service.history(String(req.params.id), componentId(req))));
+  app.post(`${prefix}/component-changes`, handle('write', (req) => service.stageComponent(String(req.params.id), parseInput(ProjectDesignRuntimeStageComponentRequestSchema, req.body))));
+  app.get(`${prefix}/component-changes/:draftId`, handle('read', (req) => service.inspectComponentChange(String(req.params.id), draftId(req))));
+  app.post(`${prefix}/component-changes/:draftId/publish`, handle('write', (req) => service.publishComponent(String(req.params.id), draftId(req), parseInput(ProjectDesignRuntimePublishComponentRequestSchema, req.body))));
+  app.delete(`${prefix}/component-changes/:draftId`, handle('write', (req) => ({ state: service.discardComponentChange(String(req.params.id), draftId(req), parseInput(ProjectDesignRuntimeRevisionRequestSchema, req.body)) })));
+  app.post(`${prefix}/project-components/:componentId/undo`, handle('write', (req) => service.undoComponent(String(req.params.id), componentId(req), parseInput(ProjectDesignRuntimeUndoComponentRequestSchema, req.body))));
+  app.delete(`${prefix}/project-components/:componentId`, handle('write', (req) => {
+    const id = componentId(req);
+    const request = parseInput(ProjectDesignRuntimeDeleteComponentRequestSchema, req.body);
+    parseInput(ProjectComponentDeleteRequestSchema, { componentRef: `local:${id}`, action: request.action });
+    return { state: service.deleteComponent(String(req.params.id), id, request) };
+  }));
+  app.post(`${prefix}/instances/detach`, handle('read', (req) => service.detachInstance(String(req.params.id), parseInput(ProjectDesignRuntimeDetachRequestSchema, req.body))));
   app.post(`${prefix}/validate`, handle('read', (req) =>
     service.validate(String(req.params.id), parseInput(ProjectDesignRuntimeValidateRequestSchema, req.body))));
 }

@@ -1,0 +1,33 @@
+.panel { container-type: inline-size; }
+.layout { display: grid; grid-template-columns: minmax(150px, .4fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.sidebar { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.sidebar > button { justify-content: flex-start; text-align: start; white-space: normal; overflow-wrap: anywhere; }
+.sidebar > button[aria-pressed="true"] { border-color: var(--accent); background: var(--bg-subtle); }
+.sidebar h3 { margin: 12px 0 4px; font-size: 13px; }
+.content { display: grid; gap: 14px; min-width: 0; }
+.card { min-width: 0; border: 1px solid var(--border); background: var(--bg-elevated, var(--bg)); border-radius: 8px; padding: 14px; }
+.card h3, .card h4 { margin: 0 0 10px; }
+.card h5 { margin: 12px 0 6px; }
+.card details { padding: 8px 0; }
+.card summary { cursor: pointer; margin-bottom: 8px; }
+.card code, .diagnostics code { font-size: 11px; overflow-wrap: anywhere; }
+.actions, .row { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; }
+.actions { align-items: center; }
+.row > .field { flex: 1 1 130px; }
+.field { display: flex; flex-direction: column; gap: 5px; margin: 8px 0; font-weight: 500; min-width: 0; }
+.field input, .field select { width: 100%; box-sizing: border-box; min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+.field input:focus-visible, .field select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.toggle { display: flex; align-items: center; gap: 5px; margin: 8px 0; }
+.property { padding: 12px 0; margin: 0 0 12px; border: 0; border-bottom: 1px solid var(--border); min-width: 0; }
+.row:where(fieldset) { border: 0; margin: 0; padding: 0; }
+.muted { color: var(--text-muted); line-height: 1.5; font-size: 12px; }
+.error, .notice { border-radius: 6px; background: var(--bg-subtle); padding: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.error { color: var(--red, #b42318); }
+.diagnostics { margin: 0; padding: 12px 12px 12px 30px; border: 1px solid var(--border); border-radius: 8px; line-height: 1.5; overflow-wrap: anywhere; }
+.diagnostics code { display: block; }
+.usages ul { margin: 0; padding-inline-start: 20px; line-height: 1.6; }
+@container (max-width: 640px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .sidebar { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+  .sidebar h3 { grid-column: 1 / -1; }
+}
