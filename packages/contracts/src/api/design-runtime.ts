@@ -1,5 +1,8 @@
 import { z } from 'zod';
 import {
+  ApplyDesignSystemUpgradeRequestSchema,
+  DesignSystemMigrationPlanSchema,
+  DesignSystemUpgradeReviewSchema,
   CodeComponentDefinitionSchema,
   CodeComponentIndexSchema,
   ComponentBindingRegistrySchema,
@@ -242,3 +245,29 @@ export const ProjectDesignRuntimeActivateDependencyRequestSchema = z.object({
 export type ProjectDesignRuntimeActivateDependencyRequest = z.infer<typeof ProjectDesignRuntimeActivateDependencyRequestSchema>;
 export const ProjectDesignRuntimeDependencyResponseSchema = z.object({ revision: revisionSchema, resolution: DesignSystemResolutionResultSchema }).strict();
 export type ProjectDesignRuntimeDependencyResponse = z.infer<typeof ProjectDesignRuntimeDependencyResponseSchema>;
+
+
+export const ProjectDesignRuntimeReviewUpgradeRequestSchema = z.object({
+  expectedRevision: revisionSchema, plan: DesignSystemMigrationPlanSchema,
+}).strict();
+export type ProjectDesignRuntimeReviewUpgradeRequest = z.infer<typeof ProjectDesignRuntimeReviewUpgradeRequestSchema>;
+export const ProjectDesignRuntimeReviewUpgradeResponseSchema = z.object({
+  revision: revisionSchema, review: DesignSystemUpgradeReviewSchema,
+}).strict().superRefine((response, ctx) => {
+  if (response.revision !== response.review.baseRevision) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['revision'], message: 'Review must describe the returned project revision.' });
+});
+export type ProjectDesignRuntimeReviewUpgradeResponse = z.infer<typeof ProjectDesignRuntimeReviewUpgradeResponseSchema>;
+export const ProjectDesignRuntimeApplyUpgradeRequestSchema = z.object({
+  expectedRevision: revisionSchema, ...ApplyDesignSystemUpgradeRequestSchema.shape,
+}).strict();
+export type ProjectDesignRuntimeApplyUpgradeRequest = z.infer<typeof ProjectDesignRuntimeApplyUpgradeRequestSchema>;
+export const ProjectDesignRuntimeApplyUpgradeResponseSchema = z.object({
+  state: ProjectDesignRuntimeStateSchema, review: DesignSystemUpgradeReviewSchema,
+}).strict().superRefine((response, ctx) => {
+  if (!response.review.canApply || response.state.revision !== response.review.baseRevision + 1) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['review'], message: 'Applied state must follow an applicable review by one project revision.' });
+  if (response.state.codeIndex.id !== response.review.projectId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['review', 'projectId'], message: 'Applied state must belong to the reviewed project.' });
+  const locked = response.state.lock.dependencies[0];
+  const target = response.review.plan.to;
+  if (!locked || locked.designSystemId !== target.designSystemId || locked.version !== target.version || locked.digest !== target.digest || locked.source.digest !== target.source.digest) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['state', 'lock'], message: 'Applied state must lock the reviewed target.' });
+});
+export type ProjectDesignRuntimeApplyUpgradeResponse = z.infer<typeof ProjectDesignRuntimeApplyUpgradeResponseSchema>;

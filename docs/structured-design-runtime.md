@@ -120,6 +120,8 @@ All paths below are relative to `/api/projects/:id/design-runtime`:
 | Activate an exact version and declared range | `POST /dependency` | `activate-dependency <projectId> --prompt-file <path\|->` |
 | Resolve the exact lock | `GET /dependency/resolve` | `resolve-dependency <projectId>` |
 | Clear the active dependency explicitly | `DELETE /dependency` | `clear-dependency <projectId>` |
+| Review an exact-version migration | `POST /upgrades/review` | `review-upgrade <projectId> --prompt-file <path\|->` |
+| Apply the reviewed migration | `POST /upgrades/apply` | `apply-upgrade <projectId> --prompt-file <path\|->` |
 
 CLI commands begin with `od design-runtime` and support `--json`, `--daemon-url`,
 `--workspace`, and `--workspace-member`. Commands with request bodies read JSON from a
@@ -228,8 +230,18 @@ Names can change without replacing an entity. Removed props/variants/tokens and
 narrower slot contracts are breaking; new compatible members are additive.
 The result retains full before/after values and recommends a SemVer bump.
 Storybook presets and source provenance remain visible without being treated as
-production API breakage. The public diff review joins the upgrade workflow tracked
-in the active plan.
+production API breakage.
+
+`review-upgrade` accepts an exact source/target migration plan and a project
+revision. It returns semantic differences, current/proposed document diagnostics,
+affected usages/screens, binding transitions and code impact without writing state.
+A well-formed plan that cannot be applied still returns its review; the CLI exits 1.
+`apply-upgrade` requires the unchanged plan plus `reviewId`, `baseDigest` and
+`planDigest` from that review. The daemon verifies both immutable packages again,
+recomputes the review, and commits the lock, document, local definitions, bindings
+and shared revision history in one revision. Conflicts and invalid proposals leave
+live state intact. The web provider uses these same endpoints; the discoverable
+upgrade interface and reusable package recipes remain in the active delivery plan.
 
 ## Compatibility and identity
 

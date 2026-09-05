@@ -1,5 +1,7 @@
 import type { Express, Request, Response } from 'express';
 import {
+  ProjectDesignRuntimeReviewUpgradeRequestSchema,
+  ProjectDesignRuntimeApplyUpgradeRequestSchema,
   JsonValueSchema,
   DesignSystemSemVerSchema,
   ProjectDesignRuntimeImportVersionRequestSchema,
@@ -31,6 +33,7 @@ import {
 import { ProjectDesignRuntimeError } from '../services/design-runtime/project-service.js';
 import { CompilerError } from '../services/design-runtime/react-compiler.js';
 import { DesignSystemVersionError } from '../services/design-runtime/design-system-version.js';
+import { DesignSystemUpgradeError } from '../services/design-runtime/design-system-upgrade.js';
 import { SharedComponentChangeError } from '../services/design-runtime/shared-component-changes.js';
 
 export interface RegisterDesignRuntimeRoutesDeps extends RouteDeps<'designRuntime' | 'authorizeProjectRequest'> {}
@@ -60,6 +63,10 @@ function sendFailure(res: Response, error: unknown): void {
     sendApiError(res, 409, 'DESIGN_RUNTIME_VERSION_IMMUTABLE', error.message, { details: { designSystemId: error.designSystemId, version: error.version, diagnostics: [{ schemaVersion: 1, code: 'ODDS5006', severity: 'error', message: error.message }] } });
   } else if (error instanceof DesignSystemVersionError) {
     sendApiError(res, 400, 'DESIGN_RUNTIME_VERSION_INVALID', error.message, { details: JsonValueSchema.parse({ diagnostics: error.diagnostics }) });
+  } else if (error instanceof DesignSystemUpgradeError) {
+    sendApiError(res, error.code === 'CONFLICT' ? 409 : 400,
+      error.code === 'CONFLICT' ? 'DESIGN_RUNTIME_UPGRADE_CONFLICT' : 'DESIGN_RUNTIME_UPGRADE_INVALID', error.message,
+      { details: JsonValueSchema.parse({ diagnostics: error.diagnostics, ...(error.review ? { review: error.review } : {}) }) });
   } else if (error instanceof ProjectDesignRuntimeError) {
     sendApiError(res, error.status, error.code, error.message,
       error.details === undefined ? {} : { details: JsonValueSchema.parse(error.details) });
@@ -102,6 +109,8 @@ export function registerDesignRuntimeRoutes(app: Express, deps: RegisterDesignRu
   };
 
   app.get(prefix, handle('read', (req) => ({ state: service.get(String(req.params.id)) })));
+  app.post(`${prefix}/upgrades/review`, handle('read', (req) => service.reviewUpgrade(String(req.params.id), parseInput(ProjectDesignRuntimeReviewUpgradeRequestSchema, req.body))));
+  app.post(`${prefix}/upgrades/apply`, handle('write', (req) => service.applyUpgrade(String(req.params.id), parseInput(ProjectDesignRuntimeApplyUpgradeRequestSchema, req.body))));
   app.get(`${prefix}/versions`, handle('read', (req) => service.versions(String(req.params.id))));
   app.get(`${prefix}/versions/:designSystemId/:version`, handle('read', (req) => service.version(String(req.params.id), parseInput(DesignEntityIdSchema, req.params.designSystemId), parseInput(DesignSystemSemVerSchema, req.params.version))));
   app.post(`${prefix}/versions`, handle('write', (req) => service.importVersion(String(req.params.id), parseInput(ProjectDesignRuntimeImportVersionRequestSchema, req.body))));

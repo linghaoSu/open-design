@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import {
+  ProjectDesignRuntimeReviewUpgradeRequestSchema, ProjectDesignRuntimeReviewUpgradeResponseSchema,
+  ProjectDesignRuntimeApplyUpgradeRequestSchema, ProjectDesignRuntimeApplyUpgradeResponseSchema,
   createApiError,
   createApiErrorResponse,
   DesignEntityIdSchema,
@@ -78,13 +80,15 @@ export const DESIGN_RUNTIME_CLI_USAGE = `Usage:
   od design-runtime activate-dependency <projectId> --prompt-file <path|->
   od design-runtime clear-dependency <projectId>
   od design-runtime resolve-dependency <projectId>
+  od design-runtime review-upgrade <projectId> --prompt-file <path|->
+  od design-runtime apply-upgrade <projectId> --prompt-file <path|->
 
 Common options:
   --json                     Emit the daemon JSON response.
   --daemon-url <url>          Override the daemon HTTP base.
   --workspace <id>            Exact Workspace for bound project requests.
   --workspace-member <id>     Exact caller membership for bound projects.
-  --expected-revision <n>     Snapshot revision for persisted mutations.
+  --expected-revision <n>     Snapshot revision for mutations and upgrade reviews.
   --prompt-file <path|->      Read a JSON request from a local file or stdin.
 
 Compile JSON: {"designSystemId":"acme","selections":[{"sourcePath":"src/Button.tsx","exportName":"Button","componentId":"button","codeComponentId":"acme/Button"}]}
@@ -118,6 +122,9 @@ does not activate a dependency. Activate-dependency selects the exact version an
 records the declared range; resolve-dependency uses its locked version and digests.
 Initial publication requires explicit constraints. When a dependency is locked,
 omitted publication metadata preserves that locked package's metadata.
+Review-upgrade accepts {plan} and returns a review without changing live state.
+Apply-upgrade requires {plan,reviewId,baseDigest,planDigest} from that review.
+Both accept expectedRevision or read it once; apply never retries a conflict.
 No command selects latest or upgrades a dependency implicitly. Clear-dependency
 removes the active dependency and can recover from an unavailable locked package.
 Validation/impact errors, unresolved bindings and blocked deletion checks exit 1;
@@ -128,12 +135,15 @@ interface CommandSpec {
   argument?: 'bindingId' | 'componentId' | 'componentRef' | 'draftId' | 'designSystemId';
   exactVersion?: boolean;
   mutates?: boolean;
+  revisioned?: boolean;
   input?: { parse: (value: unknown) => unknown };
   query?: boolean;
 }
 
 const COMMANDS: Record<string, CommandSpec> = {
   get: {},
+  'review-upgrade': { revisioned: true, input: ProjectDesignRuntimeReviewUpgradeRequestSchema },
+  'apply-upgrade': { mutates: true, input: ProjectDesignRuntimeApplyUpgradeRequestSchema },
   compile: { mutates: true, input: ProjectDesignRuntimeCompileRequestSchema },
   components: { query: true },
   'code-components': { query: true },
@@ -292,6 +302,7 @@ export async function runDesignRuntimeCli(args: string[], deps: DesignRuntimeCli
     }
     if (!Object.hasOwn(COMMANDS, command)) invalidInput(`Unknown design-runtime command: ${command}.`);
     const spec = COMMANDS[command]!;
+    const needsRevision = spec.mutates || spec.revisioned;
     if (!projectId || extra.length || (spec.argument ? !targetId : targetId !== undefined) || (spec.exactVersion ? !exactVersion : exactVersion !== undefined)) {
       invalidInput(`Usage: od design-runtime ${command} <projectId>${spec.argument ? ` <${spec.argument}>` : ''}${spec.exactVersion ? ' <exactVersion>' : ''}.`);
     }
@@ -300,7 +311,7 @@ export async function runDesignRuntimeCli(args: string[], deps: DesignRuntimeCli
     if (spec.argument === 'componentRef') parseInput(ProjectDesignRuntimeReferencesRequestSchema, { componentRef: targetId });
     if (spec.input && !values['prompt-file']) invalidInput(`${command} requires --prompt-file <path|->.`);
     if (!spec.input && values['prompt-file'] !== undefined) invalidInput(`--prompt-file is not supported by ${command}.`);
-    if (!spec.mutates && values['expected-revision'] !== undefined) invalidInput(`--expected-revision is not supported by ${command}.`);
+    if (!needsRevision && values['expected-revision'] !== undefined) invalidInput(`--expected-revision is not supported by ${command}.`);
     if (!spec.query && values.query !== undefined) invalidInput(`--query is not supported by ${command}.`);
     const headers = deps.workspaceHeaders(values) ?? {};
     let input = spec.input ? await readRequest(values['prompt-file']!) : {};
@@ -314,9 +325,9 @@ export async function runDesignRuntimeCli(args: string[], deps: DesignRuntimeCli
     }
     let expectedRevision = flagRevision ?? input.expectedRevision;
     // Validate before any HTTP call, even when the revision must be fetched afterward.
-    const provisional = spec.mutates ? { ...input, expectedRevision: expectedRevision === undefined ? 0 : expectedRevision } : input;
+    const provisional = needsRevision ? { ...input, expectedRevision: expectedRevision === undefined ? 0 : expectedRevision } : input;
     if (spec.input) input = parseInput(spec.input, provisional) as Record<string, unknown>;
-    if (spec.mutates) parseInput(ProjectDesignRuntimeRevisionRequestSchema, { expectedRevision: expectedRevision === undefined ? 0 : expectedRevision });
+    if (needsRevision) parseInput(ProjectDesignRuntimeRevisionRequestSchema, { expectedRevision: expectedRevision === undefined ? 0 : expectedRevision });
     if (command === 'delete') parseInput(ProjectComponentDeleteRequestSchema, { componentRef: `local:${targetId!}`, action: input.action });
 
     const base = (await resolveDaemonUrl({ flagUrl: values['daemon-url'] ?? null })).replace(/\/$/, '');
@@ -336,10 +347,24 @@ export async function runDesignRuntimeCli(args: string[], deps: DesignRuntimeCli
         throw new CliFailure(1, createApiErrorResponse(createApiError('INTERNAL_ERROR', `Daemon response did not match the contract: ${error instanceof Error ? error.message : String(error)}`)));
       }
     }
-    if (spec.mutates && expectedRevision === undefined) expectedRevision = (await request('', ProjectDesignRuntimeResponseSchema)).state.revision;
+    if (needsRevision && expectedRevision === undefined) expectedRevision = (await request('', ProjectDesignRuntimeResponseSchema)).state.revision;
     const output = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
     const encodedTarget = encodeURIComponent(targetId ?? '');
     const mutationBody = { ...input, expectedRevision };
+    if (command === 'review-upgrade' || command === 'apply-upgrade') {
+      const data = command === 'review-upgrade'
+        ? await request('/upgrades/review', ProjectDesignRuntimeReviewUpgradeResponseSchema, 'POST', mutationBody)
+        : await request('/upgrades/apply', ProjectDesignRuntimeApplyUpgradeResponseSchema, 'POST', mutationBody);
+      if (json) output(data);
+      else {
+        if ('state' in data) printState(data);
+        process.stdout.write(`Upgrade: ${data.review.plan.from.version} → ${data.review.plan.to.version}\nCan apply: ${data.review.canApply}\nAffected screens: ${data.review.affectedScreens.length}\nReview: ${data.review.id}\nBase digest: ${data.review.baseDigest}\nPlan digest: ${data.review.planDigest}\n`);
+        if (data.review.current.diagnostics.length) { process.stdout.write('Current document diagnostics:\n'); printDiagnostics(data.review.current.diagnostics); }
+        if (data.review.proposed.diagnostics.length) { process.stdout.write('Proposed document diagnostics:\n'); printDiagnostics(data.review.proposed.diagnostics); }
+        printDiagnostics(data.review.diagnostics);
+      }
+      return { exitCode: data.review.canApply ? 0 : 1 };
+    }
     if (command === 'versions') {
       const data = await request('/versions', ProjectDesignRuntimeVersionsResponseSchema);
       if (json) output(data);

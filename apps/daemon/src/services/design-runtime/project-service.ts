@@ -1,5 +1,10 @@
 import { isDeepStrictEqual } from 'node:util';
 import {
+  ProjectDesignRuntimeReviewUpgradeRequestSchema,
+  ProjectDesignRuntimeApplyUpgradeRequestSchema,
+  type ProjectDesignRuntimeReviewUpgradeRequest,
+  type ProjectDesignRuntimeApplyUpgradeRequest,
+  type DesignSystemUpgradeContext,
   ProjectDesignRuntimeBindRequestSchema,
   ProjectDesignRuntimeImportVersionRequestSchema,
   ProjectDesignRuntimePublishCurrentRequestSchema,
@@ -41,6 +46,7 @@ import {
   type DesignRuntimeStore,
 } from '../../storage/design-runtime-store.js';
 import { createDesignSystemVersion, createProjectDesignSystemLock, resolveLockedDesignSystemsSync, verifyDesignSystemVersion, DesignSystemVersionError } from './design-system-version.js';
+import { reviewDesignSystemUpgrade, applyDesignSystemUpgrade } from './design-system-upgrade.js';
 import { resolveComponentBinding } from './binding-resolver.js';
 import {
   reindexComponentBindings,
@@ -97,6 +103,13 @@ function requireBindingMutation(result: ComponentBindingMutationResult): Extract
 
 function componentContext(state: ProjectDesignRuntimeState) {
   return { registry: state.registry, projectComponents: state.projectComponents, document: state.document ?? { schemaVersion: 1 as const, id: state.projectComponents.id, screens: [] } };
+}
+
+function upgradeContext(projectId: string, state: ProjectDesignRuntimeState): DesignSystemUpgradeContext {
+  if (state.lock.dependencies.length !== 1) throw new ProjectDesignRuntimeError(409, 'DESIGN_RUNTIME_UPGRADE_CONFLICT', 'A reviewed upgrade requires one active design-system dependency.');
+  return { projectId, revision: state.revision, dependencies: state.dependencies, lock: state.lock,
+    codeIndex: state.codeIndex, bindings: state.bindings, projectComponents: state.projectComponents,
+    document: state.document, sharedChanges: state.sharedChanges };
 }
 
 function assertValidProject(state: ProjectDesignRuntimeState): void {
@@ -229,6 +242,26 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
     resolveDependency(projectId: string) {
       const state = store.read(projectId);
       return { revision: state.revision, resolution: dependencyResolution(projectId, state) };
+    },
+
+    reviewUpgrade(projectId: string, input: ProjectDesignRuntimeReviewUpgradeRequest) {
+      const { expectedRevision, plan } = ProjectDesignRuntimeReviewUpgradeRequestSchema.parse(input);
+      const state = readAtRevision(projectId, expectedRevision);
+      const from = requireVersion(projectId, plan.from.designSystemId, plan.from.version);
+      const to = requireVersion(projectId, plan.to.designSystemId, plan.to.version);
+      return { revision: state.revision, review: reviewDesignSystemUpgrade(upgradeContext(projectId, state), from, to, plan) };
+    },
+
+    applyUpgrade(projectId: string, input: ProjectDesignRuntimeApplyUpgradeRequest) {
+      const { expectedRevision, ...request } = ProjectDesignRuntimeApplyUpgradeRequestSchema.parse(input);
+      const state = readAtRevision(projectId, expectedRevision);
+      const from = requireVersion(projectId, request.plan.from.designSystemId, request.plan.from.version);
+      const to = requireVersion(projectId, request.plan.to.designSystemId, request.plan.to.version);
+      const result = applyDesignSystemUpgrade(upgradeContext(projectId, state), from, to, request);
+      const next = store.write(projectId, expectedRevision, { ...state, registry: to.package.registry,
+        codeIndex: result.codeIndex, bindings: result.bindings, projectComponents: result.projectComponents,
+        document: result.document, sharedChanges: result.sharedChanges, dependencies: result.dependencies, lock: result.lock });
+      return { state: next, review: result.review };
     },
 
     async compile(projectId: string, input: ProjectDesignRuntimeCompileRequest): Promise<ProjectDesignRuntimeState> {

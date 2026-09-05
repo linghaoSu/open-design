@@ -167,7 +167,12 @@ through local public mappings, records shared revisions and requires explicit
 binding transitions. Exact package, plan and full project digests bind application
 to the reviewed snapshot. Root ran 52 daemon migration/history/diff cases and 16
 contract cases. Source/token coverage remains explicitly conservative; public
-review/application and package-authored recipes are still in progress.
+review/application now have canonical HTTP, CLI and web-provider operations.
+Root's combined acceptance includes five real HTTP/SQLite cases exercising
+read-only reviews, reopen/history, exact-source tampering, authority, invalid
+application and CAS race preservation; five CLI cases, three provider cases and
+three API schema cases also pass. Full `pnpm guard` and `pnpm typecheck` passed.
+The discoverable upgrade UI and package-authored recipes are still in progress.
 
 The prerequisite local-binding/value-transform foundation is accepted in
 `a76e97412`. It verifies exact local revisions, preserves project code in an explicit

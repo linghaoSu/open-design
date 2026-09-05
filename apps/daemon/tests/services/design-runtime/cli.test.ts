@@ -6,8 +6,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ProjectComponentDefinition, ProjectDesignRuntimeState, ReferenceGraphQueryResult, ResolvedUIIRResult, SharedComponentDraft, SharedComponentImpact, ValidationDiagnostic } from '@open-design/contracts';
-import { mixedProjectCompilerRequest } from '../../fixtures/design-runtime/compiler-selections.js';
+import { upgradeFixture } from '../../fixtures/design-runtime/design-system-upgrade.js';
+import { reviewDesignSystemUpgrade, applyDesignSystemUpgrade } from '../../../src/services/design-runtime/design-system-upgrade.js';
 import { packageFixture } from '../../fixtures/design-runtime/design-system-version.js';
+import { mixedProjectCompilerRequest } from '../../fixtures/design-runtime/compiler-selections.js';
 import { createDesignSystemVersion } from '../../../src/services/design-runtime/design-system-version.js';
 
 const daemonRoot = fileURLToPath(new URL('../../..', import.meta.url));
@@ -540,5 +542,62 @@ describe('od design-runtime document and shared component CLI', () => {
       expect(JSON.parse(result.stderr).error.code).toBe('BAD_REQUEST');
     }
     expect(stub.requests).toEqual([]);
+  });
+});
+
+
+describe('reviewed upgrade CLI', () => {
+  function upgradeData(blocked = false) {
+    const fixture = upgradeFixture();
+    const plan = blocked ? { ...fixture.plan, rules: [], bindingDecisions: [] } : fixture.plan;
+    const review = reviewDesignSystemUpgrade(fixture.context, fixture.from, fixture.to, plan);
+    const input = { plan, reviewId: review.id, baseDigest: review.baseDigest, planDigest: review.planDigest };
+    const { projectId: _id, ...contextState } = fixture.context;
+    const previous = { ...contextState, schemaVersion: 1 as const, registry: fixture.from.package.registry };
+    return { fixture, review, input, previous };
+  }
+
+  it.each([false, true])('reviews using canonical JSON and reports nonapplicable impact without a mutation (blocked=%s)', async (blocked) => {
+    const { fixture, review, previous } = upgradeData(blocked);
+    const { requests, url } = await startServer(({ method }) => ({ body: method === 'GET' ? { state: previous } : { revision: previous.revision, review } }));
+    const result = await runCli(['design-runtime', 'review-upgrade', projectId, '--daemon-url', url, '--json', '--prompt-file', '-'], JSON.stringify({ plan: review.plan }));
+    expect(result.code).toBe(blocked ? 1 : 0);
+    expect(JSON.parse(result.stdout)).toEqual({ revision: fixture.context.revision, review });
+    expect(result.stderr).toBe('');
+    expect(requests.map(({ method, url }) => [method, url])).toEqual([['GET', prefix], ['POST', `${prefix}/upgrades/review`]]);
+    expect(requests[1]!.body).toEqual({ expectedRevision: previous.revision, plan: review.plan });
+  });
+
+  it('applies a file-supplied complete proof with an explicit revision and workspace authority', async () => {
+    const { fixture, review, input, previous } = upgradeData();
+    const applied = applyDesignSystemUpgrade(fixture.context, fixture.from, fixture.to, input);
+    const { review: _review, ...next } = applied;
+    const response = { state: { ...previous, ...next, registry: fixture.to.package.registry, revision: previous.revision + 1 }, review };
+    const { requests, url } = await startServer(() => ({ body: response }));
+    tempRoot = await mkdtemp(join(tmpdir(), 'od-upgrade-cli-'));
+    const file = join(tempRoot, 'apply.json'); await writeFile(file, JSON.stringify(input));
+    const result = await runCli(['design-runtime', 'apply-upgrade', projectId, '--daemon-url', url, '--json', '--prompt-file', file, '--expected-revision', String(previous.revision), '--workspace', 'team', '--workspace-member', 'member']);
+    expect(result.code).toBe(0); expect(JSON.parse(result.stdout)).toEqual(response);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ method: 'POST', url: `${prefix}/upgrades/apply`, body: { ...input, expectedRevision: previous.revision }, headers: { 'x-od-workspace-id': 'team', 'x-od-workspace-member-id': 'member' } });
+  });
+
+  it('fetches an omitted apply revision once and preserves canonical conflict diagnostics without retry', async () => {
+    const { input, previous } = upgradeData();
+    const error = { error: { code: 'DESIGN_RUNTIME_UPGRADE_CONFLICT', message: 'The plan changed.', details: { diagnostics: [{ schemaVersion: 1, code: 'ODDS5002', severity: 'error', message: 'Review again.' }] } } };
+    const { requests, url } = await startServer(({ method }) => method === 'GET' ? { body: { state: previous } } : { status: 409, body: error });
+    const result = await runCli(['design-runtime', 'apply-upgrade', projectId, '--daemon-url', url, '--json', '--prompt-file', '-'], JSON.stringify(input));
+    expect(result.code).toBe(1); expect(result.stdout).toBe(''); expect(JSON.parse(result.stderr)).toEqual({ status: 409, ...error });
+    expect(requests).toHaveLength(2); expect(requests[1]!.body).toEqual({ ...input, expectedRevision: previous.revision });
+  });
+
+  it('rejects incomplete apply proof and duplicate migration targets before any HTTP call', async () => {
+    const { fixture } = upgradeData();
+    const { requests, url } = await startServer();
+    for (const [command, input] of [['apply-upgrade', { plan: fixture.plan }], ['review-upgrade', { plan: { ...fixture.plan, rules: [fixture.plan.rules[0], fixture.plan.rules[0]] } }]] as const) {
+      const result = await runCli(['design-runtime', command, projectId, '--daemon-url', url, '--json', '--prompt-file', '-'], JSON.stringify(input));
+      expect(result.code).toBe(2); expect(JSON.parse(result.stderr).error.code).toBe('BAD_REQUEST');
+    }
+    expect(requests).toHaveLength(0);
   });
 });

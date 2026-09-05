@@ -1,4 +1,7 @@
 import {
+  ProjectDesignRuntimeReviewUpgradeRequestSchema, ProjectDesignRuntimeReviewUpgradeResponseSchema,
+  ProjectDesignRuntimeApplyUpgradeRequestSchema, ProjectDesignRuntimeApplyUpgradeResponseSchema,
+  type ProjectDesignRuntimeReviewUpgradeRequest, type ProjectDesignRuntimeApplyUpgradeRequest,
   ProjectDesignRuntimeBindRequestSchema,
   DesignEntityIdSchema, DesignSystemSemVerSchema,
   ProjectDesignRuntimeVersionsResponseSchema, ProjectDesignRuntimeVersionResponseSchema,
@@ -198,3 +201,10 @@ export const clearProjectDesignRuntimeDependency = (scope: ProjectDesignRuntimeS
 
 export const resolveProjectDesignRuntimeDependency = (scope: ProjectDesignRuntimeScope) =>
   request(scope, '/dependency/resolve', ProjectDesignRuntimeDependencyResponseSchema);
+
+
+export const reviewProjectDesignRuntimeUpgrade = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeReviewUpgradeRequest) =>
+  request(scope, '/upgrades/review', ProjectDesignRuntimeReviewUpgradeResponseSchema, 'POST', ProjectDesignRuntimeReviewUpgradeRequestSchema.parse(input));
+
+export const applyProjectDesignRuntimeUpgrade = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeApplyUpgradeRequest) =>
+  request(scope, '/upgrades/apply', ProjectDesignRuntimeApplyUpgradeResponseSchema, 'POST', ProjectDesignRuntimeApplyUpgradeRequestSchema.parse(input));
