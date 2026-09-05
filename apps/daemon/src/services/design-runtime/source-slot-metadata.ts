@@ -3,7 +3,7 @@ import { ComponentSlotDefinitionSchema, ComponentSlotMappingSchema, type Compone
 import { assertStaticMetadataUses, metadataFields, metadataLiteral, metadataObject, selectedMetadataExport, type MetadataFailure } from './static-source-metadata.js';
 
 /** Explicit semantic slot policy is owner evidence, separate from source-proven code capability. */
-export function readExplicitSlotMetadata(program: t.Program, input: { sourcePath: string; exportName: string; metadataExportName?: string | undefined }, fail: MetadataFailure):
+export function readExplicitSlotMetadata(program: t.Program, input: { sourcePath: string; exportName: string; metadataExportName?: string | undefined; framework?: 'react' | 'vue' }, fail: MetadataFailure):
   { slots: Record<string, ComponentSlotDefinition>; mappings: ComponentSlotMapping[] } | undefined {
   if (!input.metadataExportName) return undefined;
   assertStaticMetadataUses(program, new Set([input.metadataExportName]), fail);
@@ -11,7 +11,10 @@ export function readExplicitSlotMetadata(program: t.Program, input: { sourcePath
   const metadata = metadataObject(root, fail);
   metadataFields(metadata, ['component', 'slots'], fail);
   const component = metadata.get('component')?.value;
-  if (component?.type !== 'Identifier' || component.name !== input.exportName) fail('Slot metadata must identify the selected component export directly', component ?? root);
+  const matches = input.framework === 'vue'
+    ? input.exportName === 'default' && component?.type === 'StringLiteral' && component.value === 'default'
+    : component?.type === 'Identifier' && component.name === input.exportName;
+  if (!matches) fail('Slot metadata must identify the selected component export directly', component ?? root);
   const slotRoot = metadata.get('slots')?.value;
   if (!slotRoot) fail('Slot metadata requires an explicit slots object', root);
   const slots: Record<string, ComponentSlotDefinition> = Object.create(null);

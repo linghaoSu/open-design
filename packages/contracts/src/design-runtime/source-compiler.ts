@@ -8,6 +8,7 @@ export const ExtractSourceCodeComponentRequestSchema = z.object({
   framework: ComponentFrameworkSchema,
   sourceText: z.string(),
   sourcePath: SourcePathSchema,
+  /** React selects a direct named export; the supported Vue script-setup SFC selects "default" explicitly. */
   exportName: z.string().min(1),
   codeComponentId: CodeIdentitySchema,
   packageName: z.string().min(1).optional(),
@@ -17,7 +18,10 @@ export type ExtractSourceCodeComponentRequest = z.infer<typeof ExtractSourceCode
 export const CompileSourceComponentRequestSchema = ExtractSourceCodeComponentRequestSchema.extend({
   designSystemId: DesignEntityIdSchema,
   componentId: DesignEntityIdSchema,
-  /** Explicit same-file metadata export; never guessed from a component display name. */
+  /** Explicit same-file metadata export; never guessed from a component display name.
+   * Vue places it in normal <script lang="ts"> with component: "default";
+   * React metadata identifies the selected component with its direct identifier.
+   */
   metadataExportName: z.string().min(1).optional(),
 }).strict();
 export type CompileSourceComponentRequest = z.infer<typeof CompileSourceComponentRequestSchema>;
