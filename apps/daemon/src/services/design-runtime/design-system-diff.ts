@@ -166,6 +166,11 @@ export function diffDesignSystemVersions(from: DesignSystemVersion, to: DesignSy
   entities('pattern', a.patterns.patterns, b.patterns.patterns);
   entities('code-component', a.codeIndex.components, b.codeIndex.components);
   entities('binding', a.bindings.bindings, b.bindings.bindings);
+  const oldRecipes = new Map((a.migrations ?? []).map((recipe) => [recipe.id, recipe]));
+  const newRecipes = new Map((b.migrations ?? []).map((recipe) => [recipe.id, recipe]));
+  for (const id of [...new Set([...oldRecipes.keys(), ...newRecipes.keys()])].sort(compareDesignRuntimeKeys)) {
+    emit({ kind: 'migration', id }, [], oldRecipes.get(id), newRecipes.get(id), false, 'Authored migration recipe changed; selecting it requires a separate impact review.');
+  }
   emit({ kind: 'design-system', id: a.id }, ['name'], a.name, b.name, false, 'Display name changed; stable identity is preserved.', false, true);
   emit({ kind: 'design-system', id: a.id }, ['origin'], a.origin, b.origin, false, 'Package source provenance changed.');
 

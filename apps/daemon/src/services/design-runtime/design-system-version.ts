@@ -26,6 +26,7 @@ import { CompilerError } from './react-compiler.js';
 import { extractSourceCodeComponent } from './source-compiler.js';
 import { resolveComponentBinding } from './binding-resolver.js';
 import { acceptsComponentPropertyDomain, validateComponentProperties } from './component-validator.js';
+import { validateDesignSystemMigrationRules } from './migration-rule-validation.js';
 import { compareDesignRuntimeKeys } from './reference-graph.js';
 
 export class DesignSystemVersionError extends Error {
@@ -212,6 +213,13 @@ export function validateDesignSystemPackage(input: DesignSystemPackage): Validat
   for (const pattern of pkg.patterns.patterns) {
     for (const [name, slot] of Object.entries(pattern.slots)) for (const ref of slot.accepts) if (ref !== 'text' && !components.has(ref)) diagnostics.push(error('ODDS4002', `Pattern ${pattern.id} slot ${name} accepts missing component ${ref}.`));
     diagnostics.push(...patternDiagnostics(pkg, pattern));
+  }
+  for (const [index, recipe] of (pkg.migrations ?? []).entries()) {
+    diagnostics.push(...validateDesignSystemMigrationRules(undefined, pkg.registry, recipe.rules).map((diagnostic) => ({ ...diagnostic, path: ['migrations', index, ...(diagnostic.path ?? [])] })));
+    for (const decision of recipe.packageBindingDecisions) if (decision.type === 'use-target-package') {
+      const target = pkg.bindings.bindings.find((binding) => binding.id === decision.targetBindingId);
+      if (!target || target.status !== 'bound') diagnostics.push(error('ODDS5002', `Recipe ${recipe.id} requires a verified published target binding ${decision.targetBindingId}.`, ['migrations', index, 'packageBindingDecisions']));
+    }
   }
   return diagnostics;
 }

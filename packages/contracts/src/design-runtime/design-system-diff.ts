@@ -5,7 +5,7 @@ import { ValidationDiagnosticSchema } from './validation.js';
 
 /** Natural identities within one design system; display names never supply identity. */
 export const DesignSystemDiffEntitySchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.enum(['component', 'token', 'pattern', 'design-system']), id: DesignEntityIdSchema }).strict(),
+  z.object({ kind: z.enum(['component', 'token', 'pattern', 'design-system', 'migration']), id: DesignEntityIdSchema }).strict(),
   z.object({ kind: z.enum(['code-component', 'binding']), id: CodeIdentitySchema }).strict(),
   z.object({ kind: z.literal('constraint'), mode: z.enum(['explore', 'guided', 'strict']) }).strict(),
   z.object({ kind: z.literal('code-compatibility'), framework: ComponentFrameworkSchema, packageName: z.string().min(1) }).strict(),

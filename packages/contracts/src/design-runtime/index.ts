@@ -16,3 +16,5 @@ export * from './design-system-diff.js';
 export * from './design-system-upgrade.js';
 export * from './local-component-binding.js';
 export * from './handoff.js';
+export * from './migration-recipes.js';
+export * from './migration-recipe-plan.js';

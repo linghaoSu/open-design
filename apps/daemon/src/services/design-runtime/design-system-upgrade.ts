@@ -14,6 +14,7 @@ import { inspectSharedComponentChange, recordSharedComponentDesignSystemUpgrade,
 import { reindexComponentBindings, revalidateComponentBinding, unbindComponent } from './code-component-index.js';
 import { resolveComponentBinding } from './binding-resolver.js';
 import { validateComponentProperties } from './component-validator.js';
+import { validateDesignSystemMigrationRules } from './migration-rule-validation.js';
 import { migrateUpgradeSource, type UpgradeMigrationResult } from './upgrade-migration.js';
 
 export class DesignSystemUpgradeError extends Error {
@@ -107,32 +108,7 @@ function compute(input: DesignSystemUpgradeContext, from: DesignSystemVersion, t
   const current = resolution(currentContext, limits);
   const migration = migrateUpgradeSource(context.projectComponents, context.document, plan, limits);
   diagnostics.push(...migration.diagnostics);
-  const admits = (prop: ComponentPropDefinition, value: unknown) => prop.type === 'enum' ? prop.values.includes(value as never) : typeof value === prop.type;
-  for (const rule of plan.rules) {
-    const oldRef = rule.type === 'replace-component' ? rule.fromRef : rule.componentRef;
-    const old = from.package.registry.components.find((entry) => oldRef === `ds:${from.package.id}/${entry.id}`);
-    const targetRef = migration.replacements.get(oldRef) ?? oldRef;
-    const target = to.package.registry.components.find((entry) => targetRef === `ds:${to.package.id}/${entry.id}`);
-    if (!old) diagnostics.push(failure(`Migration rule ${rule.id} has no source component in the active package.`));
-    if (!target) diagnostics.push(failure(`Migration rule ${rule.id} has no component target in the selected package.`));
-    if (rule.type === 'transform-prop' || rule.type === 'drop-prop') {
-      const sourceName = rule.type === 'transform-prop' ? rule.fromProp : rule.prop;
-      const source = old && Object.hasOwn(old.props, sourceName) ? old.props[sourceName] : undefined;
-      if (!source) diagnostics.push(failure(`Migration rule ${rule.id} has no source property ${sourceName}.`));
-      if (rule.type === 'transform-prop') {
-        const output = target && Object.hasOwn(target.props, rule.toProp) ? target.props[rule.toProp] : undefined;
-        if (!output) diagnostics.push(failure(`Migration rule ${rule.id} has no target property ${rule.toProp}.`));
-        for (const entry of rule.valueMap ?? []) {
-          if (source && !admits(source, entry.from)) diagnostics.push(failure(`Migration rule ${rule.id} maps an impossible source property value.`));
-          if (output && !admits(output, entry.to)) diagnostics.push(failure(`Migration rule ${rule.id} maps to a value outside the target property domain.`));
-        }
-      }
-    } else if (rule.type === 'rename-slot' || rule.type === 'drop-slot') {
-      const sourceName = rule.type === 'rename-slot' ? rule.fromSlot : rule.slot;
-      if (!old || !Object.hasOwn(old.slots ?? {}, sourceName)) diagnostics.push(failure(`Migration rule ${rule.id} has no source slot ${sourceName}.`));
-      if (rule.type === 'rename-slot' && (!target || !Object.hasOwn(target.slots ?? {}, rule.toSlot))) diagnostics.push(failure(`Migration rule ${rule.id} has no target slot ${rule.toSlot}.`));
-    }
-  }
+  diagnostics.push(...validateDesignSystemMigrationRules(from.package.registry, to.package.registry, plan.rules));
   const proposedContext = contextWithDocument({ ...context, projectComponents: migration.projectComponents, document: migration.document }, to);
   let proposed = resolution(proposedContext, limits);
   diagnostics.push(...proposed.diagnostics);
@@ -161,6 +137,10 @@ function compute(input: DesignSystemUpgradeContext, from: DesignSystemVersion, t
   try { bindings = migrateBindings(context, to, plan, migration, diagnostics, projectComponents); }
   catch (error) { diagnostics.push(failure(error instanceof Error ? error.message : 'Binding decisions conflict.')); }
   const changedRefs = new Set(checked.diff.changes.filter((change) => change.entity.kind === 'component').map((change) => `ds:${from.package.id}/${'id' in change.entity ? change.entity.id : ''}`));
+  for (const rule of plan.rules) {
+    changedRefs.add(rule.type === 'replace-component' ? rule.fromRef : rule.componentRef);
+    if (rule.type === 'replace-component') changedRefs.add(rule.toRef);
+  }
   const changedBindingIds = new Set(checked.diff.changes.filter((change) => change.entity.kind === 'binding').map((change) => 'id' in change.entity ? change.entity.id : ''));
   const changedCodeIds = new Set(checked.diff.changes.filter((change) => change.entity.kind === 'code-component').map((change) => 'id' in change.entity ? change.entity.id : ''));
   const explicitBindingIds = new Set(plan.bindingDecisions.map((entry) => entry.bindingId));

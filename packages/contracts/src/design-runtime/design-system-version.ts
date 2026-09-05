@@ -5,18 +5,12 @@ import { ComponentFrameworkSchema, DesignEntityIdSchema, DesignRuntimeSchemaVers
 import { DesignConstraintSetSchema } from './design-constraints.js';
 import { DesignPatternRegistrySchema } from './design-patterns.js';
 import { DesignTokenRegistrySchema } from './design-tokens.js';
+import { DesignSystemMigrationRecipeSchema } from './migration-recipes.js';
+import { refineDesignSystemMigrationRules } from './migration-rules.js';
 import { ValidationDiagnosticSchema } from './validation.js';
 
-const numeric = '(?:0|[1-9][0-9]*)';
-const prerelease = '(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)';
-const version = `${numeric}\\.${numeric}\\.${numeric}(?:-${prerelease}(?:\\.${prerelease})*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?`;
-export const DesignSystemSemVerSchema = z.string().regex(new RegExp(`^${version}$`), 'Expected exact SemVer, without a tag or range.');
-export type DesignSystemSemVer = z.infer<typeof DesignSystemSemVerSchema>;
-/** Deliberate v1 range subset: exact, caret or tilde of a complete SemVer. Never a latest selector. */
-export const DesignSystemVersionRangeSchema = z.string().regex(new RegExp(`^[~^]?${version}$`), 'Expected exact, caret or tilde full-version intent.');
-export type DesignSystemVersionRange = z.infer<typeof DesignSystemVersionRangeSchema>;
-export const DesignSystemDigestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/);
-export type DesignSystemDigest = z.infer<typeof DesignSystemDigestSchema>;
+import { DesignSystemSemVerSchema, DesignSystemVersionRangeSchema, DesignSystemDigestSchema } from './design-system-identity.js';
+export * from './design-system-identity.js';
 
 const sourceFields = { path: SourcePathSchema };
 export const DesignSystemSourceFileSchema = z.discriminatedUnion('encoding', [
@@ -57,11 +51,19 @@ export const DesignSystemPackageSchema = z.object({
   constraints: DesignConstraintSetSchema,
   codeCompatibility: z.array(z.object({ framework: ComponentFrameworkSchema, packageName: z.string().min(1), version: DesignSystemVersionRangeSchema }).strict()),
   source: DesignSystemSourceBundleSchema,
+  /** Absence stays absent so existing immutable package digests remain valid. */
+  migrations: z.array(DesignSystemMigrationRecipeSchema).optional(),
   /** Provenance only. Frozen bundle bytes, never a mutable checkout, are rendering authority. */
   origin: z.object({ type: z.literal('git'), repository: z.string().url(), commit: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/) }).strict().optional(),
 }).strict().superRefine((pkg, ctx) => {
   for (const key of ['registry', 'codeIndex', 'bindings', 'tokens', 'patterns'] as const) {
     if (pkg[key].id !== pkg.id) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key, 'id'], message: 'Packaged registries must share the immutable design-system identity.' });
+  }
+  const recipeIds = new Set<string>();
+  for (const [index, recipe] of (pkg.migrations ?? []).entries()) {
+    if (recipeIds.has(recipe.id)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['migrations', index, 'id'], message: 'Migration recipe IDs must be unique.' });
+    recipeIds.add(recipe.id);
+    refineDesignSystemMigrationRules(recipe.rules, { ...ctx, addIssue: (issue) => ctx.addIssue({ ...issue, path: ['migrations', index, ...(issue.path ?? [])] }) }, pkg.id);
   }
   const targets = new Set<string>();
   pkg.codeCompatibility.forEach((entry, index) => {

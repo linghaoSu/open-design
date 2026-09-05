@@ -178,8 +178,17 @@ explicit apply. Edits, catalog refreshes and authority changes invalidate review
 proofs. Root ran 41 web/provider/locale cases and the full browser workflow, which
 rejected an incomplete plan, reviewed a breaking variant migration, applied it,
 preserved overrides and reopened the exact new lock. The browser case passed in
-19.7 seconds, followed by full `pnpm guard` and `pnpm typecheck`. Package-authored
-recipes remain in progress.
+19.7 seconds, followed by full `pnpm guard` and `pnpm typecheck`.
+
+The package-authored recipe core is accepted. Optional recipe metadata retains
+legacy package bytes when absent, pins an exact source version/digest and obtains
+its target from the containing immutable package. Instantiation produces an editable
+ordinary migration plan; it does not apply the upgrade. Only unchanged published
+bindings receive proposed recipe decisions, and manual overlays are skipped with
+diagnostics. Recipe-only metadata changes do not invent affected screens, while
+selected transforms contribute their actual references to impact analysis. Root
+ran 64 daemon recipe/upgrade/diff/version cases and 15 contract cases. Public recipe
+selection is still in progress.
 
 The prerequisite local-binding/value-transform foundation is accepted in
 `a76e97412`. It verifies exact local revisions, preserves project code in an explicit
