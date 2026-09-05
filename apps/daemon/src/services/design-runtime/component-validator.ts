@@ -1,4 +1,5 @@
 import type {
+  ComponentDefinition,
   ComponentRegistry,
   JsonValue,
   ValidationDiagnostic,
@@ -35,6 +36,20 @@ export function validateComponentUsage(
     }];
   }
 
+  return validateComponentProperties(component, usage);
+}
+
+/** Shared property semantics for design-system definitions and project-local public props. */
+export function validateComponentProperties(
+  component: Pick<ComponentDefinition, 'id' | 'props'>,
+  usage: ComponentUsage,
+): ValidationDiagnostic[] {
+  const context = {
+    schemaVersion: 1 as const,
+    severity: 'error' as const,
+    componentRef: usage.component,
+    ...(usage.nodeId === undefined ? {} : { nodeId: usage.nodeId }),
+  };
   const diagnostics: ValidationDiagnostic[] = [];
   for (const propName of Object.keys(usage.props).sort()) {
     const definition = Object.hasOwn(component.props, propName) ? component.props[propName] : undefined;
