@@ -1,8 +1,9 @@
+import { defaultProjectDesignValidationSettings } from '@open-design/contracts';
 import type { ProjectDesignRuntimeState } from '@open-design/contracts';
 
 export function emptyDesignRuntimeState(revision = 0): ProjectDesignRuntimeState {
   return {
-    schemaVersion: 1, revision, registry: null,
+    schemaVersion: 1, revision, registry: null, validationSettings: defaultProjectDesignValidationSettings(),
     codeIndex: { schemaVersion: 1, id: 'project', components: [] },
     projectCodeIndex: { schemaVersion: 1, id: 'project', components: [] },
     bindings: { schemaVersion: 1, id: 'project', bindings: [] },

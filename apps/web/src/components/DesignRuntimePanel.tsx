@@ -26,6 +26,7 @@ import {
 } from '../providers/design-runtime';
 import { useT } from '../i18n';
 import { ProjectStructurePanel } from './ProjectStructurePanel';
+import { DesignRuntimeValidationPanel } from './DesignRuntimeValidationPanel';
 import { DesignSystemVersionsPanel } from './DesignSystemVersionsPanel';
 import { DesignRuntimeSourceSelections } from './DesignRuntimeSourceSelections';
 import { DesignHandoffPanel } from './DesignHandoffPanel';
@@ -116,9 +117,10 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(true);
   const [structureBusy, setStructureBusy] = useState(false);
-  const [tab, setTab] = useState<'code' | 'structure' | 'versions' | 'handoff'>('code');
+  const [tab, setTab] = useState<'code' | 'structure' | 'versions' | 'validation' | 'handoff'>('code');
   const [handoffOpened, setHandoffOpened] = useState(false);
   const [versionsOpened, setVersionsOpened] = useState(false);
+  const [validationOpened, setValidationOpened] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [diagnostics, setDiagnostics] = useState<ValidationDiagnostic[] | null>(null);
@@ -299,6 +301,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
         <Button role="tab" id={`${inputId}-code-tab`} aria-controls={`${inputId}-code`} aria-selected={tab === 'code'} disabled={busy || structureBusy} data-testid="design-runtime-code-tab" onClick={() => setTab('code')}>{t('projectStructure.codeTab')}</Button>
         <Button role="tab" id={`${inputId}-structure-tab`} aria-controls={`${inputId}-structure`} aria-selected={tab === 'structure'} disabled={busy || structureBusy} data-testid="design-runtime-structure-tab" onClick={() => setTab('structure')}>{t('projectStructure.title')}</Button>
         <Button role="tab" id={`${inputId}-versions-tab`} aria-controls={`${inputId}-versions`} aria-selected={tab === 'versions'} disabled={busy || structureBusy} data-testid="design-runtime-versions-tab" onClick={() => { setVersionsOpened(true); setTab('versions'); }}>{t('designVersions.title')}</Button>
+        <Button role="tab" id={`${inputId}-validation-tab`} aria-controls={`${inputId}-validation`} aria-selected={tab === 'validation'} disabled={busy || structureBusy} data-testid="design-runtime-validation-tab" onClick={() => { setValidationOpened(true); setTab('validation'); }}>{t('designValidation.title')}</Button>
         <Button role="tab" id={`${inputId}-handoff-tab`} aria-controls={`${inputId}-handoff`} aria-selected={tab === 'handoff'} disabled={busy || structureBusy} data-testid="design-runtime-handoff-tab" onClick={() => { setHandoffOpened(true); setTab('handoff'); }}>{t('designHandoff.title')}</Button>
       </div>
       {viewerOnly ? <p className={styles.notice}>{t('designRuntime.readOnly')}</p> : null}
@@ -447,6 +450,9 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
       </div>
       <div id={`${inputId}-versions`} role="tabpanel" aria-labelledby={`${inputId}-versions-tab`} hidden={tab !== 'versions'}>
         {versionsOpened ? <DesignSystemVersionsPanel scope={scope} state={state} files={files} viewerOnly={viewerOnly} externalBusy={busy} onState={(next) => { adoptState(next); setError(''); setDiagnostics(null); }} onBusyChange={setStructureBusy} /> : null}
+      </div>
+      <div id={`${inputId}-validation`} role="tabpanel" aria-labelledby={`${inputId}-validation-tab`} hidden={tab !== 'validation'}>
+        {validationOpened ? <DesignRuntimeValidationPanel scope={scope} state={state} files={files} viewerOnly={viewerOnly} externalBusy={busy} onState={(next) => { adoptState(next); setError(''); setDiagnostics(null); }} onBusyChange={setStructureBusy} /> : null}
       </div>
     </section>
   );

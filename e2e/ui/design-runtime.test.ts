@@ -7,6 +7,7 @@ import type {
   DesignSystemMigrationRecipe, ProjectDesignRuntimeMigrationRecipeResponse,
   ProjectDesignRuntimeHandoffResponse, ProjectDesignRuntimeRegisterLocalBindingResponse,
   ProjectDesignRuntimeEmitHandoffResponse,
+  ProjectDesignRuntimeValidateArtifactsResponse,
   UIIRDocument,
 } from '@open-design/contracts';
 import { expect, test } from '@/playwright/suite';
@@ -380,6 +381,7 @@ export function SharedButton({ variant = 'solid' }: SharedButtonProps) {
 }`,
     'ApplicationCard.tsx': `import { SharedButton } from './SharedButton';
 export function ApplicationCard() { return <SharedButton />; }`,
+    'Validation.html': '<main style="color:#ff0000">A source that violates the locked color policy.</main>',
   };
   for (const [name, content] of Object.entries(localSources)) {
     const response = await page.request.post(`/api/projects/${projectId}/files`, { data: { name, content } });
@@ -445,6 +447,52 @@ export function ApplicationCard() { return <SharedButton />; }`,
   await page.screenshot({ path: handoffScreenshot, fullPage: true });
   await testInfo.attach('Verified local production component handoff', { path: handoffScreenshot, contentType: 'image/png' });
 
+  // Persist the project mode through its public settings UI, then validate
+  // actual project bytes against the immutable package policy after reopening.
+  await page.getByTestId('design-runtime-validation-tab').click();
+  await expect(page.getByTestId('validation-mode')).toBeEnabled();
+  await page.getByTestId('validation-mode').selectOption('guided');
+  const modeResponse = page.waitForResponse((response) => response.request().method() === 'PUT'
+    && new URL(response.url()).pathname === `${prefix}/validation/settings`);
+  await page.getByTestId('validation-save-settings').click();
+  const savedMode = await modeResponse;
+  expect(savedMode.ok(), await savedMode.text()).toBeTruthy();
+  const guidedState = (await savedMode.json() as ProjectDesignRuntimeResponse).state;
+  expect(guidedState.validationSettings.mode).toBe('guided');
+  expect(guidedState.lock).toEqual(upgradedState.lock);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.getByTestId('design-runtime-entry').click();
+  await page.getByTestId('design-runtime-validation-tab').click();
+  await expect(page.getByTestId('validation-mode')).toHaveValue('guided');
+  await page.getByTestId('validation-source-Validation.html').check();
+  const artifactValidationResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `${prefix}/validation/artifacts`);
+  await page.getByTestId('validation-run').click();
+  const artifactValidation = await artifactValidationResponse;
+  expect(artifactValidation.ok(), await artifactValidation.text()).toBeTruthy();
+  const validation = (await artifactValidation.json() as ProjectDesignRuntimeValidateArtifactsResponse).result;
+  expect(validation).toMatchObject({ mode: 'guided', policySource: 'locked', accepted: false, strictReady: false, metrics: { rawColors: 1 } });
+  expect(validation.diagnostics).toContainEqual(expect.objectContaining({ code: 'ODDS2002', severity: 'error', location: expect.objectContaining({ sourcePath: 'Validation.html' }) }));
+  await expect(page.getByTestId('validation-result')).toContainText('ODDS2002');
+  await expect(page.getByTestId('validation-result')).toContainText('Validation.html');
+  const validationScreenshot = testInfo.outputPath('saved-mode-artifact-validation.png');
+  await page.getByTestId('validation-result').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: validationScreenshot, fullPage: true });
+  await testInfo.attach('Saved Guided mode and real source diagnostics', { path: validationScreenshot, contentType: 'image/png' });
+  await page.getByTestId('validation-mode').selectOption('strict');
+  const strictModeResponse = page.waitForResponse((response) => response.request().method() === 'PUT'
+    && new URL(response.url()).pathname === `${prefix}/validation/settings`);
+  await page.getByTestId('validation-save-settings').click();
+  const strictMode = await strictModeResponse;
+  expect(strictMode.ok(), await strictMode.text()).toBeTruthy();
+  const strictState = (await strictMode.json() as ProjectDesignRuntimeResponse).state;
+  expect(strictState.validationSettings.mode).toBe('strict');
+  const strictValidationResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `${prefix}/validation/artifacts`);
+  await page.getByTestId('validation-run').click();
+  const strictValidation = await strictValidationResponse;
+  expect(strictValidation.ok(), await strictValidation.text()).toBeTruthy();
+  expect((await strictValidation.json() as ProjectDesignRuntimeValidateArtifactsResponse).result).toMatchObject({ mode: 'strict', accepted: false, strictReady: false });
   await page.getByTestId('design-runtime-versions-tab').click();
 
   const clearResponse = page.waitForResponse((response) => response.request().method() === 'DELETE'
@@ -454,6 +502,8 @@ export function ApplicationCard() { return <SharedButton />; }`,
   expect(cleared.ok(), await cleared.text()).toBeTruthy();
   const clearedState = (await cleared.json() as ProjectDesignRuntimeResponse).state;
   expect(clearedState.lock.dependencies).toEqual([]);
+  expect(clearedState.validationSettings.mode).toBe('strict');
+  expect(clearedState.validationSettings.projectConstraints).toEqual(upgradePackage.constraints);
   expect(clearedState.registry).toEqual(upgradedState.registry);
   expect(clearedState.document).toEqual(upgradedDocument);
 

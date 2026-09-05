@@ -1,3 +1,4 @@
+import { defaultProjectDesignValidationSettings } from '@open-design/contracts';
 import Database from 'better-sqlite3';
 import express from 'express';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -29,7 +30,7 @@ async function withUpgrade(run: (fixture: {
   const store = createDesignRuntimeStore(db);
   const fixture = upgradeFixture();
   const { projectId: _id, projectSources: _sources, ...state } = fixture.context;
-  store.write('project', 0, { ...state, schemaVersion: 1, registry: fixture.from.package.registry }, [fixture.from, fixture.to]);
+  store.write('project', 0, { ...state, schemaVersion: 1, validationSettings: defaultProjectDesignValidationSettings(), registry: fixture.from.package.registry }, [fixture.from, fixture.to]);
   const service = createProjectDesignRuntimeService({ store, readSource: async () => { throw new Error('An exact upgrade must never read mutable project source.'); } });
   const authorize = vi.fn<AuthorizeProjectRequest>(async () => true);
   const app = express(); app.use(express.json());

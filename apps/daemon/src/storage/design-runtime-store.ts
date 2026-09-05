@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { isDeepStrictEqual } from 'node:util';
 import {
   ProjectDesignRuntimeStateSchema,
+  defaultProjectDesignValidationSettings,
   DesignSystemVersionSchema,
   type DesignSystemVersion,
   type ProjectDesignRuntimeVersionSummary,
@@ -96,6 +97,7 @@ export function createDesignRuntimeStore(db: Database.Database): DesignRuntimeSt
     const persisted: unknown = row ? JSON.parse(row.state_json) : {
       schemaVersion: 1,
       revision: 0,
+      validationSettings: defaultProjectDesignValidationSettings(),
       registry: null,
       codeIndex: { schemaVersion: 1, id: projectId, components: [] },
       projectCodeIndex: { schemaVersion: 1, id: projectId, components: [] },
@@ -112,7 +114,8 @@ export function createDesignRuntimeStore(db: Database.Database): DesignRuntimeSt
     const withDependencies = legacyDependencies ? { ...inherited, ...dependencyAdditions } : inherited;
     const legacyProjectCode = withDependencies !== null && typeof withDependencies === 'object' && !Array.isArray(withDependencies) && !Object.hasOwn(withDependencies, 'projectCodeIndex');
     const withProjectCode = legacyProjectCode ? { ...withDependencies, projectCodeIndex: { schemaVersion: 1, id: projectId, components: [] } } : withDependencies;
-    const state = ProjectDesignRuntimeStateSchema.parse(withProjectCode);
+    const legacyValidation = withProjectCode !== null && typeof withProjectCode === 'object' && !Array.isArray(withProjectCode) && !Object.hasOwn(withProjectCode, 'validationSettings');
+    const state = ProjectDesignRuntimeStateSchema.parse(legacyValidation ? { ...withProjectCode, validationSettings: defaultProjectDesignValidationSettings() } : withProjectCode);
     if (state.codeIndex.id !== projectId || state.projectCodeIndex.id !== projectId || state.bindings.id !== projectId || state.projectComponents.id !== projectId || state.sharedChanges.id !== projectId || state.dependencies.id !== projectId || state.lock.id !== projectId || (row && state.revision !== row.revision)) {
       throw new Error('Persisted design runtime identity or revision is inconsistent.');
     }

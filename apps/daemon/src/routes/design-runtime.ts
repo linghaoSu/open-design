@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from 'express';
 import {
+  ProjectDesignRuntimeValidationSettingsRequestSchema, ProjectDesignRuntimeValidateArtifactsRequestSchema,
   ProjectDesignRuntimeReviewUpgradeRequestSchema,
   ProjectDesignRuntimeApplyUpgradeRequestSchema,
   ProjectDesignRuntimeRegisterLocalBindingRequestSchema,
@@ -117,6 +118,9 @@ export function registerDesignRuntimeRoutes(app: Express, deps: RegisterDesignRu
   };
 
   app.get(prefix, handle('read', (req) => ({ state: service.get(String(req.params.id)) })));
+  app.get(`${prefix}/validation/settings`, handle('read', (req) => service.validationSettings(String(req.params.id))));
+  app.put(`${prefix}/validation/settings`, handle('write', (req) => ({ state: service.saveValidationSettings(String(req.params.id), parseInput(ProjectDesignRuntimeValidationSettingsRequestSchema, req.body)) })));
+  app.post(`${prefix}/validation/artifacts`, handle('read', (req) => service.validateArtifacts(String(req.params.id), parseInput(ProjectDesignRuntimeValidateArtifactsRequestSchema, req.body))));
   app.post(`${prefix}/upgrades/review`, handle('read', (req) => service.reviewUpgrade(String(req.params.id), parseInput(ProjectDesignRuntimeReviewUpgradeRequestSchema, req.body))));
   app.post(`${prefix}/upgrades/apply`, handle('write', (req) => service.applyUpgrade(String(req.params.id), parseInput(ProjectDesignRuntimeApplyUpgradeRequestSchema, req.body))));
   app.get(`${prefix}/versions/:designSystemId/:version/migrations`, handle('read', (req) => service.migrationRecipes(String(req.params.id), parseInput(DesignEntityIdSchema, req.params.designSystemId), parseInput(DesignSystemSemVerSchema, req.params.version))));

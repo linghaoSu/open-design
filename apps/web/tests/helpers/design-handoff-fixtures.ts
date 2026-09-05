@@ -14,7 +14,7 @@ export function handoffUiFixture(revision = 2) {
   };
   state.projectCodeIndex.components = [{ schemaVersion: 1, id: source.codeComponentId, name: 'Card', framework: 'react', sourcePath: source.sourcePath, exportName: source.exportName, props: { appearance: { type: 'enum', required: false, values: ['filled', 'outline'], default: 'filled' } } }];
   state.bindings.bindings = [binding];
-  const { codeIndex, sharedChanges: _changes, revision: _revision, schemaVersion: _version, ...snapshot } = state;
+  const { codeIndex, validationSettings: _settings, sharedChanges: _changes, revision: _revision, schemaVersion: _version, ...snapshot } = state;
   const manifest = HandoffManifestSchema.parse({ schemaVersion: 1, id: 'handoff', projectId: 'project', projectRevision: revision, framework: 'react',
     snapshot: { ...snapshot, baseCodeIndex: codeIndex, versions: [], projectSources: [{ codeComponentId: source.codeComponentId, sourceText: 'export function Card(){ return null; }' }], targetPackages: [] },
     coverage: [{ componentRef: binding.componentRef, binding, ready: true, diagnostics: [] }], ready: true, diagnostics: [],

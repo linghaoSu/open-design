@@ -4,6 +4,9 @@ import {
   ProjectDesignRuntimeRefreshCodeResponseSchema, ProjectDesignRuntimeCreateHandoffRequestSchema,
   ProjectDesignRuntimeHandoffResponseSchema, ProjectDesignRuntimeEmitHandoffRequestSchema, ProjectDesignRuntimeEmitHandoffResponseSchema,
   type ProjectDesignRuntimeRegisterLocalBindingRequest, type ProjectDesignRuntimeCreateHandoffRequest, type ProjectDesignRuntimeEmitHandoffRequest,
+  ProjectDesignRuntimeValidationSettingsRequestSchema, ProjectDesignRuntimeValidationSettingsResponseSchema,
+  ProjectDesignRuntimeValidateArtifactsRequestSchema, ProjectDesignRuntimeValidateArtifactsResponseSchema,
+  type ProjectDesignRuntimeValidationSettingsRequest, type ProjectDesignRuntimeValidateArtifactsRequest,
   ProjectDesignRuntimeReviewUpgradeRequestSchema, ProjectDesignRuntimeReviewUpgradeResponseSchema,
   ProjectDesignRuntimeApplyUpgradeRequestSchema, ProjectDesignRuntimeApplyUpgradeResponseSchema,
   type ProjectDesignRuntimeReviewUpgradeRequest, type ProjectDesignRuntimeApplyUpgradeRequest,
@@ -237,3 +240,11 @@ export const listProjectDesignRuntimeMigrationRecipes = (scope: ProjectDesignRun
 
 export const instantiateProjectDesignRuntimeMigrationRecipe = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeInstantiateMigrationRecipeRequest) =>
   request(scope, '/upgrades/recipes', ProjectDesignRuntimeMigrationRecipeResponseSchema, 'POST', ProjectDesignRuntimeInstantiateMigrationRecipeRequestSchema.parse(input));
+
+
+export const getProjectDesignRuntimeValidationSettings = (scope: ProjectDesignRuntimeScope) =>
+  request(scope, '/validation/settings', ProjectDesignRuntimeValidationSettingsResponseSchema);
+export const saveProjectDesignRuntimeValidationSettings = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeValidationSettingsRequest) =>
+  request(scope, '/validation/settings', ProjectDesignRuntimeResponseSchema, 'PUT', ProjectDesignRuntimeValidationSettingsRequestSchema.parse(input));
+export const validateProjectDesignRuntimeArtifacts = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeValidateArtifactsRequest) =>
+  request(scope, '/validation/artifacts', ProjectDesignRuntimeValidateArtifactsResponseSchema, 'POST', ProjectDesignRuntimeValidateArtifactsRequestSchema.parse(input));

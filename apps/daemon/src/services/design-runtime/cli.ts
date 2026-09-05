@@ -6,6 +6,8 @@ import {
   ProjectDesignRuntimeRefreshCodeResponseSchema, ProjectDesignRuntimeCreateHandoffRequestSchema,
   ProjectDesignRuntimeHandoffResponseSchema, ProjectDesignRuntimeEmitHandoffRequestSchema, ProjectDesignRuntimeEmitHandoffResponseSchema,
   type HandoffBuildResult,
+  ProjectDesignRuntimeValidationSettingsRequestSchema, ProjectDesignRuntimeValidationSettingsResponseSchema,
+  ProjectDesignRuntimeValidateArtifactsRequestSchema, ProjectDesignRuntimeValidateArtifactsResponseSchema,
   ProjectDesignRuntimeReviewUpgradeRequestSchema, ProjectDesignRuntimeReviewUpgradeResponseSchema,
   ProjectDesignRuntimeApplyUpgradeRequestSchema, ProjectDesignRuntimeApplyUpgradeResponseSchema,
   ProjectDesignRuntimeMigrationRecipesResponseSchema, ProjectDesignRuntimeInstantiateMigrationRecipeRequestSchema, ProjectDesignRuntimeMigrationRecipeResponseSchema,
@@ -61,6 +63,9 @@ export const DESIGN_RUNTIME_CLI_USAGE = `Usage:
   od design-runtime refresh-code-component <projectId> <codeComponentId>
   od design-runtime handoff <projectId> --prompt-file <path|->
   od design-runtime emit-handoff <projectId> --prompt-file <path|->
+  od design-runtime validation-settings <projectId>
+  od design-runtime save-validation-settings <projectId> --prompt-file <path|->
+  od design-runtime validate-artifacts <projectId> --prompt-file <path|->
   od design-runtime get <projectId>
   od design-runtime compile <projectId> --prompt-file <path|->
   od design-runtime components <projectId> [--query <text>]
@@ -142,7 +147,11 @@ Review-upgrade accepts {plan} and returns a review without changing live state.
 Apply-upgrade requires {plan,reviewId,baseDigest,planDigest} from that review.
 Both accept expectedRevision or read it once; apply never retries a conflict.
 No command selects latest or upgrades a dependency implicitly. Clear-dependency
-removes the active dependency and can recover from an unavailable locked package.
+retains verified locked constraints and the saved validation mode. Broken Guided/Strict
+locks require an explicit save-validation-settings change to Explore before recovery.
+Validation settings JSON: {"settings":<ProjectDesignValidationSettings>}. Artifact validation
+JSON: {"sources":[{"sourcePath":"Screen.tsx","language":"tsx"}],"outputs":[{"sourcePath":"Screen.tsx","exportName":"Screen","screenId":"home"}]}.
+All bytes, saved mode, locked policy and installed package observations are daemon-owned.
 Register local JSON: {"source":{"framework":"react","sourcePath":"src/Card.tsx","exportName":"Card","codeComponentId":"project/Card"},"binding":{"schemaVersion":1,"id":"local/Card","componentRef":"local:Card","framework":"react","definitionRevision":1,"codeComponentId":"project/Card","status":"bound","verified":true}}
 Handoff JSON: {"id":"handoff","framework":"react"}. Optional changeContextSelection
 selects stored fromVersion:{designSystemId,version} and/or sharedChangeIds:[id].
@@ -173,6 +182,9 @@ const COMMANDS: Record<string, CommandSpec> = {
   handoff: { revisioned: true, input: ProjectDesignRuntimeCreateHandoffRequestSchema },
   'emit-handoff': { revisioned: true, input: ProjectDesignRuntimeEmitHandoffRequestSchema },
   get: {},
+  'validation-settings': {},
+  'save-validation-settings': { mutates: true, input: ProjectDesignRuntimeValidationSettingsRequestSchema },
+  'validate-artifacts': { revisioned: true, input: ProjectDesignRuntimeValidateArtifactsRequestSchema },
   'migration-recipes': { argument: 'designSystemId', exactVersion: true },
   'use-migration-recipe': { revisioned: true, input: ProjectDesignRuntimeInstantiateMigrationRecipeRequestSchema },
   'review-upgrade': { revisioned: true, input: ProjectDesignRuntimeReviewUpgradeRequestSchema },
@@ -391,7 +403,9 @@ export async function runDesignRuntimeCli(args: string[], deps: DesignRuntimeCli
         throw new CliFailure(1, createApiErrorResponse(createApiError('INTERNAL_ERROR', `Daemon response did not match the contract: ${error instanceof Error ? error.message : String(error)}`)));
       }
     }
-    if (needsRevision && expectedRevision === undefined) expectedRevision = (await request('', ProjectDesignRuntimeResponseSchema)).state.revision;
+    if (needsRevision && expectedRevision === undefined) expectedRevision = command === 'save-validation-settings' || command === 'validate-artifacts' || command === 'clear-dependency'
+      ? (await request('/validation/settings', ProjectDesignRuntimeValidationSettingsResponseSchema)).revision
+      : (await request('', ProjectDesignRuntimeResponseSchema)).state.revision;
     const output = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
     const encodedTarget = encodeURIComponent(targetId ?? '');
     const mutationBody = { ...input, expectedRevision };
@@ -415,6 +429,23 @@ export async function runDesignRuntimeCli(args: string[], deps: DesignRuntimeCli
       if (json) output(data);
       else { printHandoff(data.handoff); printDiagnostics(data.code.diagnostics); for (const file of data.code.files) process.stdout.write(`File: ${file.sourcePath}\n${file.content}\n`); }
       return { exitCode: data.code.ok ? 0 : 1 };
+    }
+    if (command === 'validation-settings') {
+      const data = await request('/validation/settings', ProjectDesignRuntimeValidationSettingsResponseSchema);
+      if (json) output(data);
+      else { process.stdout.write(`Revision ${data.revision}\nMode: ${data.settings.mode}\nPolicy: ${data.effectiveConstraints?.source ?? 'unavailable'}\n${JSON.stringify(data.effectiveConstraints?.constraints ?? null, null, 2)}\n`); printDiagnostics(data.diagnostics); }
+      return { exitCode: diagnosticsExitCode(data.diagnostics) };
+    }
+    if (command === 'save-validation-settings') {
+      const data = await request('/validation/settings', ProjectDesignRuntimeResponseSchema, 'PUT', mutationBody);
+      if (json) output(data); else { printState(data); process.stdout.write(`Mode: ${data.state.validationSettings.mode}\n`); }
+      return { exitCode: 0 };
+    }
+    if (command === 'validate-artifacts') {
+      const data = await request('/validation/artifacts', ProjectDesignRuntimeValidateArtifactsResponseSchema, 'POST', mutationBody);
+      if (json) output(data);
+      else { process.stdout.write(`Revision ${data.revision}\nMode: ${data.result.mode}\nPolicy: ${data.result.policySource}\nAccepted: ${data.result.accepted}\nStrict ready: ${data.result.strictReady}\n${JSON.stringify({ coverage: data.result.coverage, metrics: data.result.metrics }, null, 2)}\n`); printDiagnostics(data.result.diagnostics); }
+      return { exitCode: data.result.accepted ? 0 : 1 };
     }
     if (command === 'migration-recipes') {
       const data = await request(`/versions/${encodedTarget}/${encodeURIComponent(exactVersion!)}/migrations`, ProjectDesignRuntimeMigrationRecipesResponseSchema);

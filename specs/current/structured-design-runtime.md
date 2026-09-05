@@ -98,9 +98,10 @@ The following are part of the final result, not optional placeholders:
 
 Multi-component compilation, index/binding operations, project-local inheritance,
 reference graphs and staged shared changes have accepted web/CLI/HTTP surfaces.
-Immutable versions now have matching web/CLI/HTTP surfaces. Current work adds
-reviewed upgrades, public compiler format selection and persistent handoff bindings
-on the same canonical identities. Internal foundation commits can land independently; their
+Immutable versions, reviewed upgrades, compiler format selection, persistent handoff
+bindings and explicit artifact validation now have matching web/CLI/HTTP surfaces.
+Current work adds public pattern composition, generation completion enforcement and
+real component previews. Internal foundation commits can land independently; their
 corresponding phase remains incomplete until its listed product and validation
 evidence exists.
 
@@ -241,8 +242,22 @@ cannot certify Strict. Root ran 68 validator/benchmark/diff daemon cases, three
 contract cases and full `pnpm guard`. The authored React/Vue cases cover all eight
 required page categories; each records an invalid source, an evaluated repair and
 a valid result across three file-order permutations. Reported variance describes
-validator repeatability; model-generation variance remains unmeasured. Saved mode
-settings, public artifact validation and generation completion/repair remain pending.
+validator repeatability; model-generation variance remains unmeasured.
+
+Saved Explore/Guided/Strict settings and explicit artifact validation are accepted
+through HTTP, CLI and the Validation tab. The daemon reads actual source bytes and
+installed package observations, uses the saved mode and verified locked constraints,
+and rejects caller-injected evidence and revision races. Clearing a verified lock
+preserves its constraints and mode; recovery from an unavailable Guided/Strict lock
+requires an explicit change to Explore. UI conflict handling preserves local edits
+while rebasing independently changed settings. Root ran five HTTP cases, nine focused
+web cases and 48 contract cases; the agent's combined checks include 72 daemon and
+51 contract cases. The full browser workflow saved Guided, reopened it, diagnosed
+an actual forbidden color under locked policy, saved Strict and confirmed rejection,
+then verified policy retention after clearing. Its 26.7-second case passed, the
+validation screenshot was inspected, and full `pnpm guard` and `pnpm typecheck`
+passed. Automatic generation completion and bounded repair remain in progress;
+these explicit operations alone do not complete Phase 10 or 12.
 
 The exact-lock pattern runtime core is accepted. Search and retrieval verify the
 immutable package; instantiation applies declared defaults, property mappings and

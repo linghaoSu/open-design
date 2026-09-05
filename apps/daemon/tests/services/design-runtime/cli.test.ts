@@ -1,3 +1,4 @@
+import { defaultProjectDesignValidationSettings } from '@open-design/contracts';
 import { execFile } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
@@ -36,7 +37,7 @@ afterEach(async () => {
 
 function state(revision = 7): ProjectDesignRuntimeState {
   return {
-    schemaVersion: 1, revision,
+    schemaVersion: 1, revision, validationSettings: defaultProjectDesignValidationSettings(),
     registry: { schemaVersion: 1, id: 'acme', components: [{ schemaVersion: 1, id: 'button', name: 'Button', props: {} }] },
     codeIndex: { schemaVersion: 1, id: 'acme', components: [{ schemaVersion: 1, id: 'acme/Button', framework: 'react', name: 'Button', exportName: 'Button', sourcePath: 'src/Button.tsx', props: {} }] },
     projectCodeIndex: { schemaVersion: 1, id: 'acme', components: [] },
@@ -615,7 +616,7 @@ describe('reviewed upgrade CLI', () => {
     const review = reviewDesignSystemUpgrade(fixture.context, fixture.from, fixture.to, plan);
     const input = { plan, reviewId: review.id, baseDigest: review.baseDigest, planDigest: review.planDigest };
     const { projectId: _id, projectSources: _sources, ...contextState } = fixture.context;
-    const previous = { ...contextState, schemaVersion: 1 as const, registry: fixture.from.package.registry };
+    const previous = { ...contextState, schemaVersion: 1 as const, validationSettings: defaultProjectDesignValidationSettings(), registry: fixture.from.package.registry };
     return { fixture, review, input, previous };
   }
 
@@ -702,5 +703,39 @@ describe('migration recipe CLI', () => {
     expect(requests).toHaveLength(0);
     const result = await runCli(['design-runtime', 'use-migration-recipe', projectId, '--daemon-url', url, '--json', '--expected-revision', '8', '--prompt-file', '-'], JSON.stringify(input));
     expect(result.code).toBe(1); expect(JSON.parse(result.stderr)).toEqual({ status: 409, ...error }); expect(requests).toHaveLength(1);
+  });
+});
+
+
+describe('saved design validation CLI', () => {
+  const artifactInput = { sources: [{ sourcePath: 'Screen.tsx', language: 'tsx' }], outputs: [{ sourcePath: 'Screen.tsx', exportName: 'Screen', screenId: 'home' }] };
+  const settingsResponse = () => ({ revision: 7, settings: state().validationSettings, lock: state().lock, effectiveConstraints: { source: 'project', constraints: state().validationSettings.projectConstraints }, diagnostics: [] });
+  it('reads and saves settings through recovery-capable endpoints with exact workspace authority', async () => {
+    const { requests, url } = await startServer(({ method }) => ({ body: method === 'GET' ? settingsResponse() : { state: state(8) } }));
+    const read = await runCli(['design-runtime', 'validation-settings', projectId, '--daemon-url', url, '--json', ...scope]);
+    expect(read.code).toBe(0); expect(JSON.parse(read.stdout)).toEqual(settingsResponse());
+    const saved = await runCli(['design-runtime', 'save-validation-settings', projectId, '--daemon-url', url, '--json', '--prompt-file', '-', ...scope], JSON.stringify({ settings: state().validationSettings }));
+    expect(saved.code).toBe(0);
+    expect(requests.map(({ method, url }) => [method, url])).toEqual([['GET', `${prefix}/validation/settings`], ['GET', `${prefix}/validation/settings`], ['PUT', `${prefix}/validation/settings`]]);
+    expect(requests[2]).toMatchObject({ body: { expectedRevision: 7, settings: state().validationSettings }, headers: { 'x-od-workspace-id': 'workspace-1', 'x-od-workspace-member-id': 'member-1' } });
+  });
+  it('uses the public evaluator result and exits one for rejected artifacts without retry', async () => {
+    const { validationFixture } = await import('../../fixtures/design-runtime/validation-benchmark.js');
+    const { validateStructuredDesign } = await import('../../../src/services/design-runtime/design-validation.js');
+    const fixture = validationFixture(); fixture.sources[1]!.sourceText = 'main{color:red}';
+    const response = { revision: 7, result: validateStructuredDesign(fixture) };
+    const { requests, url } = await startServer(({ method }) => ({ body: method === 'GET' ? settingsResponse() : response }));
+    const result = await runCli(['design-runtime', 'validate-artifacts', projectId, '--daemon-url', url, '--json', '--prompt-file', '-'], JSON.stringify(artifactInput));
+    expect(result.code).toBe(1); expect(JSON.parse(result.stdout)).toEqual(response); expect(result.stderr).toBe('');
+    expect(requests.map(({ method, url }) => [method, url])).toEqual([['GET', `${prefix}/validation/settings`], ['POST', `${prefix}/validation/artifacts`]]);
+    expect(requests[1]!.body).toEqual({ ...artifactInput, expectedRevision: 7 });
+  });
+  it('rejects source injection before HTTP and returns stale diagnostics without a retry', async () => {
+    const failure = { error: { code: 'DESIGN_RUNTIME_REVISION_CONFLICT', message: 'Changed', details: { expectedRevision: 7, currentRevision: 8 } } };
+    const { requests, url } = await startServer(() => ({ status: 409, body: failure }));
+    const injected = await runCli(['design-runtime', 'validate-artifacts', projectId, '--daemon-url', url, '--json', '--prompt-file', '-'], JSON.stringify({ ...artifactInput, mode: 'explore' }));
+    expect(injected.code).toBe(2); expect(requests).toHaveLength(0);
+    const stale = await runCli(['design-runtime', 'validate-artifacts', projectId, '--daemon-url', url, '--json', '--expected-revision', '7', '--prompt-file', '-'], JSON.stringify(artifactInput));
+    expect(stale.code).toBe(1); expect(JSON.parse(stale.stderr)).toEqual({ status: 409, ...failure }); expect(requests).toHaveLength(1);
   });
 });

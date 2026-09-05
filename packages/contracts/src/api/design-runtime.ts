@@ -1,5 +1,12 @@
 import { z } from 'zod';
 import {
+  ProjectDesignValidationSettingsSchema,
+  DesignValidationSourceSchema,
+  DesignValidationOutputSchema,
+  StructuredDesignValidationResultSchema,
+  DesignConstraintSetSchema,
+  type DesignConstraintPolicy,
+  type ProjectDesignValidationSettings,
   DesignSystemMigrationRecipeSchema,
   DesignSystemMigrationRecipePlanResultSchema,
   InstantiateDesignSystemMigrationRecipeRequestSchema,
@@ -61,6 +68,7 @@ const revisionSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGE
 export const ProjectDesignRuntimeStateSchema = z.object({
   schemaVersion: DesignRuntimeSchemaVersionSchema,
   revision: revisionSchema,
+  validationSettings: ProjectDesignValidationSettingsSchema,
   registry: ComponentRegistrySchema.nullable(),
   codeIndex: CodeComponentIndexSchema,
   /** Registered project implementations remain separate from package-owned codeIndex. */
@@ -336,3 +344,43 @@ export const ProjectDesignRuntimeMigrationRecipeResponseSchema = z.object({
   revision: revisionSchema, ...DesignSystemMigrationRecipePlanResultSchema.shape,
 }).strict();
 export type ProjectDesignRuntimeMigrationRecipeResponse = z.infer<typeof ProjectDesignRuntimeMigrationRecipeResponseSchema>;
+
+
+/** Fresh copies prevent authoring a project policy from mutating another project's defaults. */
+export function defaultProjectDesignValidationSettings(): ProjectDesignValidationSettings {
+  const policy = (severity: 'warning' | 'error'): DesignConstraintPolicy => ({
+    unknownComponents: severity, unknownProps: severity, invalidVariants: severity, invalidSlots: severity,
+    tokens: { undeclared: severity }, rawCss: { colors: severity, spacing: severity, radius: severity },
+    interactiveHtml: { customControlsWhenBoundComponentExists: severity },
+  });
+  return { schemaVersion: 1, mode: 'explore', projectConstraints: { schemaVersion: 1, explore: policy('warning'), guided: policy('error'), strict: policy('error') } };
+}
+export const ProjectDesignRuntimeValidationSettingsRequestSchema = z.object({ expectedRevision: revisionSchema, settings: ProjectDesignValidationSettingsSchema }).strict();
+export type ProjectDesignRuntimeValidationSettingsRequest = z.infer<typeof ProjectDesignRuntimeValidationSettingsRequestSchema>;
+export const ProjectDesignRuntimeValidationSettingsResponseSchema = z.object({
+  revision: revisionSchema, settings: ProjectDesignValidationSettingsSchema, lock: ProjectDesignSystemLockSchema,
+  effectiveConstraints: z.object({ source: z.enum(['project', 'locked']), constraints: DesignConstraintSetSchema }).strict().nullable(),
+  diagnostics: z.array(ValidationDiagnosticSchema),
+}).strict();
+export type ProjectDesignRuntimeValidationSettingsResponse = z.infer<typeof ProjectDesignRuntimeValidationSettingsResponseSchema>;
+export const ProjectDesignRuntimeValidateArtifactsRequestSchema = z.object({
+  expectedRevision: revisionSchema,
+  sources: z.array(DesignValidationSourceSchema.omit({ sourceText: true })).min(1).max(500),
+  outputs: z.array(DesignValidationOutputSchema).min(1).max(500),
+}).strict().superRefine((input, ctx) => {
+  const paths = new Set<string>();
+  input.sources.forEach((source, index) => {
+    if (paths.has(source.sourcePath)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['sources', index], message: 'Source paths must be unique.' });
+    paths.add(source.sourcePath);
+  });
+  const outputs = new Set<string>();
+  input.outputs.forEach((output, index) => {
+    const source = input.sources.find((entry) => entry.sourcePath === output.sourcePath);
+    const id = JSON.stringify([output.sourcePath, output.exportName]);
+    if (!source || source.language === 'css' || outputs.has(id)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['outputs', index], message: 'Each output must uniquely select a supplied React, Vue or HTML file.' });
+    outputs.add(id);
+  });
+});
+export type ProjectDesignRuntimeValidateArtifactsRequest = z.infer<typeof ProjectDesignRuntimeValidateArtifactsRequestSchema>;
+export const ProjectDesignRuntimeValidateArtifactsResponseSchema = z.object({ revision: revisionSchema, result: StructuredDesignValidationResultSchema }).strict();
+export type ProjectDesignRuntimeValidateArtifactsResponse = z.infer<typeof ProjectDesignRuntimeValidateArtifactsResponseSchema>;

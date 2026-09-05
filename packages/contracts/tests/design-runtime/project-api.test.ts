@@ -1,3 +1,4 @@
+import { defaultProjectDesignValidationSettings } from '../../src/api/design-runtime.js';
 import { describe, expect, it } from 'vitest';
 import {
   ProjectDesignRuntimeBindRequestSchema,
@@ -56,7 +57,7 @@ const component = { schemaVersion: 1, id: 'button', name: 'Button', props: {} };
 const code = { schemaVersion: 1, id: 'ui/Button', framework: 'react', name: 'Button', exportName: 'Button', sourcePath: 'src/Button.tsx', props: {} };
 const binding = { schemaVersion: 1, id: 'binding/button', componentRef: 'ds:test/button', framework: 'react', status: 'bound', verified: true, codeComponentId: 'ui/Button' };
 const state = {
-  schemaVersion: 1, revision: 1,
+  schemaVersion: 1, revision: 1, validationSettings: defaultProjectDesignValidationSettings(),
   projectComponents: { schemaVersion: 1, id: 'project', components: [] },
   document: null,
   sharedChanges: { schemaVersion: 1, id: 'project', drafts: [], history: [] },

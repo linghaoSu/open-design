@@ -129,6 +129,9 @@ All paths below are relative to `/api/projects/:id/design-runtime`:
 | Refresh registered source metadata | `POST /project-code-components/:codeId/refresh` | `refresh-code-component <projectId> <codeComponentId>` |
 | Build a verified engineering handoff | `POST /handoffs` | `handoff <projectId> --prompt-file <path\|->` |
 | Emit screen source from the handoff | `POST /handoffs/emit` | `emit-handoff <projectId> --prompt-file <path\|->` |
+| Inspect saved mode and effective constraints | `GET /validation/settings` | `validation-settings <projectId>` |
+| Save mode and project constraints | `PUT /validation/settings` | `save-validation-settings <projectId> --prompt-file <path\|->` |
+| Validate actual project source files | `POST /validation/artifacts` | `validate-artifacts <projectId> --prompt-file <path\|->` |
 
 CLI commands begin with `od design-runtime` and support `--json`, `--daemon-url`,
 `--workspace`, and `--workspace-member`. Commands with request bodies read JSON from a
@@ -229,7 +232,10 @@ binding overrides remain editable without changing the published package.
 A missing or tampered locked version returns structured diagnostics. The dependency
 resolution endpoint remains readable and returns the current revision for recovery.
 Explicitly clearing the dependency retains the stored working registry and document;
-it does not claim the unavailable package was verified. There is no latest-version
+it preserves the saved validation mode and copies verified locked constraints into
+the project policy. An unavailable Guided/Strict lock requires explicitly saving
+Explore before clearing; recovery does not claim the missing package was verified.
+There is no latest-version
 fallback or automatic upgrade.
 
 `diffDesignSystemVersions` compares verified packages by stable entity identity.
@@ -357,8 +363,22 @@ identifies available control replacements without guessing from component names.
 The static subset supports literal React JSX, Vue templates and CSS declarations.
 Dynamic flow, unresolved imports and unsupported CSS grammar produce incomplete
 coverage, and Strict acceptance requires complete proof. Guided source-only input
-can omit the semantic document. Saved mode controls and public artifact validation
-are still being integrated.
+can omit the semantic document.
+
+The **Validation** tab saves Explore, Guided or Strict for the project. A locked
+package owns the effective constraints; editing the fallback project policy requires
+clearing that dependency first. Unsaved mode edits do not change validation behavior.
+Select source files, identify their output exports and map outputs to semantic screens,
+then run validation. Results show source locations, diagnostic codes, coverage and
+measured reuse counts. Workspace viewers can inspect and validate without changing
+settings. Conflicting settings edits retain the draft for explicit review.
+
+`validate-artifacts` accepts source paths/languages and output mappings. The daemon
+reads their actual bytes, the saved mode, exact package and installed dependency
+observations; callers cannot supply replacement evidence. A read does not increment
+the project revision. Unsupported source remains incomplete and cannot certify Strict.
+These explicit validation operations are implemented; automatic generation completion
+and bounded repair remain tracked separately in the active plan.
 
 Eight maintained React/Vue page fixtures measure reuse, unknown components/tokens,
 raw styles, duplicate structures and evaluated repair steps. Each failing fixture

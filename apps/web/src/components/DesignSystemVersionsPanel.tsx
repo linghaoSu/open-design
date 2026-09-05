@@ -211,7 +211,7 @@ function VersionsContent({ scope, state, files, viewerOnly, externalBusy = false
         <Button data-testid="versions-clear" disabled={disabled || !dependency || (!active && !integrityFailed)} onClick={clear}>{t('designVersions.clear')}</Button>
         {active ? <Button data-testid="versions-review-upgrade" aria-expanded={upgradesOpened} aria-controls={upgradesId} disabled={locked || integrityFailed} onClick={() => setUpgradesOpened((opened) => !opened)}>{t('designUpgrade.title')}</Button> : null}
       </div>
-      {active || integrityFailed ? <p className={styles.muted}>{t('designVersions.clearHint')}</p> : null}
+      {active || integrityFailed ? <p className={styles.muted}>{t('designVersions.clearHint')} {t('designValidation.clearHint')}</p> : null}
     </section>
     {upgradesOpened && active ? <div id={upgradesId}><DesignRuntimeUpgrades scope={scope} state={state} catalog={catalog} catalogRevision={snapshotRevision} viewerOnly={viewerOnly} externalBusy={busy || externalBusy || integrityFailed}
       onBusyChange={(next) => { setUpgradeBusy(next); busyCallback.current?.(next); }}

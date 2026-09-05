@@ -62,6 +62,7 @@ import { registerLocalComponentBinding, synchronizeLocalComponentBindings, verif
 import { effectiveProjectCodeIndex, readProjectCodeEvidence, refreshProjectCode } from './project-code.js';
 import { buildProjectHandoff } from './project-handoff.js';
 import { emitHandoffCode } from './handoff-emitter.js';
+import { createProjectValidationService } from './project-validation.js';
 import { createProjectMigrationRecipeService } from './project-migration-recipes.js';
 import {
   reindexComponentBindings,
@@ -200,7 +201,14 @@ export function createProjectDesignRuntimeService({ store, readSource, observeTa
     return state;
   }
 
+  const validation = createProjectValidationService({ store, readSource, observeTargetPackages, persist,
+    reject: (message, diagnostics) => { throw new ProjectDesignRuntimeError(409, 'DESIGN_RUNTIME_VALIDATION_FAILED', message, diagnostics ? { diagnostics } : undefined); },
+  });
+
   return {
+    validationSettings: validation.validationSettings,
+    saveValidationSettings: validation.saveValidationSettings,
+    validateArtifacts: validation.validateArtifacts,
     ...createProjectMigrationRecipeService({ read, readAtRevision, requireVersion }),
     get: (projectId: string) => read(projectId),
 
@@ -272,9 +280,7 @@ export function createProjectDesignRuntimeService({ store, readSource, observeTa
       // Explicit recovery can unpin an unavailable package without pretending its bytes were verified.
       const state = store.read(projectId);
       if (state.revision !== expectedRevision) throw new DesignRuntimeRevisionConflictError(expectedRevision, state.revision);
-      return persist(projectId, expectedRevision, { ...state,
-        dependencies: { ...state.dependencies, dependencies: [] }, lock: { ...state.lock, dependencies: [] },
-      });
+      return persist(projectId, expectedRevision, validation.prepareDependencyClear(projectId, state));
     },
 
     resolveDependency(projectId: string) {
