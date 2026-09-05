@@ -12,3 +12,4 @@ export * from './design-tokens.js';
 export * from './design-patterns.js';
 export * from './design-constraints.js';
 export * from './design-system-version.js';
+export * from './design-system-diff.js';
