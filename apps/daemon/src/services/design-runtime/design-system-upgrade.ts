@@ -13,6 +13,7 @@ import { buildReferenceGraph, compareDesignRuntimeKeys, queryReferenceGraph, res
 import { inspectSharedComponentChange, recordSharedComponentDesignSystemUpgrade, SharedComponentChangeError } from './shared-component-changes.js';
 import { reindexComponentBindings, revalidateComponentBinding, unbindComponent } from './code-component-index.js';
 import { resolveComponentBinding } from './binding-resolver.js';
+import { composeProjectCodeIndex, verifyProjectCodeSources } from './local-component-binding.js';
 import { validateComponentProperties } from './component-validator.js';
 import { validateDesignSystemMigrationRules } from './migration-rule-validation.js';
 import { migrateUpgradeSource, type UpgradeMigrationResult } from './upgrade-migration.js';
@@ -39,7 +40,9 @@ function contextWithDocument(context: DesignSystemUpgradeContext, version: Desig
 function migrateBindings(context: DesignSystemUpgradeContext, target: DesignSystemVersion, plan: DesignSystemMigrationPlan, migration: UpgradeMigrationResult, diagnostics: ValidationDiagnostic[], projectComponents: ProjectComponentRegistry): ComponentBindingRegistry {
   // Manual bindings remain exactly authored until an explicit binding decision replaces them.
   // Source prop transforms do not imply a production mapping transform: that would silently alter code contracts.
-  let bindings = reindexComponentBindings(context.bindings, context.codeIndex, { ...target.package.codeIndex, id: context.projectId }, target.package.registry, projectComponents);
+  const previousIndex = composeProjectCodeIndex(context.codeIndex, context.projectCodeIndex);
+  const targetIndex = composeProjectCodeIndex(target.package.codeIndex, context.projectCodeIndex);
+  let bindings = reindexComponentBindings(context.bindings, previousIndex, targetIndex, target.package.registry, projectComponents);
   for (const decision of plan.bindingDecisions) {
     const previous = bindings.bindings.find((entry) => entry.id === decision.bindingId);
     if (decision.type === 'remove') {
@@ -55,7 +58,7 @@ function migrateBindings(context: DesignSystemUpgradeContext, target: DesignSyst
       bindings = ComponentBindingRegistrySchema.parse({ ...bindings, bindings: [...bindings.bindings.filter((entry) => entry.id !== decision.bindingId), next] });
     } else {
       const result = decision.type === 'unbind' ? unbindComponent(bindings, decision.bindingId)
-        : revalidateComponentBinding(bindings, decision.bindingId, target.package.registry, target.package.codeIndex, projectComponents);
+        : revalidateComponentBinding(bindings, decision.bindingId, target.package.registry, targetIndex, projectComponents);
       if (!result.ok) diagnostics.push(...result.diagnostics);
       else bindings = result.bindings;
     }
@@ -66,7 +69,10 @@ function migrateBindings(context: DesignSystemUpgradeContext, target: DesignSyst
       : target.package.registry.components.some((entry) => binding.componentRef === `ds:${target.package.id}/${entry.id}`);
     if (!exists) { diagnostics.push(failure(`Binding ${binding.id} references a removed component; choose an explicit replacement or remove the binding.`)); continue; }
     if (binding.status === 'unbound') continue;
-    const checked = resolveComponentBinding(binding, target.package.registry, target.package.codeIndex.components, projectComponents);
+    if (binding.componentRef.startsWith('ds:') && context.projectCodeIndex.components.some((code) => code.id === binding.codeComponentId)) {
+      diagnostics.push(failure(`Design-system binding ${binding.id} cannot adopt project-owned implementation code.`)); continue;
+    }
+    const checked = resolveComponentBinding(binding, target.package.registry, targetIndex.components, projectComponents);
     if (!checked.ok) diagnostics.push(...checked.diagnostics);
   }
   return { ...bindings, bindings: [...bindings.bindings].sort((a, b) => compareDesignRuntimeKeys(a.id, b.id)) };
@@ -102,7 +108,7 @@ function compute(input: DesignSystemUpgradeContext, from: DesignSystemVersion, t
   const loaded = resolveLockedDesignSystemsSync(context.dependencies, context.lock, () => from);
   if (!loaded.ok) throw new DesignSystemUpgradeError('VALIDATION_FAILED', 'Current dependency cannot be verified.', loaded.diagnostics);
   if (!equal(context.codeIndex, { ...from.package.codeIndex, id: context.projectId })) throw new DesignSystemUpgradeError('CONFLICT', 'The project code index does not match its frozen source.', [failure('Upgrade requires the exact active code index.')]);
-  const diagnostics: ValidationDiagnostic[] = [];
+  const diagnostics: ValidationDiagnostic[] = verifyProjectCodeSources(context.projectCodeIndex, context.projectSources);
   if (!satisfiesDesignSystemRange(to.package.version, plan.targetRange)) diagnostics.push(failure('The target version does not satisfy the explicitly selected dependency range.'));
   const currentContext = contextWithDocument(context, from);
   const current = resolution(currentContext, limits);
@@ -165,7 +171,7 @@ function compute(input: DesignSystemUpgradeContext, from: DesignSystemVersion, t
     return equal(before, after) && !plan.bindingDecisions.some((entry) => entry.bindingId === id) ? [] : [{ bindingId: id, before, after }];
   });
   const affectedBindings = unique([...transitions.flatMap((entry) => [entry.before, entry.after].filter((value): value is ComponentBinding => value !== null)), ...context.bindings.bindings.filter((entry) => conservative || changedRefs.has(entry.componentRef))]);
-  const sourceFiles = unique(affectedBindings.flatMap((entry) => entry.status === 'unbound' ? [] : [...from.package.codeIndex.components, ...to.package.codeIndex.components].filter((code) => code.id === entry.codeComponentId).map((code) => code.sourcePath)));
+  const sourceFiles = unique(affectedBindings.flatMap((entry) => entry.status === 'unbound' ? [] : [...from.package.codeIndex.components, ...to.package.codeIndex.components, ...context.projectCodeIndex.components].filter((code) => code.id === entry.codeComponentId).map((code) => code.sourcePath)));
   const baseDigest = digest(context); const planDigest = digest(plan);
   const review = DesignSystemUpgradeReviewSchema.parse({
     schemaVersion: 1, id: `review${digest([baseDigest, planDigest]).slice(7)}`, projectId: context.projectId, baseRevision: context.revision, baseDigest, planDigest,
@@ -176,7 +182,7 @@ function compute(input: DesignSystemUpgradeContext, from: DesignSystemVersion, t
     diagnostics: unique(diagnostics), canApply: !diagnostics.some((entry) => entry.severity === 'error') && proposed.document !== null,
   });
   return { review, projectComponents, sharedChanges, document: migration.document, bindings,
-    codeIndex: { ...to.package.codeIndex, id: context.projectId }, lock: createProjectDesignSystemLock(context.projectId, [to]),
+    codeIndex: { ...to.package.codeIndex, id: context.projectId }, projectCodeIndex: context.projectCodeIndex, lock: createProjectDesignSystemLock(context.projectId, [to]),
     dependencies: { ...context.dependencies, dependencies: [{ designSystemId: to.package.id, version: plan.targetRange }] },
   };
 }

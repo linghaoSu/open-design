@@ -8,6 +8,7 @@ import { ComponentReferenceOwnerSchema, ComponentReferenceScreenOwnerSchema, Pro
 import { SharedComponentChangeStateSchema } from './shared-component-changes.js';
 import { UIIRDocumentSchema } from './ui-ir.js';
 import { ValidationDiagnosticSchema } from './validation.js';
+import { ProjectCodeSourceEvidenceSchema } from './local-component-binding.js';
 
 import { DesignSystemMigrationRuleSchema, refineDesignSystemMigrationRules } from './migration-rules.js';
 export { DesignSystemMigrationRuleSchema, type DesignSystemMigrationRule } from './migration-rules.js';
@@ -41,9 +42,12 @@ export const DesignSystemUpgradeContextSchema = z.object({
   projectId: DesignEntityIdSchema, revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   dependencies: ProjectDesignSystemDependenciesSchema, lock: ProjectDesignSystemLockSchema,
   projectComponents: ProjectComponentRegistrySchema, document: UIIRDocumentSchema.nullable(),
-  codeIndex: CodeComponentIndexSchema, bindings: ComponentBindingRegistrySchema, sharedChanges: SharedComponentChangeStateSchema,
+  codeIndex: CodeComponentIndexSchema, projectCodeIndex: CodeComponentIndexSchema,
+  /** Current registered source is re-read for review/apply and included in the reviewed base digest. */
+  projectSources: z.array(ProjectCodeSourceEvidenceSchema),
+  bindings: ComponentBindingRegistrySchema, sharedChanges: SharedComponentChangeStateSchema,
 }).strict().superRefine((context, ctx) => {
-  for (const field of ['dependencies', 'lock', 'projectComponents', 'codeIndex', 'bindings', 'sharedChanges'] as const) if (context[field].id !== context.projectId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field, 'id'], message: 'Upgrade state must belong to one project.' });
+  for (const field of ['dependencies', 'lock', 'projectComponents', 'codeIndex', 'projectCodeIndex', 'bindings', 'sharedChanges'] as const) if (context[field].id !== context.projectId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field, 'id'], message: 'Upgrade state must belong to one project.' });
   if (context.lock.dependencies.length !== 1 || context.dependencies.dependencies.length !== 1) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['lock'], message: 'A reviewed upgrade requires one active design system.' });
 });
 export type DesignSystemUpgradeContext = z.infer<typeof DesignSystemUpgradeContextSchema>;
@@ -68,7 +72,7 @@ export const ApplyDesignSystemUpgradeRequestSchema = z.object({ reviewId: Design
 export type ApplyDesignSystemUpgradeRequest = z.infer<typeof ApplyDesignSystemUpgradeRequestSchema>;
 export const DesignSystemUpgradeResultSchema = z.object({
   schemaVersion: DesignRuntimeSchemaVersionSchema, projectComponents: ProjectComponentRegistrySchema, document: UIIRDocumentSchema.nullable(),
-  bindings: ComponentBindingRegistrySchema, codeIndex: CodeComponentIndexSchema, sharedChanges: SharedComponentChangeStateSchema,
+  bindings: ComponentBindingRegistrySchema, codeIndex: CodeComponentIndexSchema, projectCodeIndex: CodeComponentIndexSchema, sharedChanges: SharedComponentChangeStateSchema,
   dependencies: ProjectDesignSystemDependenciesSchema, lock: ProjectDesignSystemLockSchema, review: DesignSystemUpgradeReviewSchema,
 }).strict();
 export type DesignSystemUpgradeResult = z.infer<typeof DesignSystemUpgradeResultSchema>;

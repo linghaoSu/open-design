@@ -28,7 +28,7 @@ async function withUpgrade(run: (fixture: {
   migrateDesignRuntimeStore(db);
   const store = createDesignRuntimeStore(db);
   const fixture = upgradeFixture();
-  const { projectId: _id, ...state } = fixture.context;
+  const { projectId: _id, projectSources: _sources, ...state } = fixture.context;
   store.write('project', 0, { ...state, schemaVersion: 1, registry: fixture.from.package.registry }, [fixture.from, fixture.to]);
   const service = createProjectDesignRuntimeService({ store, readSource: async () => { throw new Error('An exact upgrade must never read mutable project source.'); } });
   const authorize = vi.fn<AuthorizeProjectRequest>(async () => true);

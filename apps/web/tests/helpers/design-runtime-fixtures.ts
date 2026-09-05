@@ -4,6 +4,7 @@ export function emptyDesignRuntimeState(revision = 0): ProjectDesignRuntimeState
   return {
     schemaVersion: 1, revision, registry: null,
     codeIndex: { schemaVersion: 1, id: 'project', components: [] },
+    projectCodeIndex: { schemaVersion: 1, id: 'project', components: [] },
     bindings: { schemaVersion: 1, id: 'project', bindings: [] },
     projectComponents: { schemaVersion: 1, id: 'project', components: [] },
     document: null,

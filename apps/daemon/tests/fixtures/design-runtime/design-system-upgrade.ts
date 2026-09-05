@@ -20,6 +20,7 @@ export function upgradeFixture() {
     dependencies: { schemaVersion: 1, id: 'project', dependencies: [{ designSystemId: 'acme', version: '^1.0.0' }] },
     lock: createProjectDesignSystemLock('project', [from]),
     codeIndex: { ...structuredClone(from.package.codeIndex), id: 'project' }, bindings: { ...structuredClone(from.package.bindings), id: 'project' },
+    projectCodeIndex: { schemaVersion: 1, id: 'project', components: [] }, projectSources: [],
     sharedChanges: { schemaVersion: 1, id: 'project', drafts: [], history: [] },
     projectComponents: { schemaVersion: 1, id: 'project', components: [
       { schemaVersion: 1, id: 'LocalButton', name: 'Local Button', revision: 1, props: props(), template: { schemaVersion: 1, type: 'component', id: 'button-template', ref: 'ds:acme/Button' }, propMappings: [{ prop: 'tone', nodeId: 'button-template', path: ['props', 'variant'] }] },

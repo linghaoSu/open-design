@@ -47,6 +47,12 @@ import {
   ProjectDesignSystemDependenciesSchema,
   ProjectDesignSystemLockSchema,
   ValidationDiagnosticSchema,
+  ExtractSourceCodeComponentRequestSchema,
+  RegisterLocalComponentBindingRequestSchema,
+  ComponentFrameworkSchema,
+  HandoffBuildResultSchema,
+  HandoffCodeResultSchema,
+  HandoffScreenOutputSchema,
 } from '../design-runtime/index.js';
 
 const revisionSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -57,6 +63,8 @@ export const ProjectDesignRuntimeStateSchema = z.object({
   revision: revisionSchema,
   registry: ComponentRegistrySchema.nullable(),
   codeIndex: CodeComponentIndexSchema,
+  /** Registered project implementations remain separate from package-owned codeIndex. */
+  projectCodeIndex: CodeComponentIndexSchema,
   bindings: ComponentBindingRegistrySchema,
   projectComponents: ProjectComponentRegistrySchema,
   document: UIIRDocumentSchema.nullable(),
@@ -64,7 +72,7 @@ export const ProjectDesignRuntimeStateSchema = z.object({
   dependencies: ProjectDesignSystemDependenciesSchema,
   lock: ProjectDesignSystemLockSchema,
 }).strict().superRefine((state, ctx) => {
-  if ([state.bindings.id, state.projectComponents.id, state.sharedChanges.id, state.dependencies.id, state.lock.id].some((id) => id !== state.codeIndex.id)) {
+  if ([state.projectCodeIndex.id, state.bindings.id, state.projectComponents.id, state.sharedChanges.id, state.dependencies.id, state.lock.id].some((id) => id !== state.codeIndex.id)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['bindings', 'id'], message: 'All project runtime registries and change state must share a project identity.' });
   }
   if (state.dependencies.dependencies.length > 1 || state.lock.dependencies.length > 1) {
@@ -76,9 +84,12 @@ export const ProjectDesignRuntimeStateSchema = z.object({
   if (state.lock.dependencies.length && state.registry?.id !== state.lock.dependencies[0]?.designSystemId) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['registry'], message: 'The working registry must belong to the active design system.' });
   }
-  if (state.registry === null && (state.codeIndex.components.length || state.bindings.bindings.length)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['registry'], message: 'An uncompiled project cannot contain code components or bindings.' });
+  if (state.registry === null && (state.codeIndex.components.length || state.bindings.bindings.some((binding) => binding.componentRef.startsWith('ds:')))) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['registry'], message: 'A project without a design system cannot contain design-system-owned code or bindings.' });
   }
+  const packageCode = new Set(state.codeIndex.components.map((component) => component.id));
+  if (state.projectCodeIndex.components.some((component) => packageCode.has(component.id))) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['projectCodeIndex'], message: 'Project and design-system code identities cannot collide.' });
+  if (state.bindings.bindings.some((binding) => binding.componentRef.startsWith('ds:') && binding.status !== 'unbound' && state.projectCodeIndex.components.some((code) => code.id === binding.codeComponentId))) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['bindings'], message: 'Design-system bindings must reference design-system-owned code.' });
 });
 export type ProjectDesignRuntimeState = z.infer<typeof ProjectDesignRuntimeStateSchema>;
 
@@ -140,6 +151,42 @@ export const ProjectDesignRuntimeResolveResponseSchema = z.object({
   resolution: ProjectDesignRuntimeBindingResolutionSchema,
 }).strict();
 export type ProjectDesignRuntimeResolveResponse = z.infer<typeof ProjectDesignRuntimeResolveResponseSchema>;
+
+export const ProjectDesignRuntimeRegisterLocalBindingRequestSchema = z.object({
+  expectedRevision: revisionSchema,
+  source: ExtractSourceCodeComponentRequestSchema.omit({ sourceText: true }),
+  binding: RegisterLocalComponentBindingRequestSchema.innerType().shape.binding,
+}).strict().superRefine(({ expectedRevision: _revision, source, binding }, ctx) => {
+  const result = RegisterLocalComponentBindingRequestSchema.safeParse({ source: { ...source, sourceText: '' }, binding });
+  if (!result.success) result.error.issues.forEach((issue) => ctx.addIssue(issue));
+});
+export type ProjectDesignRuntimeRegisterLocalBindingRequest = z.infer<typeof ProjectDesignRuntimeRegisterLocalBindingRequestSchema>;
+export const ProjectDesignRuntimeRegisterLocalBindingResponseSchema = z.object({ state: ProjectDesignRuntimeStateSchema, binding: ComponentBindingSchema, diagnostics: z.array(ValidationDiagnosticSchema) }).strict();
+export type ProjectDesignRuntimeRegisterLocalBindingResponse = z.infer<typeof ProjectDesignRuntimeRegisterLocalBindingResponseSchema>;
+export const ProjectDesignRuntimeRefreshCodeResponseSchema = z.object({ state: ProjectDesignRuntimeStateSchema, diagnostics: z.array(ValidationDiagnosticSchema) }).strict();
+export type ProjectDesignRuntimeRefreshCodeResponse = z.infer<typeof ProjectDesignRuntimeRefreshCodeResponseSchema>;
+
+/** Select stored facts, never caller-authored claimed source or historical review evidence. */
+export const ProjectDesignRuntimeHandoffChangeSelectionSchema = z.object({
+  fromVersion: z.object({ designSystemId: DesignEntityIdSchema, version: DesignSystemSemVerSchema }).strict().optional(),
+  sharedChangeIds: z.array(DesignEntityIdSchema).refine((ids) => new Set(ids).size === ids.length, 'Shared change identities must be unique.').optional(),
+}).strict();
+export const ProjectDesignRuntimeCreateHandoffRequestSchema = z.object({
+  expectedRevision: revisionSchema, id: DesignEntityIdSchema, framework: ComponentFrameworkSchema,
+  changeContextSelection: ProjectDesignRuntimeHandoffChangeSelectionSchema.optional(),
+}).strict();
+export type ProjectDesignRuntimeCreateHandoffRequest = z.infer<typeof ProjectDesignRuntimeCreateHandoffRequestSchema>;
+export const ProjectDesignRuntimeHandoffResponseSchema = z.object({ revision: revisionSchema, result: HandoffBuildResultSchema }).strict().superRefine((response, ctx) => {
+  if (response.result.manifest && response.result.manifest.projectRevision !== response.revision) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['revision'], message: 'Handoff must identify the exact response revision.' });
+});
+export type ProjectDesignRuntimeHandoffResponse = z.infer<typeof ProjectDesignRuntimeHandoffResponseSchema>;
+export const ProjectDesignRuntimeEmitHandoffRequestSchema = ProjectDesignRuntimeCreateHandoffRequestSchema.extend({ outputs: z.array(HandoffScreenOutputSchema) }).strict();
+export type ProjectDesignRuntimeEmitHandoffRequest = z.infer<typeof ProjectDesignRuntimeEmitHandoffRequestSchema>;
+export const ProjectDesignRuntimeEmitHandoffResponseSchema = z.object({ revision: revisionSchema, handoff: HandoffBuildResultSchema, code: HandoffCodeResultSchema }).strict().superRefine((response, ctx) => {
+  if (response.handoff.manifest && response.handoff.manifest.projectRevision !== response.revision) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['revision'], message: 'Emitted code must identify the exact handoff revision.' });
+  if (response.code.ok && !response.handoff.manifest?.ready) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['code'], message: 'Successful emission requires a ready, verified handoff.' });
+});
+export type ProjectDesignRuntimeEmitHandoffResponse = z.infer<typeof ProjectDesignRuntimeEmitHandoffResponseSchema>;
 
 export const ProjectDesignRuntimeValidateRequestSchema = z.object({
   component: z.string().min(1),

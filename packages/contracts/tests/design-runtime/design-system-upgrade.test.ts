@@ -16,6 +16,7 @@ const context = { projectId: 'project', revision: 3,
   lock: { schemaVersion: 1, id: 'project', dependencies: [from] },
   projectComponents: { schemaVersion: 1, id: 'project', components: [] }, document: null,
   codeIndex: { schemaVersion: 1, id: 'project', components: [] }, bindings: { schemaVersion: 1, id: 'project', bindings: [] }, sharedChanges: { schemaVersion: 1, id: 'project', history: [], drafts: [] },
+  projectCodeIndex: { schemaVersion: 1, id: 'project', components: [] }, projectSources: [],
 };
 const resolved = { schemaVersion: 1, document: { schemaVersion: 1, id: 'project', screens: [] }, origins: [], diagnostics: [] };
 const diagnostic = { schemaVersion: 1, severity: 'error', code: 'ODDS1003', message: 'Old value is invalid.' };

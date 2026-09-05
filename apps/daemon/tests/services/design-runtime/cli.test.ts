@@ -36,6 +36,7 @@ function state(revision = 7): ProjectDesignRuntimeState {
     schemaVersion: 1, revision,
     registry: { schemaVersion: 1, id: 'acme', components: [{ schemaVersion: 1, id: 'button', name: 'Button', props: {} }] },
     codeIndex: { schemaVersion: 1, id: 'acme', components: [{ schemaVersion: 1, id: 'acme/Button', framework: 'react', name: 'Button', exportName: 'Button', sourcePath: 'src/Button.tsx', props: {} }] },
+    projectCodeIndex: { schemaVersion: 1, id: 'acme', components: [] },
     bindings: { schemaVersion: 1, id: 'acme', bindings: [{ schemaVersion: 1, id: 'binding:acme/Button', componentRef: 'ds:acme/button', framework: 'react', status: 'bound', verified: true, codeComponentId: 'acme/Button' }] },
     projectComponents: { schemaVersion: 1, id: 'acme', components: [] },
     document: null,
@@ -553,7 +554,7 @@ describe('reviewed upgrade CLI', () => {
     const plan = blocked ? { ...fixture.plan, rules: [], bindingDecisions: [] } : fixture.plan;
     const review = reviewDesignSystemUpgrade(fixture.context, fixture.from, fixture.to, plan);
     const input = { plan, reviewId: review.id, baseDigest: review.baseDigest, planDigest: review.planDigest };
-    const { projectId: _id, ...contextState } = fixture.context;
+    const { projectId: _id, projectSources: _sources, ...contextState } = fixture.context;
     const previous = { ...contextState, schemaVersion: 1 as const, registry: fixture.from.package.registry };
     return { fixture, review, input, previous };
   }

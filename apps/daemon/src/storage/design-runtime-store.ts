@@ -98,6 +98,7 @@ export function createDesignRuntimeStore(db: Database.Database): DesignRuntimeSt
       revision: 0,
       registry: null,
       codeIndex: { schemaVersion: 1, id: projectId, components: [] },
+      projectCodeIndex: { schemaVersion: 1, id: projectId, components: [] },
       bindings: { schemaVersion: 1, id: projectId, bindings: [] },
       ...additions,
       ...dependencyAdditions,
@@ -108,8 +109,11 @@ export function createDesignRuntimeStore(db: Database.Database): DesignRuntimeSt
     const inherited = legacy ? { ...persisted, ...additions } : persisted;
     const legacyDependencies = inherited !== null && typeof inherited === 'object' && !Array.isArray(inherited)
       && ['dependencies', 'lock'].every((key) => !Object.hasOwn(inherited, key));
-    const state = ProjectDesignRuntimeStateSchema.parse(legacyDependencies ? { ...inherited, ...dependencyAdditions } : inherited);
-    if (state.codeIndex.id !== projectId || state.bindings.id !== projectId || state.projectComponents.id !== projectId || state.sharedChanges.id !== projectId || state.dependencies.id !== projectId || state.lock.id !== projectId || (row && state.revision !== row.revision)) {
+    const withDependencies = legacyDependencies ? { ...inherited, ...dependencyAdditions } : inherited;
+    const legacyProjectCode = withDependencies !== null && typeof withDependencies === 'object' && !Array.isArray(withDependencies) && !Object.hasOwn(withDependencies, 'projectCodeIndex');
+    const withProjectCode = legacyProjectCode ? { ...withDependencies, projectCodeIndex: { schemaVersion: 1, id: projectId, components: [] } } : withDependencies;
+    const state = ProjectDesignRuntimeStateSchema.parse(withProjectCode);
+    if (state.codeIndex.id !== projectId || state.projectCodeIndex.id !== projectId || state.bindings.id !== projectId || state.projectComponents.id !== projectId || state.sharedChanges.id !== projectId || state.dependencies.id !== projectId || state.lock.id !== projectId || (row && state.revision !== row.revision)) {
       throw new Error('Persisted design runtime identity or revision is inconsistent.');
     }
     return state;
@@ -121,7 +125,7 @@ export function createDesignRuntimeStore(db: Database.Database): DesignRuntimeSt
       throw new DesignRuntimeRevisionConflictError(expectedRevision, current.revision);
     }
     const next = ProjectDesignRuntimeStateSchema.parse({ ...state, revision: expectedRevision + 1 });
-    if (next.codeIndex.id !== projectId || next.bindings.id !== projectId || next.projectComponents.id !== projectId || next.sharedChanges.id !== projectId || next.dependencies.id !== projectId || next.lock.id !== projectId) {
+    if (next.codeIndex.id !== projectId || next.projectCodeIndex.id !== projectId || next.bindings.id !== projectId || next.projectComponents.id !== projectId || next.sharedChanges.id !== projectId || next.dependencies.id !== projectId || next.lock.id !== projectId) {
       throw new Error('Design runtime state must belong to its project.');
     }
     for (const input of versions) {

@@ -2,7 +2,11 @@ import type { Express, Request, Response } from 'express';
 import {
   ProjectDesignRuntimeReviewUpgradeRequestSchema,
   ProjectDesignRuntimeApplyUpgradeRequestSchema,
+  ProjectDesignRuntimeRegisterLocalBindingRequestSchema,
+  ProjectDesignRuntimeCreateHandoffRequestSchema,
+  ProjectDesignRuntimeEmitHandoffRequestSchema,
   ProjectDesignRuntimeInstantiateMigrationRecipeRequestSchema,
+  CodeIdentitySchema,
   JsonValueSchema,
   DesignSystemSemVerSchema,
   ProjectDesignRuntimeImportVersionRequestSchema,
@@ -36,6 +40,7 @@ import { CompilerError } from '../services/design-runtime/react-compiler.js';
 import { DesignSystemVersionError } from '../services/design-runtime/design-system-version.js';
 import { DesignSystemUpgradeError } from '../services/design-runtime/design-system-upgrade.js';
 import { SharedComponentChangeError } from '../services/design-runtime/shared-component-changes.js';
+import { LocalComponentBindingError } from '../services/design-runtime/local-component-binding.js';
 
 export interface RegisterDesignRuntimeRoutesDeps extends RouteDeps<'designRuntime' | 'authorizeProjectRequest'> {}
 
@@ -68,6 +73,8 @@ function sendFailure(res: Response, error: unknown): void {
     sendApiError(res, error.code === 'CONFLICT' ? 409 : 400,
       error.code === 'CONFLICT' ? 'DESIGN_RUNTIME_UPGRADE_CONFLICT' : 'DESIGN_RUNTIME_UPGRADE_INVALID', error.message,
       { details: JsonValueSchema.parse({ diagnostics: error.diagnostics, ...(error.review ? { review: error.review } : {}) }) });
+  } else if (error instanceof LocalComponentBindingError) {
+    sendApiError(res, 400, 'DESIGN_RUNTIME_INVALID_BINDING', error.message, { details: JsonValueSchema.parse({ diagnostics: error.diagnostics }) });
   } else if (error instanceof ProjectDesignRuntimeError) {
     sendApiError(res, error.status, error.code, error.message,
       error.details === undefined ? {} : { details: JsonValueSchema.parse(error.details) });
@@ -132,14 +139,19 @@ export function registerDesignRuntimeRoutes(app: Express, deps: RegisterDesignRu
     const { query } = parseInput(ProjectDesignRuntimeSearchRequestSchema, req.query);
     return service.codeComponents(String(req.params.id), query);
   }));
-  app.put(`${prefix}/bindings/:bindingId`, handle('write', (req) => ({
-    state: service.bind(String(req.params.id), String(req.params.bindingId), parseInput(ProjectDesignRuntimeBindRequestSchema, req.body)),
+  app.get(`${prefix}/project-code-components`, handle('read', (req) => service.projectCodeComponents(String(req.params.id), parseInput(ProjectDesignRuntimeSearchRequestSchema, req.query).query)));
+  app.post(`${prefix}/project-code-components/register-binding`, handle('write', (req) => service.registerLocalBinding(String(req.params.id), parseInput(ProjectDesignRuntimeRegisterLocalBindingRequestSchema, req.body))));
+  app.post(`${prefix}/project-code-components/:codeId/refresh`, handle('write', (req) => service.refreshCodeComponent(String(req.params.id), parseInput(CodeIdentitySchema, req.params.codeId), parseInput(ProjectDesignRuntimeRevisionRequestSchema, req.body))));
+  app.post(`${prefix}/handoffs`, handle('read', (req) => service.handoff(String(req.params.id), parseInput(ProjectDesignRuntimeCreateHandoffRequestSchema, req.body))));
+  app.post(`${prefix}/handoffs/emit`, handle('read', (req) => service.emitHandoff(String(req.params.id), parseInput(ProjectDesignRuntimeEmitHandoffRequestSchema, req.body))));
+  app.put(`${prefix}/bindings/:bindingId`, handle('write', async (req) => ({
+    state: await service.bind(String(req.params.id), String(req.params.bindingId), parseInput(ProjectDesignRuntimeBindRequestSchema, req.body)),
   })));
   app.delete(`${prefix}/bindings/:bindingId`, handle('write', (req) => ({
     state: service.unbind(String(req.params.id), String(req.params.bindingId), parseInput(ProjectDesignRuntimeRevisionRequestSchema, req.body)),
   })));
-  app.post(`${prefix}/bindings/:bindingId/revalidate`, handle('write', (req) => ({
-    state: service.revalidate(String(req.params.id), String(req.params.bindingId), parseInput(ProjectDesignRuntimeRevisionRequestSchema, req.body)),
+  app.post(`${prefix}/bindings/:bindingId/revalidate`, handle('write', async (req) => ({
+    state: await service.revalidate(String(req.params.id), String(req.params.bindingId), parseInput(ProjectDesignRuntimeRevisionRequestSchema, req.body)),
   })));
   app.get(`${prefix}/bindings/:bindingId/resolve`, handle('read', (req) =>
     service.resolve(String(req.params.id), String(req.params.bindingId))));

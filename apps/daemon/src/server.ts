@@ -844,6 +844,7 @@ import { registerDesignRuntimeRoutes } from './routes/design-runtime.js';
 import { createDesignRuntimeStore, DesignRuntimeProjectNotFoundError } from './storage/design-runtime-store.js';
 import { decodeDesignRuntimeSource } from './services/design-runtime/source-text.js';
 import { createProjectDesignRuntimeService } from './services/design-runtime/project-service.js';
+import { observeInstalledTargetPackages } from './services/design-runtime/installed-package-observer.js';
 import { registerHostToolsRoutes } from './routes/host-tools.js';
 import { registerPluginAssetRoutes } from './routes/plugins/assets.js';
 import { registerPluginMarketplaceRoutes } from './routes/plugins/marketplaces.js';
@@ -8463,6 +8464,11 @@ export async function startServer({
   });
   const designRuntime = createProjectDesignRuntimeService({
     store: createDesignRuntimeStore(db),
+    observeTargetPackages: async (projectId, packageNames) => {
+      const project = getProject(db, projectId);
+      if (!project) throw new DesignRuntimeProjectNotFoundError();
+      return observeInstalledTargetPackages(resolveProjectDir(PROJECTS_DIR, projectId, project.metadata), packageNames);
+    },
     readSource: async (projectId, sourcePath) => {
       const project = getProject(db, projectId);
       if (!project) throw new DesignRuntimeProjectNotFoundError();

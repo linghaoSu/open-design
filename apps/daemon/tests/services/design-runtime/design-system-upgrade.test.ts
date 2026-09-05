@@ -4,6 +4,7 @@ import { applyDesignSystemUpgrade, reviewDesignSystemUpgrade } from '../../../sr
 import { createDesignSystemVersion, createProjectDesignSystemLock } from '../../../src/services/design-runtime/design-system-version.js';
 import { recordSharedComponentRegistryChange, recordSharedComponentDesignSystemUpgrade, stageSharedComponentChange } from '../../../src/services/design-runtime/shared-component-changes.js';
 import { upgradeFixture, upgradeVersion } from '../../fixtures/design-runtime/design-system-upgrade.js';
+import { extractSourceCodeComponent } from '../../../src/services/design-runtime/source-compiler.js';
 const request = (review: DesignSystemUpgradeReview) => ({ reviewId: review.id, baseDigest: review.baseDigest, planDigest: review.planDigest, plan: review.plan });
 function plain(context: DesignSystemUpgradeContext, children: UIIRNode[]): DesignSystemUpgradeContext {
   return { ...context, projectComponents: { ...context.projectComponents, components: [] }, document: { schemaVersion: 1 as const, id: 'design', screens: [{ schemaVersion: 1 as const, type: 'screen' as const, id: 'Applications', children }] } };
@@ -280,6 +281,36 @@ describe('upgrade review semantic coverage', () => {
 });
 
 describe('local binding transitions during upgrades', () => {
+  it('preserves project-owned implementations and binds current source bytes into the reviewed upgrade proof', () => {
+    const { context, from, to, plan } = upgradeFixture();
+    const source = { framework: 'react' as const, sourcePath: 'src/ExistingCard.tsx', exportName: 'ExistingCard', codeComponentId: 'project/Card', sourceText: "export function ExistingCard(props:{tone?:'primary'|'secondary'|'ghost'}){return null;}" };
+    context.projectCodeIndex.components = [extractSourceCodeComponent(source)]; context.projectSources = [{ codeComponentId: source.codeComponentId, sourceText: source.sourceText }];
+    context.bindings.bindings.push({ schemaVersion: 1, id: 'local/card-source', componentRef: 'local:Card', framework: 'react', status: 'bound', verified: true, definitionRevision: 3, codeComponentId: source.codeComponentId });
+    expect(reviewDesignSystemUpgrade(context, from, to, plan).canApply).toBe(false);
+    plan.bindingDecisions.push({ type: 'revalidate', bindingId: 'local/card-source' });
+    const review = reviewDesignSystemUpgrade(context, from, to, plan); expect(review.canApply).toBe(true);
+    expect(review.codeImpact.sourceFiles).toContain(source.sourcePath);
+    const applied = applyDesignSystemUpgrade(context, from, to, request(review));
+    expect(applied.projectCodeIndex).toEqual(context.projectCodeIndex);
+    expect(applied.bindings.bindings.find((entry) => entry.id === 'local/card-source')).toMatchObject({ status: 'bound', definitionRevision: 4 });
+    expect(reviewDesignSystemUpgrade({ ...context, projectSources: [] }, from, to, plan)).toMatchObject({ canApply: false, diagnostics: expect.arrayContaining([expect.objectContaining({ code: 'ODDS7004' })]) });
+    context.projectSources[0]!.sourceText += '\n// Changed after review, with the same public metadata.';
+    expect(() => applyDesignSystemUpgrade(context, from, to, request(review))).toThrow('changed after review');
+  });
+
+  it('rejects target package identities colliding with project-owned code without changing either snapshot', () => {
+    const { context, from, to, plan } = upgradeFixture();
+    const source = { framework: 'react' as const, sourcePath: 'src/ExistingCard.tsx', exportName: 'ExistingCard', codeComponentId: 'project/Card', sourceText: 'export function ExistingCard(){return null;}' };
+    context.projectCodeIndex.components = [extractSourceCodeComponent(source)]; context.projectSources = [{ codeComponentId: source.codeComponentId, sourceText: source.sourceText }];
+    const pkg = structuredClone(to.package); pkg.codeIndex.components[0]!.id = source.codeComponentId;
+    const binding = pkg.bindings.bindings[0]!; if (binding.status === 'unbound') throw new Error('fixture'); binding.codeComponentId = source.codeComponentId;
+    const colliding = createDesignSystemVersion(pkg); plan.to = createProjectDesignSystemLock('project', [colliding]).dependencies[0]!;
+    const before = structuredClone({ context, from, colliding, plan });
+    const review = reviewDesignSystemUpgrade(context, from, colliding, plan);
+    expect(review).toMatchObject({ canApply: false, diagnostics: expect.arrayContaining([expect.objectContaining({ message: expect.stringContaining('collides') })]) });
+    expect({ context, from, colliding, plan }).toEqual(before);
+  });
+
   it('stales bindings after migrated local definition revisions and requires explicit verification of the new revision', () => {
     const { context, from, to, plan } = upgradeFixture();
     context.bindings.bindings.push({ schemaVersion: 1, id: 'local/card-production', componentRef: 'local:Card', framework: 'react', status: 'bound', verified: true, definitionRevision: 3, codeComponentId: 'ui/Button', propMappings: [{ designProp: 'tone', codeProp: 'variant' }] });

@@ -6,6 +6,16 @@ import {
   type ProjectDesignRuntimeApplyUpgradeRequest,
   type DesignSystemUpgradeContext,
   ProjectDesignRuntimeBindRequestSchema,
+  ProjectDesignRuntimeStateSchema,
+  ProjectDesignRuntimeRegisterLocalBindingRequestSchema,
+  ProjectDesignRuntimeCreateHandoffRequestSchema,
+  ProjectDesignRuntimeEmitHandoffRequestSchema,
+  type ProjectDesignRuntimeRegisterLocalBindingRequest,
+  type ProjectDesignRuntimeCreateHandoffRequest,
+  type ProjectDesignRuntimeEmitHandoffRequest,
+  type ProjectCodeSourceEvidence,
+  type HandoffTargetPackage,
+  type HandoffCodeResult,
   ProjectDesignRuntimeImportVersionRequestSchema,
   ProjectDesignRuntimePublishCurrentRequestSchema,
   ProjectDesignRuntimeActivateDependencyRequestSchema,
@@ -48,6 +58,10 @@ import {
 import { createDesignSystemVersion, createProjectDesignSystemLock, resolveLockedDesignSystemsSync, verifyDesignSystemVersion, DesignSystemVersionError } from './design-system-version.js';
 import { reviewDesignSystemUpgrade, applyDesignSystemUpgrade } from './design-system-upgrade.js';
 import { resolveComponentBinding } from './binding-resolver.js';
+import { registerLocalComponentBinding, synchronizeLocalComponentBindings, verifyProjectCodeSources } from './local-component-binding.js';
+import { effectiveProjectCodeIndex, readProjectCodeEvidence, refreshProjectCode } from './project-code.js';
+import { buildProjectHandoff } from './project-handoff.js';
+import { emitHandoffCode } from './handoff-emitter.js';
 import { createProjectMigrationRecipeService } from './project-migration-recipes.js';
 import {
   reindexComponentBindings,
@@ -57,7 +71,7 @@ import {
   upsertComponentBinding,
   type ComponentBindingMutationResult,
 } from './code-component-index.js';
-import { validateComponentUsage } from './component-validator.js';
+import { validateComponentProperties, validateComponentUsage } from './component-validator.js';
 import { compileComponentRegistry } from './registry-compiler.js';
 import { deleteProjectComponent, detachComponentInstance, resolveProjectDocument } from './project-components.js';
 import { analyzeComponentDeletion, compareDesignRuntimeKeys, queryReferenceGraph } from './reference-graph.js';
@@ -82,6 +96,8 @@ export interface ProjectDesignRuntimeServiceDeps {
   store: DesignRuntimeStore;
   /** Inject the production project-file reader; routes authorize before any call. */
   readSource: (projectId: string, sourcePath: string) => Promise<string>;
+  /** Omission stays explicitly unknown in tests/embedders; production injects the project observer. */
+  observeTargetPackages?: (projectId: string, packageNames: readonly string[]) => Promise<HandoffTargetPackage[]>;
 }
 
 function requireRegistry(state: ProjectDesignRuntimeState): ComponentRegistry {
@@ -106,10 +122,10 @@ function componentContext(state: ProjectDesignRuntimeState) {
   return { registry: state.registry, projectComponents: state.projectComponents, document: state.document ?? { schemaVersion: 1 as const, id: state.projectComponents.id, screens: [] } };
 }
 
-function upgradeContext(projectId: string, state: ProjectDesignRuntimeState): DesignSystemUpgradeContext {
+function upgradeContext(projectId: string, state: ProjectDesignRuntimeState, projectSources: ProjectCodeSourceEvidence[]): DesignSystemUpgradeContext {
   if (state.lock.dependencies.length !== 1) throw new ProjectDesignRuntimeError(409, 'DESIGN_RUNTIME_UPGRADE_CONFLICT', 'A reviewed upgrade requires one active design-system dependency.');
   return { projectId, revision: state.revision, dependencies: state.dependencies, lock: state.lock,
-    codeIndex: state.codeIndex, bindings: state.bindings, projectComponents: state.projectComponents,
+    codeIndex: state.codeIndex, projectCodeIndex: state.projectCodeIndex, projectSources, bindings: state.bindings, projectComponents: state.projectComponents,
     document: state.document, sharedChanges: state.sharedChanges };
 }
 
@@ -124,7 +140,7 @@ function requireProjectComponent(state: ProjectDesignRuntimeState, componentId: 
   return definition;
 }
 
-export function createProjectDesignRuntimeService({ store, readSource }: ProjectDesignRuntimeServiceDeps) {
+export function createProjectDesignRuntimeService({ store, readSource, observeTargetPackages = async (_projectId, names) => [...new Set(names)].sort().map((name) => ({ name, installation: { status: 'unknown' as const } })) }: ProjectDesignRuntimeServiceDeps) {
   function dependencyResolution(projectId: string, state: ProjectDesignRuntimeState) {
     return resolveLockedDesignSystemsSync(state.dependencies, state.lock, (entry) => store.readVersion(projectId, entry.designSystemId, entry.version));
   }
@@ -136,7 +152,26 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
   function read(projectId: string): ProjectDesignRuntimeState {
     const state = store.read(projectId);
     const version = activeVersion(projectId, state);
-    return version ? { ...state, registry: version.package.registry, codeIndex: { ...version.package.codeIndex, id: projectId } } : state;
+    const next = version ? { ...state, registry: version.package.registry, codeIndex: { ...version.package.codeIndex, id: projectId } } : state;
+    return { ...next, bindings: reindexComponentBindings(state.bindings, effectiveProjectCodeIndex(state), effectiveProjectCodeIndex(next), next.registry, next.projectComponents) };
+  }
+  function persist(projectId: string, expectedRevision: number, state: ProjectDesignRuntimeState, versions?: readonly DesignSystemVersion[]) {
+    const next = { ...state, bindings: synchronizeLocalComponentBindings({ ...state, baseCodeIndex: state.codeIndex }) };
+    const checked = ProjectDesignRuntimeStateSchema.safeParse(next);
+    if (!checked.success) throw new ProjectDesignRuntimeError(400, 'DESIGN_RUNTIME_INVALID_BINDING', 'The proposed project crosses code or binding ownership boundaries.', { issues: checked.error.issues.map(({ path, message }) => ({ path, message })) });
+    return store.write(projectId, expectedRevision, checked.data, versions);
+  }
+  const dsBindings = (state: ProjectDesignRuntimeState) => ({ ...state.bindings, bindings: state.bindings.bindings.filter((binding) => binding.componentRef.startsWith('ds:')) });
+  const sourceEvidence = (projectId: string, state: ProjectDesignRuntimeState) => readProjectCodeEvidence(state.projectCodeIndex, (path) => readSource(projectId, path));
+  async function bindingSourceDiagnostics(projectId: string, state: ProjectDesignRuntimeState, binding: ComponentBinding) {
+    // Local reuse of editable DS code also needs current bytes; frozen DS bytes were verified by read().
+    const candidates = binding.componentRef.startsWith('local:') && state.lock.dependencies.length === 0 ? effectiveProjectCodeIndex(state) : state.projectCodeIndex;
+    const index = { ...candidates, components: candidates.components.filter((code) => binding.status !== 'unbound' && code.id === binding.codeComponentId) };
+    return verifyProjectCodeSources(index, await readProjectCodeEvidence(index, (path) => readSource(projectId, path)));
+  }
+  async function requireBindingSource(projectId: string, state: ProjectDesignRuntimeState, binding: ComponentBinding) {
+    const diagnostics = await bindingSourceDiagnostics(projectId, state, binding);
+    if (diagnostics.length) throw new ProjectDesignRuntimeError(400, 'DESIGN_RUNTIME_INVALID_BINDING', 'Current project code source requires refresh and explicit verification.', { diagnostics });
   }
   function versionSummary(version: DesignSystemVersion) {
     return { id: version.package.id, name: version.package.name, version: version.package.version, digest: version.digest, sourceDigest: version.sourceDigest };
@@ -156,7 +191,7 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
       const diagnostics = verifyDesignSystemVersion(previous);
       if (diagnostics.length) throw new DesignSystemVersionError(diagnostics);
     }
-    return { state: store.write(projectId, expectedRevision, state, [version]), version: versionSummary(version) };
+    return { state: persist(projectId, expectedRevision, state, [version]), version: versionSummary(version) };
   }
 
   function readAtRevision(projectId: string, expectedRevision: number): ProjectDesignRuntimeState {
@@ -200,7 +235,7 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
       const migrations = request.migrations ?? active?.migrations;
       return publishVersion(projectId, request.expectedRevision, state, {
         schemaVersion: 1, id: registry.id, name: request.name, version: request.version,
-        registry, codeIndex: { ...state.codeIndex, id: registry.id }, bindings: { ...state.bindings, id: registry.id },
+        registry, codeIndex: { ...state.codeIndex, id: registry.id }, bindings: { ...dsBindings(state), id: registry.id },
         tokens: request.tokens ?? active?.tokens ?? { schemaVersion: 1, id: registry.id, tokens: [] },
         patterns: request.patterns ?? active?.patterns ?? { schemaVersion: 1, id: registry.id, patterns: [] },
         constraints, codeCompatibility: request.codeCompatibility ?? active?.codeCompatibility ?? [],
@@ -218,18 +253,18 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
       const version = requireVersion(projectId, request.designSystemId, request.version);
       const pkg = version.package;
       if (!current && state.registry && !isDeepStrictEqual(
-        { registry: state.registry, codeIndex: { ...state.codeIndex, id: pkg.id }, bindings: { ...state.bindings, id: pkg.id } },
+        { registry: state.registry, codeIndex: { ...state.codeIndex, id: pkg.id }, bindings: { ...dsBindings(state), id: pkg.id } },
         { registry: pkg.registry, codeIndex: pkg.codeIndex, bindings: pkg.bindings },
       )) throw new ProjectDesignRuntimeError(409, 'DESIGN_RUNTIME_REGISTRY_CHANGE_REQUIRES_UPGRADE', 'Initial pinning requires the same working component, code, and binding snapshot.');
       const next = { ...state,
         registry: pkg.registry, codeIndex: { ...pkg.codeIndex, id: projectId },
-        bindings: current ? state.bindings : { ...pkg.bindings, id: projectId },
+        bindings: current ? state.bindings : { ...pkg.bindings, id: projectId, bindings: [...pkg.bindings.bindings, ...state.bindings.bindings.filter((binding) => binding.componentRef.startsWith('local:'))] },
         dependencies: { schemaVersion: 1 as const, id: projectId, dependencies: [{ designSystemId: pkg.id, version: request.range }] },
         lock: createProjectDesignSystemLock(projectId, [version]),
       };
       activeVersion(projectId, next);
       assertValidProject(next);
-      return store.write(projectId, request.expectedRevision, next);
+      return persist(projectId, request.expectedRevision, next);
     },
 
     clearDependency(projectId: string, input: ProjectDesignRuntimeRevisionRequest) {
@@ -237,7 +272,7 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
       // Explicit recovery can unpin an unavailable package without pretending its bytes were verified.
       const state = store.read(projectId);
       if (state.revision !== expectedRevision) throw new DesignRuntimeRevisionConflictError(expectedRevision, state.revision);
-      return store.write(projectId, expectedRevision, { ...state,
+      return persist(projectId, expectedRevision, { ...state,
         dependencies: { ...state.dependencies, dependencies: [] }, lock: { ...state.lock, dependencies: [] },
       });
     },
@@ -247,22 +282,24 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
       return { revision: state.revision, resolution: dependencyResolution(projectId, state) };
     },
 
-    reviewUpgrade(projectId: string, input: ProjectDesignRuntimeReviewUpgradeRequest) {
+    async reviewUpgrade(projectId: string, input: ProjectDesignRuntimeReviewUpgradeRequest) {
       const { expectedRevision, plan } = ProjectDesignRuntimeReviewUpgradeRequestSchema.parse(input);
       const state = readAtRevision(projectId, expectedRevision);
       const from = requireVersion(projectId, plan.from.designSystemId, plan.from.version);
       const to = requireVersion(projectId, plan.to.designSystemId, plan.to.version);
-      return { revision: state.revision, review: reviewDesignSystemUpgrade(upgradeContext(projectId, state), from, to, plan) };
+      const sources = await sourceEvidence(projectId, state);
+      readAtRevision(projectId, expectedRevision);
+      return { revision: state.revision, review: reviewDesignSystemUpgrade(upgradeContext(projectId, state, sources), from, to, plan) };
     },
 
-    applyUpgrade(projectId: string, input: ProjectDesignRuntimeApplyUpgradeRequest) {
+    async applyUpgrade(projectId: string, input: ProjectDesignRuntimeApplyUpgradeRequest) {
       const { expectedRevision, ...request } = ProjectDesignRuntimeApplyUpgradeRequestSchema.parse(input);
       const state = readAtRevision(projectId, expectedRevision);
       const from = requireVersion(projectId, request.plan.from.designSystemId, request.plan.from.version);
       const to = requireVersion(projectId, request.plan.to.designSystemId, request.plan.to.version);
-      const result = applyDesignSystemUpgrade(upgradeContext(projectId, state), from, to, request);
-      const next = store.write(projectId, expectedRevision, { ...state, registry: to.package.registry,
-        codeIndex: result.codeIndex, bindings: result.bindings, projectComponents: result.projectComponents,
+      const result = applyDesignSystemUpgrade(upgradeContext(projectId, state, await sourceEvidence(projectId, state)), from, to, request);
+      const next = persist(projectId, expectedRevision, { ...state, registry: to.package.registry,
+        codeIndex: result.codeIndex, projectCodeIndex: result.projectCodeIndex, bindings: result.bindings, projectComponents: result.projectComponents,
         document: result.document, sharedChanges: result.sharedChanges, dependencies: result.dependencies, lock: result.lock });
       return { state: next, review: result.review };
     },
@@ -290,14 +327,14 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
       const compiled = compileComponentRegistry({ designSystemId: request.designSystemId, selections });
       assertValidProject({ ...current, registry: compiled.registry });
       const codeIndex = { ...compiled.codeIndex, id: projectId };
-      const previous = reindexComponentBindings(current.bindings, current.codeIndex, codeIndex, compiled.registry);
+      const previous = reindexComponentBindings(current.bindings, effectiveProjectCodeIndex(current), effectiveProjectCodeIndex({ ...current, codeIndex }), compiled.registry, current.projectComponents);
       const knownTargets = new Set(previous.bindings.map((binding) => `${binding.componentRef}\u0000${binding.framework}`));
       const added = compiled.bindings.filter((binding) => !knownTargets.has(`${binding.componentRef}\u0000${binding.framework}`));
       const bindings = {
         ...previous,
         bindings: [...previous.bindings, ...added].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
       };
-      return store.write(projectId, request.expectedRevision, {
+      return persist(projectId, request.expectedRevision, {
         ...current, registry: compiled.registry, codeIndex, bindings,
       });
     },
@@ -314,10 +351,54 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
 
     codeComponents(projectId: string, query = '') {
       const state = read(projectId);
-      return { revision: state.revision, components: searchCodeComponents(state.codeIndex, query) };
+      return { revision: state.revision, components: searchCodeComponents(effectiveProjectCodeIndex(state), query) };
     },
 
-    bind(projectId: string, id: string, input: ProjectDesignRuntimeBindRequest): ProjectDesignRuntimeState {
+    projectCodeComponents(projectId: string, query = '') {
+      const state = read(projectId);
+      return { revision: state.revision, components: searchCodeComponents(state.projectCodeIndex, query) };
+    },
+
+    async registerLocalBinding(projectId: string, input: ProjectDesignRuntimeRegisterLocalBindingRequest) {
+      const request = ProjectDesignRuntimeRegisterLocalBindingRequestSchema.parse(input);
+      const state = readAtRevision(projectId, request.expectedRevision);
+      let sourceText: string;
+      try { sourceText = await readSource(projectId, request.source.sourcePath); }
+      catch { throw new ProjectDesignRuntimeError(400, 'DESIGN_RUNTIME_SOURCE_UNAVAILABLE', 'The selected project source could not be read.', { sourcePath: request.source.sourcePath }); }
+      const result = registerLocalComponentBinding({ ...state, baseCodeIndex: state.codeIndex }, { source: { ...request.source, sourceText }, binding: request.binding });
+      if (!result.ok) throw new ProjectDesignRuntimeError(400, 'DESIGN_RUNTIME_INVALID_BINDING', 'Local source and binding could not be verified.', { diagnostics: result.diagnostics });
+      return { state: persist(projectId, request.expectedRevision, { ...state, projectCodeIndex: result.projectCodeIndex, bindings: result.bindings }), binding: result.binding, diagnostics: result.diagnostics };
+    },
+
+    async refreshCodeComponent(projectId: string, codeId: string, input: ProjectDesignRuntimeRevisionRequest) {
+      const { expectedRevision } = ProjectDesignRuntimeRevisionRequestSchema.parse(input);
+      const state = readAtRevision(projectId, expectedRevision);
+      const code = state.projectCodeIndex.components.find((entry) => entry.id === codeId);
+      if (!code) throw new ProjectDesignRuntimeError(404, 'DESIGN_RUNTIME_COMPONENT_NOT_FOUND', 'Registered project code component not found.');
+      const sourceText = await readSource(projectId, code.sourcePath).catch(() => undefined);
+      const result = refreshProjectCode(state, codeId, sourceText);
+      return { state: persist(projectId, expectedRevision, result.state), diagnostics: result.diagnostics };
+    },
+
+    async handoff(projectId: string, input: ProjectDesignRuntimeCreateHandoffRequest) {
+      const request = ProjectDesignRuntimeCreateHandoffRequestSchema.parse(input);
+      const state = readAtRevision(projectId, request.expectedRevision);
+      const result = await buildProjectHandoff({ store, readSource, observeTargetPackages }, projectId, state, request);
+      readAtRevision(projectId, request.expectedRevision);
+      return { revision: state.revision, result };
+    },
+
+    async emitHandoff(projectId: string, input: ProjectDesignRuntimeEmitHandoffRequest) {
+      const request = ProjectDesignRuntimeEmitHandoffRequestSchema.parse(input);
+      const state = readAtRevision(projectId, request.expectedRevision);
+      const handoff = await buildProjectHandoff({ store, readSource, observeTargetPackages }, projectId, state, request);
+      const code: HandoffCodeResult = handoff.manifest ? emitHandoffCode({ manifest: handoff.manifest, outputs: request.outputs })
+        : { schemaVersion: 1, ok: false, files: [], diagnostics: handoff.diagnostics };
+      readAtRevision(projectId, request.expectedRevision);
+      return { revision: state.revision, handoff, code };
+    },
+
+    async bind(projectId: string, id: string, input: ProjectDesignRuntimeBindRequest): Promise<ProjectDesignRuntimeState> {
       const request = ProjectDesignRuntimeBindRequestSchema.parse(input);
       const state = readAtRevision(projectId, request.expectedRevision);
       if (id !== request.binding.id) throw new ProjectDesignRuntimeError(400, 'BAD_REQUEST', 'Binding ID must match the route.');
@@ -325,8 +406,11 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
       if (existing && (existing.componentRef !== request.binding.componentRef || existing.framework !== request.binding.framework)) {
         throw new ProjectDesignRuntimeError(400, 'BAD_REQUEST', 'An existing binding ID must retain its component reference and framework.');
       }
-      const result = requireBindingMutation(upsertComponentBinding(state.bindings, request.binding, requireRegistry(state), state.codeIndex));
-      return store.write(projectId, request.expectedRevision, { ...state, bindings: result.bindings });
+      const targetCode = request.binding.status === 'unbound' ? undefined : request.binding.codeComponentId;
+      if (request.binding.componentRef.startsWith('ds:') && state.projectCodeIndex.components.some((code) => code.id === targetCode)) throw new ProjectDesignRuntimeError(400, 'DESIGN_RUNTIME_INVALID_BINDING', 'Design-system bindings require design-system-owned code.');
+      await requireBindingSource(projectId, state, request.binding);
+      const result = requireBindingMutation(upsertComponentBinding(state.bindings, request.binding, state.registry, effectiveProjectCodeIndex(state), state.projectComponents));
+      return persist(projectId, request.expectedRevision, { ...state, bindings: result.bindings });
     },
 
     unbind(projectId: string, id: string, input: ProjectDesignRuntimeRevisionRequest): ProjectDesignRuntimeState {
@@ -334,20 +418,23 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
       const state = readAtRevision(projectId, request.expectedRevision);
       requireBinding(state, id);
       const result = requireBindingMutation(unbindComponent(state.bindings, id));
-      return store.write(projectId, request.expectedRevision, { ...state, bindings: result.bindings });
+      return persist(projectId, request.expectedRevision, { ...state, bindings: result.bindings });
     },
 
-    revalidate(projectId: string, id: string, input: ProjectDesignRuntimeRevisionRequest): ProjectDesignRuntimeState {
+    async revalidate(projectId: string, id: string, input: ProjectDesignRuntimeRevisionRequest): Promise<ProjectDesignRuntimeState> {
       const request = ProjectDesignRuntimeRevisionRequestSchema.parse(input);
       const state = readAtRevision(projectId, request.expectedRevision);
-      requireBinding(state, id);
-      const result = requireBindingMutation(revalidateComponentBinding(state.bindings, id, requireRegistry(state), state.codeIndex));
-      return store.write(projectId, request.expectedRevision, { ...state, bindings: result.bindings });
+      await requireBindingSource(projectId, state, requireBinding(state, id));
+      const result = requireBindingMutation(revalidateComponentBinding(state.bindings, id, state.registry, effectiveProjectCodeIndex(state), state.projectComponents));
+      return persist(projectId, request.expectedRevision, { ...state, bindings: result.bindings });
     },
 
-    resolve(projectId: string, id: string) {
+    async resolve(projectId: string, id: string) {
       const state = read(projectId);
-      return { revision: state.revision, resolution: resolveComponentBinding(requireBinding(state, id), requireRegistry(state), state.codeIndex.components) };
+      const binding = requireBinding(state, id);
+      const diagnostics = await bindingSourceDiagnostics(projectId, state, binding);
+      readAtRevision(projectId, state.revision);
+      return { revision: state.revision, resolution: diagnostics.length ? { ok: false as const, diagnostics } : resolveComponentBinding(binding, state.registry, effectiveProjectCodeIndex(state).components, state.projectComponents) };
     },
 
     saveDocument(projectId: string, input: ProjectDesignRuntimeSaveDocumentRequest): ProjectDesignRuntimeState {
@@ -355,7 +442,7 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
       const state = readAtRevision(projectId, request.expectedRevision);
       const next = { ...state, document: request.document };
       assertValidProject(next);
-      return store.write(projectId, request.expectedRevision, next);
+      return persist(projectId, request.expectedRevision, next);
     },
 
     validateDocument(projectId: string, input: ProjectDesignRuntimeValidateDocumentRequest) {
@@ -405,7 +492,7 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
       const { expectedRevision, ...request } = ProjectDesignRuntimeStageComponentRequestSchema.parse(input);
       const state = readAtRevision(projectId, expectedRevision);
       const result = stageSharedComponentChange(componentContext(state), state.sharedChanges, request);
-      return { state: store.write(projectId, expectedRevision, { ...state, sharedChanges: result.changes }), draft: result.draft, impact: result.impact };
+      return { state: persist(projectId, expectedRevision, { ...state, sharedChanges: result.changes }), draft: result.draft, impact: result.impact };
     },
 
     inspectComponentChange(projectId: string, draftId: string) {
@@ -418,20 +505,20 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
       const { expectedRevision, expectedDefinitionRevision } = ProjectDesignRuntimePublishComponentRequestSchema.parse(input);
       const state = readAtRevision(projectId, expectedRevision);
       const result = publishSharedComponentChange(componentContext(state), state.sharedChanges, { draftId, expectedDefinitionRevision });
-      return { state: store.write(projectId, expectedRevision, { ...state, projectComponents: result.projectComponents, sharedChanges: result.changes }), impact: result.impact };
+      return { state: persist(projectId, expectedRevision, { ...state, projectComponents: result.projectComponents, sharedChanges: result.changes }), impact: result.impact };
     },
 
     discardComponentChange(projectId: string, draftId: string, input: ProjectDesignRuntimeRevisionRequest) {
       const { expectedRevision } = ProjectDesignRuntimeRevisionRequestSchema.parse(input);
       const state = readAtRevision(projectId, expectedRevision);
-      return store.write(projectId, expectedRevision, { ...state, sharedChanges: discardSharedComponentChange(state.sharedChanges, draftId) });
+      return persist(projectId, expectedRevision, { ...state, sharedChanges: discardSharedComponentChange(state.sharedChanges, draftId) });
     },
 
     undoComponent(projectId: string, componentId: string, input: ProjectDesignRuntimeUndoComponentRequest) {
       const { expectedRevision, ...request } = ProjectDesignRuntimeUndoComponentRequestSchema.parse(input);
       const state = readAtRevision(projectId, expectedRevision);
       const result = stageSharedComponentUndo(componentContext(state), state.sharedChanges, { ...request, componentRef: `local:${componentId}` });
-      return { state: store.write(projectId, expectedRevision, { ...state, sharedChanges: result.changes }), draft: result.draft, impact: result.impact };
+      return { state: persist(projectId, expectedRevision, { ...state, sharedChanges: result.changes }), draft: result.draft, impact: result.impact };
     },
 
     deleteComponent(projectId: string, componentId: string, input: ProjectDesignRuntimeDeleteComponentRequest) {
@@ -450,7 +537,7 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
         }
       }
       const recorded = recordSharedComponentRegistryChange(context, { ...context, projectComponents: result.projectComponents, document: result.document }, state.sharedChanges, changeIds);
-      return store.write(projectId, expectedRevision, { ...state, projectComponents: recorded.projectComponents, sharedChanges: recorded.changes, document: state.document === null ? null : result.document });
+      return persist(projectId, expectedRevision, { ...state, projectComponents: recorded.projectComponents, sharedChanges: recorded.changes, document: state.document === null ? null : result.document });
     },
 
     detachInstance(projectId: string, input: ProjectDesignRuntimeDetachRequest) {
@@ -462,7 +549,8 @@ export function createProjectDesignRuntimeService({ store, readSource }: Project
     validate(projectId: string, input: ProjectDesignRuntimeValidateRequest) {
       const request = ProjectDesignRuntimeValidateRequestSchema.parse(input);
       const state = read(projectId);
-      const diagnostics: ValidationDiagnostic[] = state.registry
+      const local = state.projectComponents.components.find((definition) => request.component === `local:${definition.id}`);
+      const diagnostics: ValidationDiagnostic[] = local ? validateComponentProperties(local, { component: request.component, props: request.props, ...(request.nodeId === undefined ? {} : { nodeId: request.nodeId }) }) : state.registry
         ? validateComponentUsage(state.registry, {
           component: request.component, props: request.props,
           ...(request.nodeId === undefined ? {} : { nodeId: request.nodeId }),

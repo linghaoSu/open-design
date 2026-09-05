@@ -214,6 +214,18 @@ contract cases, then reran all 21 emitter cases after a Vue interpolation-brace
 regression was fixed. Public persistence, export and generation integration remain
 in progress.
 
+Persistent local-code ownership and the handoff HTTP boundary are accepted.
+Project implementations survive package publication, pinning, clearing and upgrades
+in a separate index. Registration reads actual project files; refresh retains broken
+selections and never silently promotes them to verified bindings. Exact local revision
+and current source proof are checked again for resolution, upgrade and handoff.
+The daemon observes installed package-root metadata without executing package code;
+public callers select stored history instead of supplying evidence. Handoff and code
+emission are read-only and reject revision races. Root ran 49 focused daemon cases,
+then 13 final handoff/observer cases and 53 API contract cases. Contracts build and
+daemon source/test typechecks passed. The CLI and workspace handoff panel remain
+in progress.
+
 The pre-generation validator and eight-case benchmark foundation are accepted.
 The validator checks exact lock/source evidence, semantic resolution, production
 imports, effective properties, ordered slots, local implementation conformance,

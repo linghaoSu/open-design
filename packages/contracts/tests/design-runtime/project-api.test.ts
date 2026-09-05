@@ -64,6 +64,7 @@ const state = {
   lock: { schemaVersion: 1, id: 'project', dependencies: [] },
   registry: { schemaVersion: 1, id: 'test', components: [component] },
   codeIndex: { schemaVersion: 1, id: 'project', components: [code] },
+  projectCodeIndex: { schemaVersion: 1, id: 'project', components: [] },
   bindings: { schemaVersion: 1, id: 'project', bindings: [binding] },
 };
 

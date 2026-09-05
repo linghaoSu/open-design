@@ -12,6 +12,7 @@ const review = { schemaVersion: 1, id: 'review', projectId: 'project', baseRevis
   tokenUsageCoverage: 'not-indexed', sourceUsageCoverage: 'conservative-design-system-screens', diagnostics: [], canApply: true };
 const state = { schemaVersion: 1, revision: 4, registry: { schemaVersion: 1, id: 'acme', components: [] },
   codeIndex: { schemaVersion: 1, id: 'project', components: [] }, bindings: { schemaVersion: 1, id: 'project', bindings: [] },
+  projectCodeIndex: { schemaVersion: 1, id: 'project', components: [] },
   projectComponents: { schemaVersion: 1, id: 'project', components: [] }, document: null, sharedChanges: { schemaVersion: 1, id: 'project', drafts: [], history: [] },
   dependencies: { schemaVersion: 1, id: 'project', dependencies: [{ designSystemId: 'acme', version: '^2.0.0' }] }, lock: { schemaVersion: 1, id: 'project', dependencies: [to] } };
 

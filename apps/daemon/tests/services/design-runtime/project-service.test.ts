@@ -67,14 +67,14 @@ describe('project design runtime service', () => {
     const { service } = setup();
     let state = await service.compile('project', request);
     const original = state.bindings.bindings[0]!;
-    state = service.bind('project', original.id, { expectedRevision: 1, binding: { ...original, propMappings: [{ designProp: 'variant', codeProp: 'variant' }] } });
+    state = await service.bind('project', original.id, { expectedRevision: 1, binding: { ...original, propMappings: [{ designProp: 'variant', codeProp: 'variant' }] } });
     state = await service.compile('project', { ...request, expectedRevision: state.revision });
     expect(state.bindings.bindings[0]?.propMappings).toEqual([{ designProp: 'variant', codeProp: 'variant' }]);
     state = service.unbind('project', original.id, { expectedRevision: state.revision });
     state = await service.compile('project', { ...request, expectedRevision: state.revision, selections: [selection, { ...selection, exportName: 'Card', componentId: 'card', codeComponentId: 'ui/Card' }] });
     expect(state.bindings.bindings.find((entry) => entry.id === original.id)?.status).toBe('unbound');
     expect(state.bindings.bindings.find((entry) => entry.componentRef === 'ds:test/card')?.status).toBe('bound');
-    expect(service.resolve('project', original.id).resolution).toMatchObject({ ok: false, diagnostics: [{ code: 'ODDS3004' }] });
+    expect((await service.resolve('project', original.id)).resolution).toMatchObject({ ok: false, diagnostics: [{ code: 'ODDS3004' }] });
   });
 
   it('marks changed code stale until explicit revalidation and rejects incompatible manual binding', async () => {
@@ -85,10 +85,10 @@ describe('project design runtime service', () => {
     readSource.mockResolvedValue("export function Button(props: { variant?: 'primary' | 'secondary' | 'danger' }) {};");
     state = await service.compile('project', { ...request, expectedRevision: 1 });
     expect(state.bindings.bindings[0]?.status).toBe('stale');
-    expect(() => service.bind('project', binding.id, { expectedRevision: 2, binding: { ...binding, codeComponentId: 'missing' } })).toThrow('does not match');
-    state = service.revalidate('project', binding.id, { expectedRevision: 2 });
+    await expect(service.bind('project', binding.id, { expectedRevision: 2, binding: { ...binding, codeComponentId: 'missing' } })).rejects.toThrow('does not match');
+    state = await service.revalidate('project', binding.id, { expectedRevision: 2 });
     expect(state.bindings.bindings[0]?.status).toBe('bound');
-    expect(service.resolve('project', binding.id).resolution.ok).toBe(true);
+    expect((await service.resolve('project', binding.id)).resolution.ok).toBe(true);
   });
 
   it('checks revision both before source reads and again after asynchronous compilation', async () => {

@@ -14,6 +14,23 @@ import {
 } from '../../src/storage/design-runtime-store.js';
 
 describe('design runtime SQLite persistence', () => {
+  it('backfills project ownership without rewriting historical state, revision or immutable version bytes', () => {
+    const db = new Database(':memory:');
+    try {
+      db.pragma('foreign_keys = ON'); db.exec("CREATE TABLE projects (id TEXT PRIMARY KEY); INSERT INTO projects VALUES ('project');"); migrateDesignRuntimeStore(db);
+      const store = createDesignRuntimeStore(db); const version = createDesignSystemVersion(packageFixture());
+      const saved = store.write('project', 0, store.read('project'), [version]);
+      const { projectCodeIndex: _projectCode, ...legacy } = saved;
+      const bytes = JSON.stringify(legacy); db.prepare('UPDATE project_design_runtime SET state_json = ? WHERE project_id = ?').run(bytes, 'project');
+      const catalog = db.prepare('SELECT version_json FROM project_design_system_versions').get();
+      expect(store.read('project')).toEqual(saved);
+      expect(db.prepare('SELECT revision, state_json FROM project_design_runtime').get()).toEqual({ revision: 1, state_json: bytes });
+      expect(db.prepare('SELECT version_json FROM project_design_system_versions').get()).toEqual(catalog);
+      expect(store.readVersion('project', 'acme', '1.0.0')).toEqual(version);
+      db.prepare('UPDATE project_design_runtime SET state_json = ?').run(JSON.stringify({ ...legacy, projectCodeIndex: null }));
+      expect(() => store.read('project')).toThrow();
+    } finally { db.close(); }
+  });
   it('is migrated by the production daemon database lifecycle', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'od-design-runtime-migration-'));
     try {
@@ -79,7 +96,7 @@ describe('design runtime SQLite persistence', () => {
       migrateDesignRuntimeStore(db);
       const reopened = createDesignRuntimeStore(db);
       expect(reopened.read('project')).toEqual(written);
-      expect(() => reopened.write('project', 1, { ...written, codeIndex: { ...written.codeIndex, id: 'other' }, bindings: { ...written.bindings, id: 'other' }, projectComponents: { ...written.projectComponents, id: 'other' }, sharedChanges: { ...written.sharedChanges, id: 'other' }, dependencies: { ...written.dependencies, id: 'other' }, lock: { ...written.lock, id: 'other' } })).toThrow('belong');
+      expect(() => reopened.write('project', 1, { ...written, codeIndex: { ...written.codeIndex, id: 'other' }, projectCodeIndex: { ...written.projectCodeIndex, id: 'other' }, bindings: { ...written.bindings, id: 'other' }, projectComponents: { ...written.projectComponents, id: 'other' }, sharedChanges: { ...written.sharedChanges, id: 'other' }, dependencies: { ...written.dependencies, id: 'other' }, lock: { ...written.lock, id: 'other' } })).toThrow('belong');
       expect(reopened.read('project')).toEqual(written);
       db.prepare('DELETE FROM projects WHERE id = ?').run('project');
       expect(db.prepare('SELECT COUNT(*) AS count FROM project_design_runtime').get()).toEqual({ count: 0 });
