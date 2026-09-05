@@ -182,6 +182,16 @@ by another component/framework relationship. Root ran 83 daemon binding/index/ve
 cases and 79 contract cases. Full `pnpm guard` and `pnpm typecheck` passed for both
 foundations. Handoff emission and persistent public local bindings remain in progress.
 
+The portable handoff builder and React/Vue emitter are accepted as the next pure
+foundation. They verify exact package/source and current local-revision evidence,
+distinguish installed observations from declared ranges, retain missing implementation
+work, and reuse bound local components as production calls. One shared materializer
+owns defaults, scalar transformations and ordered code slots. Emission reparses each
+output and is atomic across all requested screens. Root ran 62 daemon cases and four
+contract cases, then reran all 21 emitter cases after a Vue interpolation-brace
+regression was fixed. Public persistence, export and generation integration remain
+in progress.
+
 Phase 2/3 acceptance includes 88 focused contract tests, 147 daemon design-runtime
 tests, the existing 16 project CLI tests, 30 web provider/panel/locale tests, and
 one real browser workflow through the production project API. The browser witness

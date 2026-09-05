@@ -342,6 +342,20 @@ collision with package-owned code, and current source evidence detects registere
 API drift. These internal operations are accepted; project persistence and handoff
 UI/CLI wiring remain part of Phase 9.
 
+The internal `createHandoff` builder produces a portable snapshot containing the
+exact lock and frozen package, semantic document, local definitions, code indexes,
+bindings, current registered source and target package observations. Missing local
+implementations remain actionable diagnostics. A declared dependency range never
+counts as an observed installed version. Optional historical change context is
+separate from current source and lock verification.
+
+`materializeHandoffCalls` rechecks these facts and computes production imports,
+effective scalar props and ordered code slots. `emitHandoffCode` uses that same
+plan to return React TSX or Vue SFC screen files. Bound local instances remain
+production component calls. The emitter reparses the generated source and returns
+no files if any required binding, output path or framework construct is invalid.
+This pure service does not write files or establish the later public workflow.
+
 V1 instance overrides are an array of versioned records such as
 `{ schemaVersion: 1, path: ['props', 'title'], value: 'Production' }`.
 The tuple path avoids dotted-key ambiguity. Only whole-prop overrides are

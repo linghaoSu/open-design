@@ -15,3 +15,4 @@ export * from './design-system-version.js';
 export * from './design-system-diff.js';
 export * from './design-system-upgrade.js';
 export * from './local-component-binding.js';
+export * from './handoff.js';
