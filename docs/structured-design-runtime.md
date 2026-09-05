@@ -174,6 +174,14 @@ write persists the complete shape.
 
 ## Published versions and exact locks
 
+Open **Design runtime → Versions** to publish selected source files, inspect exact
+published versions and pin one to the project. The panel shows the active version,
+declared range and verified metadata/source digests. Publishing newer content
+leaves the active lock unchanged. **Package import and export** accepts
+a complete package JSON file for preview and explicit import, or downloads the
+selected immutable package. Version details include components, properties, slots,
+states, bindings, source provenance, tokens, patterns and constraint policies.
+
 The project catalog stores immutable packages containing registry metadata, code
 bindings, tokens, patterns, constraints, production package compatibility and
 frozen source bytes. A package digest covers all metadata and source; a separate
@@ -277,7 +285,17 @@ selected CSF3 story exports, literal args/argTypes and tags from a directly impo
 component. It keeps stable story IDs and provenance; presets never replace source
 prop defaults. Dynamic spreads, callbacks, selected render/decorator metadata and
 mutable metadata aliases are rejected. These internal operations are accepted;
-public selection wiring and Vue extraction remain in the active compiler task.
+public format/metadata selection wiring remains in the active compiler task.
+
+The Vue path parses literal `<script setup lang="ts">` SFCs with the pinned Vue
+compiler. It selects the default export explicitly and accepts local scalar props,
+literal `withDefaults` or destructured defaults, and typed unscoped slots. Optional
+Boolean props retain Vue's implicit `false` default. Semantic slot metadata must be
+explicitly selected from a normal TypeScript script block and identify
+`component: 'default'`. Imported/generic prop types, scoped or dynamic slots,
+competing normal-script component options, model/emits macros, external templates
+and preprocessed templates are rejected. Frozen-source proof uses this same parser;
+neither application source nor imported modules execute during extraction.
 
 `validateComponentUsage(registry, { component, props, nodeId? })` checks exact
 design-system references, unknown/required properties, scalar types, and enum

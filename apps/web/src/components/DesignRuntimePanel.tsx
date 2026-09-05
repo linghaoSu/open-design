@@ -26,6 +26,7 @@ import {
 } from '../providers/design-runtime';
 import { useT } from '../i18n';
 import { ProjectStructurePanel } from './ProjectStructurePanel';
+import { DesignSystemVersionsPanel } from './DesignSystemVersionsPanel';
 import styles from './DesignRuntimePanel.module.css';
 
 interface Props {
@@ -102,7 +103,8 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(true);
   const [structureBusy, setStructureBusy] = useState(false);
-  const [tab, setTab] = useState<'code' | 'structure'>('code');
+  const [tab, setTab] = useState<'code' | 'structure' | 'versions'>('code');
+  const [versionsOpened, setVersionsOpened] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [diagnostics, setDiagnostics] = useState<ValidationDiagnostic[] | null>(null);
@@ -274,6 +276,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
       <div role="tablist" aria-label={t('designRuntime.title')} className={styles.actions}>
         <Button role="tab" id={`${inputId}-code-tab`} aria-controls={`${inputId}-code`} aria-selected={tab === 'code'} disabled={busy || structureBusy} data-testid="design-runtime-code-tab" onClick={() => setTab('code')}>{t('projectStructure.codeTab')}</Button>
         <Button role="tab" id={`${inputId}-structure-tab`} aria-controls={`${inputId}-structure`} aria-selected={tab === 'structure'} disabled={busy || structureBusy} data-testid="design-runtime-structure-tab" onClick={() => setTab('structure')}>{t('projectStructure.title')}</Button>
+        <Button role="tab" id={`${inputId}-versions-tab`} aria-controls={`${inputId}-versions`} aria-selected={tab === 'versions'} disabled={busy || structureBusy} data-testid="design-runtime-versions-tab" onClick={() => { setVersionsOpened(true); setTab('versions'); }}>{t('designVersions.title')}</Button>
       </div>
       {viewerOnly ? <p className={styles.notice}>{t('designRuntime.readOnly')}</p> : null}
       {busy ? <p role="status">{t('common.loading')}</p> : null}
@@ -423,6 +426,9 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
       </div>
       <div id={`${inputId}-structure`} role="tabpanel" aria-labelledby={`${inputId}-structure-tab`} hidden={tab !== 'structure'}>
         {state ? <ProjectStructurePanel scope={scope} state={state} viewerOnly={viewerOnly} externalBusy={busy} onState={(next) => adoptState(next)} onBusyChange={setStructureBusy} /> : null}
+      </div>
+      <div id={`${inputId}-versions`} role="tabpanel" aria-labelledby={`${inputId}-versions-tab`} hidden={tab !== 'versions'}>
+        {versionsOpened ? <DesignSystemVersionsPanel scope={scope} state={state} files={files} viewerOnly={viewerOnly} externalBusy={busy} onState={(next) => { adoptState(next); setError(''); setDiagnostics(null); }} onBusyChange={setStructureBusy} /> : null}
       </div>
     </section>
   );

@@ -58,9 +58,9 @@ until every required milestone and invariant has direct current-state evidence.
 | 3 | Code component index, search/inspect, explicit bind/unbind/resolve/validate, persisted binding state | Stable ID resolution; missing/changed source marks broken/stale on recompile; HTTP, UI, CLI and restart persistence tests | Complete |
 | 4 | Project component definitions, override-only instances, deterministic reference graph | Button → ApplicationCard → two screens traversal; inheritance/reset, direct/transitive usage, cycles, dangling refs and safe delete/detach rules | Complete |
 | 5 | Staged shared component revisions, usage/affected-screen impact, explicit publish and undo/history | A draft leaves live instances unchanged; publish changes all non-overridden instances; conflict/invalid-override tests and discoverable UI/CLI | Complete |
-| 6 | Immutable design-system versions, project dependencies, exact lock and digest/source verification | Reopen resolves same content until explicit upgrade; tampering/missing locked version diagnosed | In progress |
+| 6 | Immutable design-system versions, project dependencies, exact lock and digest/source verification | Reopen resolves same content until explicit upgrade; tampering/missing locked version diagnosed | Complete |
 | 7 | Semantic diff using stable component/token IDs | Added/removed/renamed/changed classification; removed variant/prop/token and incompatible slot are breaking | In progress |
-| 8 | Upgrade impact, deterministic migrations, review and explicit apply | Diff + graph + overrides identifies affected nodes/screens; migration validates before atomic lock/document update; failure/conflict leaves live state intact | Pending |
+| 8 | Upgrade impact, deterministic migrations, review and explicit apply | Diff + graph + overrides identifies affected nodes/screens; migration validates before atomic lock/document update; failure/conflict leaves live state intact | In progress |
 | 9 | Machine-readable handoff and persistent project-component code bindings | Manifest includes lock, target, IR, registry, bindings and change context; deterministic round-trip, package compatibility, UI/CLI export | Pending |
 | 10 | Explore/Guided project modes and generation repair loop | Structured diagnostics after generation; bounded repair; normal Explore behavior preserved; equivalent generation paths validated | Pending |
 | 11 | Pattern registry and design grammar | Pattern retrieval/configuration and slot composition validated deterministically; reusable resource-list fixture | Pending |
@@ -98,8 +98,9 @@ The following are part of the final result, not optional placeholders:
 
 Multi-component compilation, index/binding operations, project-local inheritance,
 reference graphs and staged shared changes have accepted web/CLI/HTTP surfaces.
-Current work adds immutable versions, semantic diff and the remaining compiler
-formats on the same canonical identities. Internal foundation commits can land independently; their
+Immutable versions now have matching web/CLI/HTTP surfaces. Current work adds
+reviewed upgrades, public compiler format selection and persistent handoff bindings
+on the same canonical identities. Internal foundation commits can land independently; their
 corresponding phase remains incomplete until its listed product and validation
 evidence exists.
 
@@ -124,9 +125,14 @@ digests and bound React source facts without latest fallback. Root acceptance ra
 catalog persistence and exact dependency activation are accepted in `c3016293d`,
 including seven matching CLI operations and the web provider boundary. Root ran
 45 API contract cases, 48 daemon cases, 47 CLI dispatcher cases and 7 provider
-cases; full `pnpm guard` and `pnpm typecheck` passed again. The discoverable versions
-UI and real browser publication/pinning/reopen witness are in progress, so Phase 6
-is not complete yet.
+cases; full `pnpm guard` and `pnpm typecheck` passed again. The discoverable Versions
+tab now publishes, imports, exports, pins, verifies and explicitly clears a lock,
+including recovery when a locked package is unavailable. Root ran 29 focused web
+cases plus 19 locale cases. The real browser workflow publishes 1.0.0, pins it,
+changes production source, publishes 1.1.0, reopens the old exact lock and verifies
+both frozen source snapshots. Direct version switching remains gated on reviewed
+upgrades. The final browser run passed in 12.6 seconds (37.3 seconds with the shared
+tools-dev harness); screenshot review and checkbox layout assertions passed.
 
 React slot proof and explicit Storybook CSF3 metadata are accepted in `db264c5b0`.
 Code slot capability and semantic slot acceptance have separate provenance and an
@@ -134,8 +140,12 @@ explicit one-to-one binding. Frozen versions verify both prop and slot source
 facts, while reindexing detects slot API drift. Story args remain example presets.
 Root ran 152 related daemon cases, then 40 targeted cases after three additional
 source/Storybook regressions (155 cases in the final combined set), plus 4 new
-canonical contract cases. Vue extraction and public compiler selection wiring are
-active follow-on work through the shared source compiler boundary.
+canonical contract cases. Vue extraction is accepted in `58b44dd2e`, using the
+pinned SFC parser without source execution or imported type reads. It covers local
+scalar props, literal defaults, Boolean omission semantics, typed unscoped slots,
+explicit semantic metadata and frozen-source verification. Root ran 195 combined
+compiler cases, a frozen-lock install, full `pnpm guard` and full `pnpm typecheck`.
+Public compiler selection wiring remains active through the shared source boundary.
 
 Semantic diff is accepted internally in `69989178f`: stable-ID comparison,
 complete before/after snapshots, breaking property/slot/token changes, and a

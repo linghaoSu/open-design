@@ -2,13 +2,14 @@ import { randomUUID } from 'node:crypto';
 import type {
   ProjectComponentDefinition, ProjectDesignRuntimeDocumentResponse, ProjectDesignRuntimePublishComponentResponse,
   ProjectDesignRuntimeResponse, ProjectDesignRuntimeStageComponentResponse, ProjectDesignRuntimeValidateResponse,
+  ProjectDesignRuntimePublishVersionResponse, ProjectDesignRuntimeVersionResponse, ProjectDesignRuntimeDependencyResponse,
   UIIRDocument,
 } from '@open-design/contracts';
 import { expect, test } from '@/playwright/suite';
 import { applyStandardMocks } from '@/playwright/mock-factory';
 import { T } from '@/timeouts';
 
-test('[P1] structured components compile, bind, publish shared revisions and survive reopening through the live workspace', async ({ page }, testInfo) => {
+test('[P1] structured components compile, publish shared revisions and lock exact versions through the live workspace', async ({ page }, testInfo) => {
   await applyStandardMocks(page);
   await page.setViewportSize({ width: 1600, height: 1100 });
   const projectId = `design-runtime-${randomUUID()}`;
@@ -17,16 +18,17 @@ test('[P1] structured components compile, bind, publish shared revisions and sur
   });
   expect(project.ok(), await project.text()).toBeTruthy();
   const { conversationId } = await project.json() as { conversationId: string };
-  const source = await page.request.post(`/api/projects/${projectId}/files`, {
-    data: {
-      name: 'Button.tsx',
-      content: `interface ButtonProps {
+  const sourceContent = `interface ButtonProps {
   variant?: 'primary' | 'secondary';
   disabled?: boolean;
 }
 export function Button({ variant = 'primary', disabled = false }: ButtonProps) {
   return <button disabled={disabled} data-variant={variant}>Continue</button>;
-}`,
+}`;
+  const source = await page.request.post(`/api/projects/${projectId}/files`, {
+    data: {
+      name: 'Button.tsx',
+      content: sourceContent,
     },
   });
   expect(source.ok(), await source.text()).toBeTruthy();
@@ -195,4 +197,89 @@ export function Button({ variant = 'primary', disabled = false }: ButtonProps) {
   expect(undoState.projectComponents.components.find((entry) => entry.id === 'localButton')!.props.variant!.default).toBe('primary');
   expect(undoState.sharedChanges.history.filter((entry) => entry.componentRef === 'local:localButton').map((entry) => entry.definition.revision)).toEqual([1, 2, 3]);
   expect(undoState.document).toEqual(document);
+
+  // Publish and pin through the live version panel. New source and a newer
+  // publication must leave the same project on its reviewed exact snapshot.
+  await page.getByTestId('design-runtime-versions-tab').click();
+  await page.getByTestId('versions-name').fill('Acme UI');
+  await page.getByTestId('versions-version').fill('1.0.0');
+  await page.getByTestId('versions-source-Button.tsx').check();
+  const sourceRow = page.getByTestId('versions-source-Button.tsx').locator('..');
+  const checkboxBounds = await page.getByTestId('versions-source-Button.tsx').boundingBox();
+  const sourceNameBounds = await sourceRow.locator('code').boundingBox();
+  const sourceRowBounds = await sourceRow.boundingBox();
+  expect(checkboxBounds!.width).toBeLessThanOrEqual(20);
+  expect(sourceNameBounds!.x + sourceNameBounds!.width).toBeLessThanOrEqual(sourceRowBounds!.x + sourceRowBounds!.width);
+  const firstVersionResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `${prefix}/versions/publish-current`);
+  await page.getByTestId('versions-publish').click();
+  const firstVersion = await firstVersionResponse;
+  expect(firstVersion.ok(), await firstVersion.text()).toBeTruthy();
+  const firstPublication = await firstVersion.json() as ProjectDesignRuntimePublishVersionResponse;
+  expect(firstPublication.version.version).toBe('1.0.0');
+  expect(firstPublication.state.lock.dependencies).toEqual([]);
+  await page.getByTestId('versions-select').selectOption(JSON.stringify(['acme', '1.0.0']));
+  await page.getByTestId('versions-range').fill('^1.0.0');
+  const activateResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `${prefix}/dependency`);
+  await page.getByTestId('versions-activate').click();
+  const activated = await activateResponse;
+  expect(activated.ok(), await activated.text()).toBeTruthy();
+  const lockedState = (await activated.json() as ProjectDesignRuntimeResponse).state;
+  expect(lockedState.lock.dependencies).toEqual([{
+    designSystemId: 'acme', version: '1.0.0', digest: firstPublication.version.digest,
+    source: { type: 'bundle', digest: firstPublication.version.sourceDigest },
+  }]);
+  await expect(page.getByTestId('versions-lock')).toContainText('1.0.0');
+
+  const changedSource = sourceContent.replace('>Continue</button>', '>Continue safely</button>');
+  const sourceUpdate = await page.request.post(`/api/projects/${projectId}/files`, {
+    data: { name: 'Button.tsx', content: changedSource },
+  });
+  expect(sourceUpdate.ok(), await sourceUpdate.text()).toBeTruthy();
+  await page.getByTestId('versions-version').fill('1.1.0');
+  const nextVersionResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `${prefix}/versions/publish-current`);
+  await page.getByTestId('versions-publish').click();
+  const nextVersion = await nextVersionResponse;
+  expect(nextVersion.ok(), await nextVersion.text()).toBeTruthy();
+  const nextPublication = await nextVersion.json() as ProjectDesignRuntimePublishVersionResponse;
+  expect(nextPublication.state.lock).toEqual(lockedState.lock);
+  expect(nextPublication.version.sourceDigest).not.toBe(firstPublication.version.sourceDigest);
+  for (const [version, content] of [['1.0.0', sourceContent], ['1.1.0', changedSource]] as const) {
+    const response = await page.request.get(`${prefix}/versions/acme/${version}`);
+    expect(response.ok(), await response.text()).toBeTruthy();
+    expect((await response.json() as ProjectDesignRuntimeVersionResponse).version.package.source.files)
+      .toContainEqual({ path: 'Button.tsx', encoding: 'utf8', content });
+  }
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.getByTestId('design-runtime-entry').click();
+  await page.getByTestId('design-runtime-versions-tab').click();
+  await expect(page.getByTestId('versions-lock')).toContainText('1.0.0');
+  const resolveLockResponse = page.waitForResponse((response) => response.request().method() === 'GET'
+    && new URL(response.url()).pathname === `${prefix}/dependency/resolve`);
+  await page.getByTestId('versions-resolve').click();
+  const resolvedLock = await resolveLockResponse;
+  expect(resolvedLock.ok(), await resolvedLock.text()).toBeTruthy();
+  const dependency = (await resolvedLock.json() as ProjectDesignRuntimeDependencyResponse).resolution;
+  expect(dependency.ok).toBe(true);
+  expect(dependency.versions.map((entry) => entry.package.version)).toEqual(['1.0.0']);
+  expect(dependency.versions[0]!.sourceDigest).toBe(firstPublication.version.sourceDigest);
+  await page.getByTestId('versions-select').selectOption(JSON.stringify(['acme', '1.1.0']));
+  await expect(page.getByTestId('versions-refresh')).toBeEnabled();
+  await expect(page.getByTestId('versions-activate')).toBeDisabled();
+  const lockScreenshot = testInfo.outputPath('locked-design-system-version.png');
+  await page.screenshot({ path: lockScreenshot, fullPage: true });
+  await testInfo.attach('Exact locked design system with newer published version', { path: lockScreenshot, contentType: 'image/png' });
+
+  const clearResponse = page.waitForResponse((response) => response.request().method() === 'DELETE'
+    && new URL(response.url()).pathname === `${prefix}/dependency`);
+  await page.getByTestId('versions-clear').click();
+  const cleared = await clearResponse;
+  expect(cleared.ok(), await cleared.text()).toBeTruthy();
+  const clearedState = (await cleared.json() as ProjectDesignRuntimeResponse).state;
+  expect(clearedState.lock.dependencies).toEqual([]);
+  expect(clearedState.registry).toEqual(lockedState.registry);
+  expect(clearedState.document).toEqual(document);
 });
