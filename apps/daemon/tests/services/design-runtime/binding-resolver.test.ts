@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CodeComponentDefinition, ComponentBinding, ComponentRegistry } from '@open-design/contracts';
 
-import { resolveComponentBinding } from '../../../src/services/design-runtime/binding-resolver.js';
+import { materializeBindingProps, resolveComponentBinding } from '../../../src/services/design-runtime/binding-resolver.js';
 
 function fixture(): { registry: ComponentRegistry; binding: ComponentBinding; code: CodeComponentDefinition } {
   return {
@@ -122,16 +122,15 @@ describe('resolveComponentBinding', () => {
     });
   });
 
-  it('rejects default divergence when a mapped design property can be omitted', () => {
+  it('materializes declared design defaults and preserves defaultless omission', () => {
     const { binding, registry, code } = fixture();
     const design = registry.components[0]!;
     design.props.disabled = { type: 'boolean', required: false, default: false };
     code.props.disabled = { type: 'boolean', required: false, default: true };
-    expect(resolveComponentBinding(binding, registry, [code])).toMatchObject({
-      ok: false, diagnostics: [{ code: 'ODDS3001', path: ['props', 'disabled', 'default'] }],
-    });
+    expect(resolveComponentBinding(binding, registry, [code])).toMatchObject({ ok: true });
+    expect(materializeBindingProps(binding, registry, [code], {variant:'primary'})).toMatchObject({ ok: true, props: {disabled:false} });
     code.props.disabled = { type: 'boolean', required: false };
-    expect(resolveComponentBinding(binding, registry, [code])).toMatchObject({ ok: false });
+    expect(resolveComponentBinding(binding, registry, [code])).toMatchObject({ ok: true });
     design.props.disabled = { type: 'boolean', required: false };
     code.props.disabled = { type: 'boolean', required: false, default: false };
     expect(resolveComponentBinding(binding, registry, [code])).toMatchObject({ ok: false });
@@ -141,7 +140,7 @@ describe('resolveComponentBinding', () => {
     expect(resolveComponentBinding(binding, registry, [code])).toMatchObject({ ok: true });
   });
 
-  it('rejects missing mapping endpoints and value transforms that this spike cannot implement', () => {
+  it('rejects missing mapping endpoints and incomplete value transforms', () => {
     const { binding, registry, code } = fixture();
     for (const propMappings of [
       [{ designProp: 'unknown', codeProp: 'variant' }],
@@ -187,7 +186,7 @@ describe('resolveComponentBinding', () => {
     code.props.disabled = { type: 'boolean', required: true };
     expect(resolveComponentBinding(binding, registry, [code])).toMatchObject({ ok: false });
     registry.components[0]!.props.disabled = { type: 'boolean', required: false, default: false };
-    expect(resolveComponentBinding(binding, registry, [code])).toMatchObject({ ok: false });
+    expect(resolveComponentBinding(binding, registry, [code])).toMatchObject({ ok: true });
     code.props.disabled = { type: 'boolean', required: true, default: false };
     expect(resolveComponentBinding(binding, registry, [code])).toMatchObject({ ok: true });
   });

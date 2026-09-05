@@ -36,6 +36,7 @@ export const DesignDiagnosticCodeSchema = z.enum([
   'ODDS5005', // DesignSystemSourceIntegrity
   'ODDS5006', // ImmutableDesignSystemVersion
   'ODDS5007', // InvalidDesignSystemPackage
+  'ODDS7004', // ProjectCodeSourceProof
 ]);
 export type DesignDiagnosticCode = z.infer<typeof DesignDiagnosticCodeSchema>;
 

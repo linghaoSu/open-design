@@ -7,6 +7,7 @@ import {
   type ComponentBindingRegistry,
   type ComponentFramework,
   type ComponentRegistry,
+  type ProjectComponentRegistry,
   type ValidationDiagnostic,
 } from '@open-design/contracts';
 import { resolveComponentBinding } from './binding-resolver.js';
@@ -61,6 +62,10 @@ export function getComponentBinding(
 }
 
 function replaceBinding(bindings: ComponentBindingRegistry, binding: ComponentBinding): ComponentBindingMutationResult {
+  const existing = bindings.bindings.find((candidate) => candidate.id === binding.id);
+  if (existing && (existing.componentRef !== binding.componentRef || existing.framework !== binding.framework)) {
+    return failure(`Binding identity ${binding.id} belongs to a different component/framework relationship.`, ['id'], binding.componentRef);
+  }
   const collision = bindings.bindings.find((existing) => existing.id !== binding.id
     && existing.componentRef === binding.componentRef && existing.framework === binding.framework);
   if (collision) {
@@ -77,12 +82,13 @@ function replaceBinding(bindings: ComponentBindingRegistry, binding: ComponentBi
 export function upsertComponentBinding(
   bindings: ComponentBindingRegistry,
   binding: ComponentBinding,
-  registry: ComponentRegistry,
+  registry: ComponentRegistry | null,
   index: CodeComponentIndex,
+  projectComponents?: ProjectComponentRegistry,
 ): ComponentBindingMutationResult {
   const parsed = ComponentBindingSchema.parse(binding);
   if (parsed.status === 'bound') {
-    const resolution = resolveComponentBinding(parsed, registry, index.components);
+    const resolution = resolveComponentBinding(parsed, registry, index.components, projectComponents);
     if (!resolution.ok) return resolution;
   }
   return replaceBinding(bindings, parsed);
@@ -91,11 +97,12 @@ export function upsertComponentBinding(
 export function bindComponent(
   bindings: ComponentBindingRegistry,
   input: BindComponentInput,
-  registry: ComponentRegistry,
+  registry: ComponentRegistry | null,
   index: CodeComponentIndex,
+  projectComponents?: ProjectComponentRegistry,
 ): ComponentBindingMutationResult {
   const binding = ComponentBindingSchema.parse({ ...input, schemaVersion: 1, status: 'bound', verified: true });
-  return upsertComponentBinding(bindings, binding, registry, index);
+  return upsertComponentBinding(bindings, binding, registry, index, projectComponents);
 }
 
 export function unbindComponent(bindings: ComponentBindingRegistry, id: string): ComponentBindingMutationResult {
@@ -121,16 +128,17 @@ export function removeComponentBinding(bindings: ComponentBindingRegistry, id: s
 export function revalidateComponentBinding(
   bindings: ComponentBindingRegistry,
   id: string,
-  registry: ComponentRegistry,
+  registry: ComponentRegistry | null,
   index: CodeComponentIndex,
+  projectComponents?: ProjectComponentRegistry,
 ): ComponentBindingMutationResult {
   const existing = bindings.bindings.find((binding) => binding.id === id);
   if (!existing) return failure(`Binding ${id} does not exist.`, ['id']);
   if (existing.status === 'unbound') return failure(`Binding ${id} has no code component to verify.`, ['codeComponentId'], existing.componentRef);
-  return upsertComponentBinding(bindings, { ...existing, status: 'bound', verified: true }, registry, index);
+  return upsertComponentBinding(bindings, { ...existing, status: 'bound', verified: true, ...(existing.componentRef.startsWith('local:') ? { definitionRevision: projectComponents?.components.find((component) => existing.componentRef === `local:${component.id}`)?.revision } : {}) }, registry, index, projectComponents);
 }
 
-function publicContract(component: CodeComponentDefinition): string {
+export function codeComponentContractSignature(component: CodeComponentDefinition): string {
   const props = Object.keys(component.props).sort().map((name) => {
     const prop = component.props[name]!;
     return [name, {
@@ -162,19 +170,22 @@ export function reindexComponentBindings(
   bindings: ComponentBindingRegistry,
   previousIndex: CodeComponentIndex,
   nextIndex: CodeComponentIndex,
-  registry: ComponentRegistry,
+  registry: ComponentRegistry | null,
+  projectComponents?: ProjectComponentRegistry,
 ): ComponentBindingRegistry {
   const nextBindings = bindings.bindings.map((binding): ComponentBinding => {
     if (binding.status === 'unbound') return binding;
     const code = getCodeComponent(nextIndex, binding.codeComponentId);
-    const designExists = registry.components.some((component) => binding.componentRef === `ds:${registry.id}/${component.id}`);
+    const designExists = binding.componentRef.startsWith('local:')
+      ? projectComponents?.components.some((component) => binding.componentRef === `local:${component.id}`)
+      : registry?.components.some((component) => binding.componentRef === `ds:${registry.id}/${component.id}`);
     if (!designExists || !code || code.framework !== binding.framework || !code.exportName.trim() || !code.sourcePath.trim()) {
       return { ...binding, status: 'broken', verified: false };
     }
-    const resolution = resolveComponentBinding({ ...binding, status: 'bound', verified: true }, registry, nextIndex.components);
+    const resolution = resolveComponentBinding({ ...binding, status: 'bound', verified: true }, registry, nextIndex.components, projectComponents);
     if (!resolution.ok) return { ...binding, status: 'stale', verified: false };
     const previous = getCodeComponent(previousIndex, binding.codeComponentId);
-    if (binding.status === 'bound' && (!previous || publicContract(previous) !== publicContract(resolution.codeComponent))) {
+    if (binding.status === 'bound' && (!previous || codeComponentContractSignature(previous) !== codeComponentContractSignature(resolution.codeComponent))) {
       return { ...binding, status: 'stale', verified: false };
     }
     return binding;

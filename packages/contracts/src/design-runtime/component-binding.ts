@@ -40,12 +40,29 @@ export const CodeComponentDefinitionSchema = z.object({
 });
 export type CodeComponentDefinition = z.infer<typeof CodeComponentDefinitionSchema>;
 
+/** Typed values preserve distinctions such as 1 / "1", false / "false", and null / "null". */
+export const ComponentValueTransformSchema = z.object({
+  type: z.literal('map'),
+  entries: z.array(z.object({ from: JsonScalarSchema, to: JsonScalarSchema }).strict()).min(1),
+}).strict().superRefine((transform, ctx) => {
+  const keys = new Set<string>();
+  transform.entries.forEach((entry, index) => {
+    const key = JSON.stringify(entry.from);
+    if (keys.has(key)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['entries', index, 'from'], message: 'Value transforms require unique typed source values.' });
+    keys.add(key);
+  });
+});
+export type ComponentValueTransform = z.infer<typeof ComponentValueTransformSchema>;
+
 export const ComponentPropMappingSchema = z.object({
   designProp: DesignMemberNameSchema,
   codeProp: DesignMemberNameSchema,
-  /** Keys encode scalar design values using String(value); ambiguous domains need a future schema. */
+  /** Legacy String(value) lookup; only unambiguous, complete finite domains can resolve. */
   values: z.record(JsonObjectKeySchema, JsonScalarSchema).optional(),
-}).strict();
+  valueTransform: ComponentValueTransformSchema.optional(),
+}).strict().superRefine((mapping, ctx) => {
+  if (mapping.values !== undefined && mapping.valueTransform !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['valueTransform'], message: 'Choose one value-transform representation.' });
+});
 export type ComponentPropMapping = z.infer<typeof ComponentPropMappingSchema>;
 
 export const ComponentSlotMappingSchema = z.object({
@@ -63,6 +80,10 @@ const bindingFields = {
   source: SourceProvenanceSchema.optional(),
   propMappings: z.array(ComponentPropMappingSchema).optional(),
   slotMappings: z.array(ComponentSlotMappingSchema).optional(),
+  /** Local public/template revision verified by this binding; never a design-system revision.
+   * Missing historical local revisions remain readable and resolve as stale.
+   */
+  definitionRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
 };
 
 /** `verified` means valid against the current code contract, not previously verified. */
@@ -73,6 +94,7 @@ export const ComponentBindingSchema = z.discriminatedUnion('status', [
   z.object({ ...bindingFields, status: z.literal('stale'), codeComponentId: CodeIdentitySchema, verified: z.literal(false) }).strict(),
   z.object({ ...bindingFields, status: z.literal('broken'), codeComponentId: CodeIdentitySchema, verified: z.literal(false) }).strict(),
 ]).superRefine((binding, ctx) => {
+  if (binding.componentRef.startsWith('ds:') && binding.definitionRevision !== undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['definitionRevision'], message: 'Definition revision belongs only to project-local bindings.' });
   const designProps = new Set<string>();
   const codeProps = new Set<string>();
   binding.propMappings?.forEach((mapping, index) => {

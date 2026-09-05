@@ -2,33 +2,27 @@ import type {
   CodeComponentDefinition,
   ComponentBinding,
   ComponentDefinition,
-  ComponentPropDefinition,
+  ProjectComponentRegistry,
+  JsonValue,
   ComponentRegistry,
   ValidationDiagnostic,
 } from '@open-design/contracts';
+import { validateBindingProps, materializeBindingProps as applyResolvedBindingProps } from './binding-props.js';
 
 export type ComponentBindingResolution =
   | { ok: true; component: ComponentDefinition; codeComponent: CodeComponentDefinition }
   | { ok: false; diagnostics: ValidationDiagnostic[] };
 
-function acceptsDesignDomain(design: ComponentPropDefinition, code: ComponentPropDefinition): boolean {
-  if (design.type === 'enum') {
-    return design.values.every((value) => code.type === 'enum'
-      ? code.values.some((allowed) => allowed === value)
-      : typeof value === code.type);
-  }
-  return code.type === design.type;
-}
-
 /**
  * Resolves an explicit, already schema-validated binding against supplied metadata.
- * This source contract resolver does not inspect source files or implement value transforms,
- * or materialize design defaults. Omittable mapped props must share the code default.
+ * Public props use the same transformation plan as materializeBindingProps.
+ * Source-file freshness remains the caller's responsibility.
  */
 export function resolveComponentBinding(
   binding: ComponentBinding,
-  registry: ComponentRegistry,
+  registry: ComponentRegistry | null,
   codeComponents: readonly CodeComponentDefinition[],
+  projectComponents?: ProjectComponentRegistry,
 ): ComponentBindingResolution {
   const failure = (
     code: ValidationDiagnostic['code'],
@@ -56,13 +50,19 @@ export function resolveComponentBinding(
     return failure('ODDS3004', `Binding ${binding.id} must be bound and verified.`, ['status']);
   }
 
-  const matches = registry.components.filter(
-    (component) => binding.componentRef === `ds:${registry.id}/${component.id}`,
-  );
-  const component = matches.length === 1 ? matches[0] : undefined;
-  if (!component) {
-    return failure('ODDS3001', `Design reference ${binding.componentRef} does not resolve uniquely.`, ['componentRef']);
+  const local = binding.componentRef.startsWith('local:');
+  const matches = local
+    ? projectComponents?.components.filter((component) => binding.componentRef === `local:${component.id}`) ?? []
+    : registry?.components.filter((component) => binding.componentRef === `ds:${registry.id}/${component.id}`) ?? [];
+  const definition = matches.length === 1 ? matches[0] : undefined;
+  if (!definition) return failure('ODDS3001', `Design reference ${binding.componentRef} does not resolve uniquely.`, ['componentRef']);
+  if (local && (!('revision' in definition) || binding.definitionRevision !== definition.revision)) {
+    return failure('ODDS3002', `Binding ${binding.id} must be verified against the current local definition revision.`, ['definitionRevision']);
   }
+  if (!local && binding.definitionRevision !== undefined) return failure('ODDS3001', 'Design-system bindings cannot declare a local definition revision.', ['definitionRevision']);
+  const component: ComponentDefinition = local
+    ? { schemaVersion: 1, id: definition.id, name: definition.name, props: definition.props }
+    : definition;
   const codeMatches = codeComponents.filter((candidate) => candidate.id === binding.codeComponentId);
   const codeComponent = codeMatches.length === 1 ? codeMatches[0] : undefined;
   if (!codeComponent) {
@@ -102,48 +102,20 @@ export function resolveComponentBinding(
     if (slot.required && !mappedCodeSlots.has(name)) return failure('ODDS3001', `Required code slot ${name} has no design slot mapping.`, ['slotMappings']);
   }
 
-  const mappings = new Map<string, string>();
-  for (const [index, mapping] of (binding.propMappings ?? []).entries()) {
-    const path = ['propMappings', index];
-    if (!Object.hasOwn(component.props, mapping.designProp) || !Object.hasOwn(codeComponent.props, mapping.codeProp)) {
-      return failure('ODDS3001', 'Property mapping references an undeclared property.', path);
-    }
-    if (mappings.has(mapping.designProp)) {
-      return failure('ODDS3001', 'A design property cannot have multiple mappings.', path);
-    }
-    if (mapping.values !== undefined) {
-      return failure('ODDS3001', 'Value-transform mappings are unsupported by the compiler spike.', path);
-    }
-    mappings.set(mapping.designProp, mapping.codeProp);
-  }
-
-  const mappedCodeProps = new Set<string>();
-  for (const designProp of Object.keys(component.props).sort()) {
-    const designDefinition = component.props[designProp];
-    const codeProp = mappings.get(designProp) ?? designProp;
-    const codeDefinition = Object.hasOwn(codeComponent.props, codeProp) ? codeComponent.props[codeProp] : undefined;
-    if (!designDefinition || !codeDefinition || !acceptsDesignDomain(designDefinition, codeDefinition)) {
-      return failure('ODDS3001', `Property ${designProp} is incompatible with code property ${codeProp}.`, ['propMappings']);
-    }
-    if (mappedCodeProps.has(codeProp)) {
-      return failure('ODDS3001', `Multiple design properties map to code property ${codeProp}.`, ['propMappings']);
-    }
-    if ((!designDefinition.required || designDefinition.default !== undefined)
-      && designDefinition.default !== codeDefinition.default) {
-      return failure('ODDS3001', `Omittable design property ${designProp} must share the default of code property ${codeProp}.`, ['props', designProp, 'default']);
-    }
-    if (codeDefinition.required && codeDefinition.default === undefined
-      && !designDefinition.required && designDefinition.default === undefined) {
-      return failure('ODDS3001', `Optional design property ${designProp} cannot supply required code property ${codeProp}.`, ['propMappings']);
-    }
-    mappedCodeProps.add(codeProp);
-  }
-  for (const codeProp of Object.keys(codeComponent.props).sort()) {
-    const definition = codeComponent.props[codeProp];
-    if (definition?.required && definition.default === undefined && !mappedCodeProps.has(codeProp)) {
-      return failure('ODDS3001', `Required code property ${codeProp} has no design property mapping.`, ['propMappings']);
-    }
-  }
+  const diagnostics = validateBindingProps(binding, component, codeComponent);
+  if (diagnostics.length) return { ok: false, diagnostics };
 
   return { ok: true, component, codeComponent };
+}
+
+/** Resolve the relationship before applying its single canonical prop/default transformation plan. */
+export function materializeBindingProps(
+  binding: ComponentBinding,
+  registry: ComponentRegistry | null,
+  codeComponents: readonly CodeComponentDefinition[],
+  props: Record<string, JsonValue>,
+  projectComponents?: ProjectComponentRegistry,
+) {
+  const resolution = resolveComponentBinding(binding, registry, codeComponents, projectComponents);
+  return resolution.ok ? applyResolvedBindingProps(binding, resolution.component, resolution.codeComponent, props) : resolution;
 }

@@ -62,6 +62,14 @@ describe('explicit component binding operations', () => {
     expect(bindings.bindings).toEqual([binding]);
   });
 
+  it('ties each stable binding ID to its original component/framework relationship', () => {
+    const { bindings, binding, registry, index } = fixture();
+    registry.components.push({ ...registry.components[0]!, id: 'other' });
+    expect(upsertComponentBinding(bindings, { ...binding, componentRef: 'ds:acme/other' }, registry, index)).toMatchObject({ ok: false, diagnostics: [{ path: ['id'] }] });
+    expect(upsertComponentBinding(bindings, { ...binding, framework: 'vue', status: 'candidate', verified: false }, registry, index)).toMatchObject({ ok: false, diagnostics: [{ path: ['id'] }] });
+    expect(bindings.bindings).toEqual([binding]);
+  });
+
   it('updates the existing binding by stable identity and allows explicit property mapping', () => {
     const { bindings, binding, registry, index, code } = fixture();
     code.props = { intent: code.props.variant!, disabled: code.props.disabled! };
