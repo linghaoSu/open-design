@@ -1,5 +1,6 @@
 import type {
   ComponentDefinition,
+  ComponentPropDefinition,
   ComponentRegistry,
   JsonValue,
   ValidationDiagnostic,
@@ -95,4 +96,14 @@ export function validateComponentProperties(
     }
   }
   return diagnostics;
+}
+
+
+/** Whether every possible source value, including absence, satisfies a target prop. */
+export function acceptsComponentPropertyDomain(source: ComponentPropDefinition, target: ComponentPropDefinition): boolean {
+  if (!source.required && source.default === undefined && target.required && target.default === undefined) return false;
+  if (source.type === 'enum') {
+    return source.values.every((value) => target.type === 'enum' ? target.values.includes(value) : typeof value === target.type);
+  }
+  return source.type === target.type;
 }

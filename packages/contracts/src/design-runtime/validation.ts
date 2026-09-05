@@ -31,6 +31,11 @@ export const DesignDiagnosticCodeSchema = z.enum([
   'ODDS4007', // ReferenceTraversalLimit
   'ODDS5001', // DesignSystemVersionMismatch
   'ODDS5002', // BreakingUpgradeWithoutMigration
+  'ODDS5003', // MissingLockedDesignSystemVersion
+  'ODDS5004', // DesignSystemPackageIntegrity
+  'ODDS5005', // DesignSystemSourceIntegrity
+  'ODDS5006', // ImmutableDesignSystemVersion
+  'ODDS5007', // InvalidDesignSystemPackage
 ]);
 export type DesignDiagnosticCode = z.infer<typeof DesignDiagnosticCodeSchema>;
 

@@ -6,3 +6,7 @@ export * from './ui-ir.js';
 export * from './project-components.js';
 export * from './shared-component-changes.js';
 export * from './validation.js';
+export * from './design-tokens.js';
+export * from './design-patterns.js';
+export * from './design-constraints.js';
+export * from './design-system-version.js';

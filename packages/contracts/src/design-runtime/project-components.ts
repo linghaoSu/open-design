@@ -30,23 +30,18 @@ function visitNodes(node: UIIRNode, path: (string | number)[], visitor: (node: U
   }
 }
 
-/** Public prop defaults live only in props; mapped template targets carry no inherited value. */
-export const ProjectComponentDefinitionSchema = ComponentDefinitionSchema.pick({
-  schemaVersion: true, id: true, name: true, props: true,
-}).extend({
-  revision: definitionRevisionSchema,
-  template: UIIRNodeSchema,
-  propMappings: z.array(ProjectComponentPropMappingSchema),
-}).strict().superRefine((definition, ctx) => {
+
+/** Shared structural mapping rules for local components and packaged patterns. */
+export function validateTemplatePropMappings(
+  definition: { props: z.infer<typeof ComponentDefinitionSchema>['props']; template: UIIRNode; propMappings: ProjectComponentPropMapping[] },
+  ctx: z.RefinementCtx,
+): void {
   const nodes = new Map<string, UIIRNode>();
   visitNodes(definition.template, ['template'], (node, path) => {
     if (nodes.has(node.id)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: [...path, 'id'], message: 'Template node IDs must be unique within the definition.' });
     }
     nodes.set(node.id, node);
-    if (node.type === 'component' && node.ref.startsWith('local:')) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [...path, 'type'], message: 'Project-local reuse must use an override-only instance node.' });
-    }
   });
   const targets = new Set<string>();
   const mappedProps = new Set<string>();
@@ -90,6 +85,22 @@ export const ProjectComponentDefinitionSchema = ComponentDefinitionSchema.pick({
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['props', prop], message: 'Every public prop requires an explicit template mapping.' });
     }
   }
+}
+
+/** Public prop defaults live only in props; mapped template targets carry no inherited value. */
+export const ProjectComponentDefinitionSchema = ComponentDefinitionSchema.pick({
+  schemaVersion: true, id: true, name: true, props: true,
+}).extend({
+  revision: definitionRevisionSchema,
+  template: UIIRNodeSchema,
+  propMappings: z.array(ProjectComponentPropMappingSchema),
+}).strict().superRefine((definition, ctx) => {
+  validateTemplatePropMappings(definition, ctx);
+  visitNodes(definition.template, ['template'], (node, path) => {
+    if (node.type === 'component' && node.ref.startsWith('local:')) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [...path, 'type'], message: 'Project-local reuse must use an override-only instance node.' });
+    }
+  });
 });
 export type ProjectComponentDefinition = z.infer<typeof ProjectComponentDefinitionSchema>;
 

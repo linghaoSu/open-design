@@ -8,7 +8,6 @@ import {
   type ComponentDefinition,
   type ComponentDetachRequest,
   type ComponentInstance,
-  type ComponentPropDefinition,
   type JsonValue,
   type ProjectComponentDefinition,
   type ProjectComponentDeleteRequest,
@@ -20,7 +19,7 @@ import {
   type UIIRNode,
   type ValidationDiagnostic,
 } from '@open-design/contracts';
-import { validateComponentProperties } from './component-validator.js';
+import { acceptsComponentPropertyDomain, validateComponentProperties } from './component-validator.js';
 import {
   analyzeComponentDeletion,
   buildReferenceGraph,
@@ -65,15 +64,6 @@ function walk(node: UIIRNode, visitor: (node: UIIRNode) => void): void {
   }
 }
 
-/** The entire source value domain must fit, not just the current default or one sample. */
-function acceptsMapping(source: ComponentPropDefinition, target: ComponentPropDefinition): boolean {
-  if (!source.required && source.default === undefined && target.required && target.default === undefined) return false;
-  if (source.type === 'enum') {
-    return source.values.every((value) => target.type === 'enum' ? target.values.includes(value) : typeof value === target.type);
-  }
-  return source.type === target.type;
-}
-
 function mappingDiagnostics(input: ProjectComponentContext): ValidationDiagnostic[] {
   const diagnostics: ValidationDiagnostic[] = [];
   for (const definition of input.projectComponents.components) {
@@ -85,7 +75,7 @@ function mappingDiagnostics(input: ProjectComponentContext): ValidationDiagnosti
       const targetProps = node.type === 'text' ? undefined : getDefinition(input, node.ref)?.props;
       const target = targetProps && Object.hasOwn(targetProps, mapping.path[1]) ? targetProps[mapping.path[1]] : undefined;
       const source = definition.props[mapping.prop]!;
-      if (!target || !acceptsMapping(source, target)) {
+      if (!target || !acceptsComponentPropertyDomain(source, target)) {
         diagnostics.push({
           ...diagnostic('ODDS4005', `Public prop ${mapping.prop} cannot safely map to ${mapping.path[1]} on ${mapping.nodeId}.`, mapping.nodeId, `local:${definition.id}`),
           path: ['propMappings', index],
