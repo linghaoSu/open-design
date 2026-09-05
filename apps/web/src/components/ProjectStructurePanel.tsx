@@ -14,6 +14,7 @@ import {
 } from '../providers/design-runtime';
 import { useT } from '../i18n';
 import { SemanticScreenEditor, SemanticTemplateEditor, SemanticTreeEditor } from './SemanticTreeEditor';
+import { DesignRuntimePatterns } from './DesignRuntimePatterns';
 import { PublicComponentPropsEditor } from './PublicComponentPropsEditor';
 import { ComponentImpact, ReferenceUsages, StructureDiagnostics } from './ProjectStructureReview';
 import { adoptSubtree, allNodes, formForDefinition, freshId, prepareDefinition, type ComponentFormDraft } from './project-structure-drafts';
@@ -24,6 +25,7 @@ interface Props {
   state: ProjectDesignRuntimeState;
   viewerOnly: boolean;
   externalBusy?: boolean;
+  sourceIdentity?: unknown;
   onState(state: ProjectDesignRuntimeState): void;
   onBusyChange?(busy: boolean): void;
 }
@@ -40,7 +42,7 @@ export function ProjectStructurePanel(props: Props) {
   return <ProjectStructurePanelContent key={JSON.stringify([props.scope.projectId, workspaceAccountScopedCacheKey(props.scope.workspaceContext)])} {...props} />;
 }
 
-function ProjectStructurePanelContent({ scope, state, viewerOnly, externalBusy = false, onState, onBusyChange }: Props) {
+function ProjectStructurePanelContent({ scope, state, viewerOnly, externalBusy = false, sourceIdentity, onState, onBusyChange }: Props) {
   const t = useT();
   const [work, setWork] = useState(() => documentWork(state));
   const [screenId, setScreenId] = useState(state.document?.screens[0]?.id ?? '');
@@ -48,6 +50,8 @@ function ProjectStructurePanelContent({ scope, state, viewerOnly, externalBusy =
   const [forms, setForms] = useState<ComponentFormDraft[]>([]);
   const [view, setView] = useState<'screen' | 'component'>('screen');
   const [busy, setBusy] = useState(false);
+  const [patternsOpened, setPatternsOpened] = useState(false);
+  const [patternsBusy, setPatternsBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [diagnostics, setDiagnostics] = useState<ValidationDiagnostic[]>([]);
@@ -74,7 +78,7 @@ function ProjectStructurePanelContent({ scope, state, viewerOnly, externalBusy =
     setWork((previous) => !previous.dirty && previous.base !== fingerprint(state.document) ? documentWork(state) : previous);
   }, [state.document]);
 
-  const locked = busy || externalBusy;
+  const locked = busy || externalBusy || patternsBusy;
   const disabled = viewerOnly || locked;
   const selectedScreen = work.value.screens.find((screen) => screen.id === screenId);
   const form = forms.find((entry) => entry.id === componentId);
@@ -200,6 +204,10 @@ function ProjectStructurePanelContent({ scope, state, viewerOnly, externalBusy =
             <Button disabled={disabled || !work.dirty} data-testid="structure-discard-document" onClick={() => { setWork(documentWork(state)); setDetached(null); }}>{t('projectStructure.discardEdits')}</Button>
           </div>
           {selectedScreen ? <>
+            <Button data-testid="structure-patterns-open" disabled={locked} onClick={() => setPatternsOpened((value) => !value)}>{t('designPatterns.title')}</Button>
+            {patternsOpened ? <DesignRuntimePatterns scope={scope} state={state} document={work.value} screenId={selectedScreen.id} sourceIdentity={sourceIdentity} viewerOnly={viewerOnly} disabled={busy || externalBusy || documentConflict}
+              onBusyChange={(value) => { setPatternsBusy(value); busyCallback.current?.(value); }}
+              onAdd={(node) => editDocument({ ...work.value, screens: work.value.screens.map((screen) => screen.id === selectedScreen.id ? { ...screen, children: [...screen.children, node] } : screen) })} /> : null}
             <SemanticScreenEditor {...catalog} screen={selectedScreen} disabled={disabled} onExtractComponent={(node) => newComponent(node)}
               onChange={(screen) => editDocument({ ...work.value, screens: work.value.screens.map((entry) => entry.id === screen.id ? screen : entry) })} />
             <Button disabled={disabled} data-testid="structure-delete-screen" onClick={() => { editDocument({ ...work.value, screens: work.value.screens.filter((screen) => screen.id !== selectedScreen.id) }); setScreenId(work.value.screens.find((screen) => screen.id !== selectedScreen.id)?.id ?? ''); }}>{t('common.delete')} {t('semanticEditor.screen')}</Button>

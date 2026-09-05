@@ -63,6 +63,7 @@ import { effectiveProjectCodeIndex, readProjectCodeEvidence, refreshProjectCode 
 import { buildProjectHandoff } from './project-handoff.js';
 import { emitHandoffCode } from './handoff-emitter.js';
 import { createProjectValidationService } from './project-validation.js';
+import { createProjectPatternService } from './project-patterns.js';
 import { createProjectMigrationRecipeService } from './project-migration-recipes.js';
 import {
   reindexComponentBindings,
@@ -210,6 +211,7 @@ export function createProjectDesignRuntimeService({ store, readSource, observeTa
     saveValidationSettings: validation.saveValidationSettings,
     validateArtifacts: validation.validateArtifacts,
     ...createProjectMigrationRecipeService({ read, readAtRevision, requireVersion }),
+    ...createProjectPatternService({ read, readAtRevision, requireVersion }),
     get: (projectId: string) => read(projectId),
 
     versions(projectId: string) {

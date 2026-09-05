@@ -5586,4 +5586,17 @@ export const ptBR: Dict = {
   'designHandoff.reloadBinding': "Recarregar vínculo",
   'designHandoff.staleResult': "Este resultado pertence a uma revisão anterior do projeto. Crie-o novamente antes de baixar.",
 
+  'designPatterns.title': "Padrões",
+  'designPatterns.description': "Configure um padrão do design system fixado, visualize e adicione ao rascunho desta tela.",
+  'designPatterns.noLock': "Fixe uma versão do design system em Versões para usar seus padrões.",
+  'designPatterns.load': "Buscar padrões",
+  'designPatterns.choose': "Escolher um padrão",
+  'designPatterns.empty': "Nenhum padrão correspondente no pacote fixado.",
+  'designPatterns.instanceId': "ID da instância do padrão",
+  'designPatterns.previewHint': "A prévia valida todo o rascunho atual. Adicionar modifica apenas este rascunho.",
+  'designPatterns.preview': "Visualizar padrão",
+  'designPatterns.add': "Adicionar ao rascunho da tela",
+  'designPatterns.added': "Padrão adicionado ao rascunho da tela. Salve o documento para mantê-lo.",
+  'designPatterns.stale': "Esta prévia não corresponde mais ao projeto ou ao rascunho. Visualize novamente.",
+
 };

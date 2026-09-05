@@ -5586,4 +5586,17 @@ export const hu: Dict = {
   'designHandoff.reloadBinding': "Kötés újratöltése",
   'designHandoff.staleResult': "Ez az eredmény a projekt korábbi revíziójához tartozik. Letöltés előtt hozza létre újra.",
 
+  'designPatterns.title': "Minták",
+  'designPatterns.description': "Állítson be egy mintát a rögzített designrendszerből, tekintse meg az előnézetét, majd adja hozzá a képernyő piszkozatához.",
+  'designPatterns.noLock': "A minták használatához rögzítsen egy designrendszer-verziót a Verziók részen.",
+  'designPatterns.load': "Minták keresése",
+  'designPatterns.choose': "Minta kiválasztása",
+  'designPatterns.empty': "Nincs megfelelő minta a rögzített csomagban.",
+  'designPatterns.instanceId': "Mintapéldány azonosítója",
+  'designPatterns.previewHint': "Az előnézet a teljes aktuális piszkozatot ellenőrzi. A hozzáadás csak ezt a piszkozatot módosítja.",
+  'designPatterns.preview': "Minta előnézete",
+  'designPatterns.add': "Hozzáadás a képernyő piszkozatához",
+  'designPatterns.added': "A minta hozzáadva a képernyő piszkozatához. A megőrzéshez mentse a dokumentumot.",
+  'designPatterns.stale': "Ez az előnézet már nem felel meg a projektnek vagy a piszkozatnak. Készítsen új előnézetet.",
+
 };

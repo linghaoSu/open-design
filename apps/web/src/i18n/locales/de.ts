@@ -5586,4 +5586,17 @@ export const de: Dict = {
   'designHandoff.reloadBinding': "Bindung neu laden",
   'designHandoff.staleResult': "Dieses Ergebnis gehört zu einer früheren Projektrevision. Erstelle es vor dem Herunterladen erneut.",
 
+  'designPatterns.title': "Muster",
+  'designPatterns.description': "Konfiguriere ein Muster aus dem fixierten Designsystem, prüfe die Vorschau und füge es diesem Ansichtsentwurf hinzu.",
+  'designPatterns.noLock': "Fixiere unter Versionen eine Designsystem-Version, um ihre Muster zu verwenden.",
+  'designPatterns.load': "Muster suchen",
+  'designPatterns.choose': "Muster auswählen",
+  'designPatterns.empty': "Keine passenden Muster im fixierten Paket.",
+  'designPatterns.instanceId': "Musterinstanz-ID",
+  'designPatterns.previewHint': "Die Vorschau prüft den gesamten aktuellen Entwurf. Hinzufügen ändert nur diesen Entwurf.",
+  'designPatterns.preview': "Mustervorschau",
+  'designPatterns.add': "Zum Ansichtsentwurf hinzufügen",
+  'designPatterns.added': "Muster zum Ansichtsentwurf hinzugefügt. Speichere das Dokument, um es dauerhaft zu behalten.",
+  'designPatterns.stale': "Diese Vorschau passt nicht mehr zum Projekt oder Entwurf. Erstelle eine neue Vorschau.",
+
 };

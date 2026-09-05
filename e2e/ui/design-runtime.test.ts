@@ -8,6 +8,7 @@ import type {
   ProjectDesignRuntimeHandoffResponse, ProjectDesignRuntimeRegisterLocalBindingResponse,
   ProjectDesignRuntimeEmitHandoffResponse,
   ProjectDesignRuntimeValidateArtifactsResponse,
+  ProjectDesignRuntimeInstantiatePatternResponse,
   UIIRDocument,
 } from '@open-design/contracts';
 import { expect, test } from '@/playwright/suite';
@@ -598,4 +599,89 @@ export const Populated = { args: { title: 'Vue applications' } };`,
   const compilerScreenshot = testInfo.outputPath('mixed-source-compilation.png');
   await page.screenshot({ path: compilerScreenshot, fullPage: true });
   await testInfo.attach('React and Vue source metadata in the workspace', { path: compilerScreenshot, contentType: 'image/png' });
+
+  // Publish a pattern against the compiled Card, then retrieve and configure it
+  // from the screen editor. Preview and Add are draft operations until Save.
+  const beforePattern = await page.request.get(prefix);
+  expect(beforePattern.ok(), await beforePattern.text()).toBeTruthy();
+  const beforePatternState = (await beforePattern.json() as ProjectDesignRuntimeResponse).state;
+  const patternPublicationResponse = await page.request.post(`${prefix}/versions/publish-current`, { data: {
+    expectedRevision: beforePatternState.revision, name: 'Acme UI', version: '3.0.0',
+    sourcePaths: ['Button.tsx', ...Object.keys(additionalSources)],
+    constraints: beforePatternState.validationSettings.projectConstraints,
+    patterns: { schemaVersion: 1, id: 'acme', patterns: [{
+      schemaVersion: 1, id: 'ResourceList', name: 'Resource list', description: 'A titled list of resource summaries.',
+      props: { title: { type: 'string', required: true, default: 'Resources' } },
+      template: { schemaVersion: 1, type: 'component', id: 'resource-card', ref: `ds:acme/${reactCard.id}` },
+      propMappings: [{ prop: 'title', nodeId: 'resource-card', path: ['props', 'title'] }],
+      slots: { items: { accepts: ['text'], required: true, multiple: true } },
+      slotMappings: [{ slot: 'items', nodeId: 'resource-card', targetSlot: 'body' }],
+    }] },
+  } });
+  expect(patternPublicationResponse.ok(), await patternPublicationResponse.text()).toBeTruthy();
+  const patternPublication = await patternPublicationResponse.json() as ProjectDesignRuntimePublishVersionResponse;
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.getByTestId('design-runtime-entry').click();
+  await page.getByTestId('design-runtime-versions-tab').click();
+  await page.getByTestId('versions-select').selectOption(JSON.stringify(['acme', '3.0.0']));
+  await page.getByTestId('versions-range').fill('^3.0.0');
+  const patternLockResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `${prefix}/dependency`);
+  await page.getByTestId('versions-activate').click();
+  const patternLock = await patternLockResponse;
+  expect(patternLock.ok(), await patternLock.text()).toBeTruthy();
+  const patternState = (await patternLock.json() as ProjectDesignRuntimeResponse).state;
+  expect(patternState.lock.dependencies[0]).toMatchObject({ version: '3.0.0', digest: patternPublication.version.digest });
+  await page.getByTestId('design-runtime-structure-tab').click();
+  await page.getByTestId('structure-screen-applications').click();
+  await page.getByTestId('structure-patterns-open').click();
+  await page.getByTestId('pattern-search').fill('resource');
+  await page.getByTestId('pattern-load').click();
+  await page.getByTestId('pattern-select').selectOption('ResourceList');
+  await page.getByTestId('pattern-instance-id').fill('application-resources');
+  await page.getByTestId('semantic-explicit-pattern-config-title').check();
+  await page.getByTestId('semantic-prop-pattern-config-title').fill('Application resources');
+  const items = page.getByTestId('pattern-slot-items');
+  for (const [index, text] of ['Open applications', 'Recently updated'].entries()) {
+    await items.getByTestId('semantic-add-choice-root').selectOption(JSON.stringify({ type: 'text' }));
+    await items.getByTestId('semantic-add-node-root').click();
+    await items.locator('[data-testid^="semantic-text-"]').nth(index).fill(text);
+  }
+  const patternPreviewResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `${prefix}/patterns/ResourceList/instantiate`);
+  await page.getByTestId('pattern-preview').click();
+  const patternPreview = await patternPreviewResponse;
+  expect(patternPreview.ok(), await patternPreview.text()).toBeTruthy();
+  const patternResult = await patternPreview.json() as ProjectDesignRuntimeInstantiatePatternResponse;
+  expect(patternResult.diagnostics).toEqual([]);
+  expect(patternResult.node).toMatchObject({ type: 'component', ref: `ds:acme/${reactCard.id}`, props: { title: 'Application resources' }, slots: {
+    body: [{ type: 'text', text: 'Open applications' }, { type: 'text', text: 'Recently updated' }],
+  } });
+  expect(patternResult.origins).toHaveLength(3);
+  const afterPatternPreview = await page.request.get(prefix);
+  expect(afterPatternPreview.ok(), await afterPatternPreview.text()).toBeTruthy();
+  expect((await afterPatternPreview.json() as ProjectDesignRuntimeResponse).state).toEqual(patternState);
+  const patternScreenshot = testInfo.outputPath('configured-resource-list-pattern.png');
+  await page.getByTestId('pattern-result').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: patternScreenshot, fullPage: true });
+  await testInfo.attach('Configured exact-version resource list ready to add', { path: patternScreenshot, contentType: 'image/png' });
+  await page.getByTestId('pattern-add').click();
+  const afterPatternAdd = await page.request.get(prefix);
+  expect(afterPatternAdd.ok(), await afterPatternAdd.text()).toBeTruthy();
+  expect((await afterPatternAdd.json() as ProjectDesignRuntimeResponse).state).toEqual(patternState);
+  const savePatternResponse = page.waitForResponse((response) => response.request().method() === 'PUT'
+    && new URL(response.url()).pathname === `${prefix}/document`);
+  await page.getByTestId('structure-save-document').click();
+  const savedPattern = await savePatternResponse;
+  expect(savedPattern.ok(), await savedPattern.text()).toBeTruthy();
+  const savedPatternState = (await savedPattern.json() as ProjectDesignRuntimeResponse).state;
+  expect(savedPatternState.document!.screens.find((screen) => screen.id === 'applications')!.children.at(-1)).toEqual(patternResult.node);
+  expect(savedPatternState.document!.screens.find((screen) => screen.id === 'dashboard')).toEqual(patternState.document!.screens.find((screen) => screen.id === 'dashboard'));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.getByTestId('design-runtime-entry').click();
+  await page.getByTestId('design-runtime-structure-tab').click();
+  const reopenedPattern = await page.request.get(prefix);
+  expect(reopenedPattern.ok(), await reopenedPattern.text()).toBeTruthy();
+  expect((await reopenedPattern.json() as ProjectDesignRuntimeResponse).state.document).toEqual(savedPatternState.document);
+  await expect(page.getByTestId(`semantic-prop-${patternResult.node!.id}-title`)).toHaveValue('Application resources');
 });

@@ -5586,4 +5586,17 @@ export const esES: Dict = {
   'designHandoff.reloadBinding': "Recargar vinculación",
   'designHandoff.staleResult': "Este resultado pertenece a una revisión anterior del proyecto. Créalo de nuevo antes de descargarlo.",
 
+  'designPatterns.title': "Patrones",
+  'designPatterns.description': "Configura un patrón del sistema de diseño fijado, previsualízalo y añádelo al borrador de esta pantalla.",
+  'designPatterns.noLock': "Fija una versión del sistema de diseño en Versiones para usar sus patrones.",
+  'designPatterns.load': "Buscar patrones",
+  'designPatterns.choose': "Elegir un patrón",
+  'designPatterns.empty': "No hay patrones coincidentes en el paquete fijado.",
+  'designPatterns.instanceId': "ID de instancia del patrón",
+  'designPatterns.previewHint': "La vista previa valida todo el borrador actual. Añadir solo modifica este borrador.",
+  'designPatterns.preview': "Previsualizar patrón",
+  'designPatterns.add': "Añadir al borrador de pantalla",
+  'designPatterns.added': "Patrón añadido al borrador de pantalla. Guarda el documento para conservarlo.",
+  'designPatterns.stale': "Esta vista previa ya no coincide con el proyecto o el borrador. Previsualiza de nuevo.",
+
 };

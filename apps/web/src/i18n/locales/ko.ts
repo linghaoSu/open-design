@@ -5586,4 +5586,17 @@ export const ko: Dict = {
   'designHandoff.reloadBinding': "바인딩 다시 로드",
   'designHandoff.staleResult': "이 결과는 이전 프로젝트 리비전의 결과입니다. 다운로드하기 전에 다시 생성하세요.",
 
+  'designPatterns.title': "패턴",
+  'designPatterns.description': "고정된 디자인 시스템의 패턴을 구성하고 미리 본 뒤 이 화면 초안에 추가합니다.",
+  'designPatterns.noLock': "패턴을 사용하려면 버전 패널에서 디자인 시스템 버전을 고정하세요.",
+  'designPatterns.load': "패턴 찾기",
+  'designPatterns.choose': "패턴 선택",
+  'designPatterns.empty': "고정된 패키지에 일치하는 패턴이 없습니다.",
+  'designPatterns.instanceId': "패턴 인스턴스 ID",
+  'designPatterns.previewHint': "미리 보기는 현재 초안 전체를 검증합니다. 추가 작업은 이 초안만 변경합니다.",
+  'designPatterns.preview': "패턴 미리 보기",
+  'designPatterns.add': "화면 초안에 추가",
+  'designPatterns.added': "패턴을 화면 초안에 추가했습니다. 유지하려면 문서를 저장하세요.",
+  'designPatterns.stale': "이 미리 보기가 현재 프로젝트 또는 초안과 일치하지 않습니다. 다시 미리 보세요.",
+
 };

@@ -5581,4 +5581,17 @@ export const fa: Dict = {
   'designHandoff.reloadBinding': "بارگیری مجدد اتصال",
   'designHandoff.staleResult': "این نتیجه مربوط به بازبینی قدیمی‌تر پروژه است. پیش از دانلود دوباره آن را ایجاد کنید.",
 
+  'designPatterns.title': "الگوها",
+  'designPatterns.description': "الگویی از سیستم طراحی قفل‌شده را تنظیم و پیش‌نمایش کنید، سپس آن را به پیش‌نویس این صفحه بیفزایید.",
+  'designPatterns.noLock': "برای استفاده از الگوها، نسخه سیستم طراحی را در بخش نسخه‌ها قفل کنید.",
+  'designPatterns.load': "یافتن الگوها",
+  'designPatterns.choose': "انتخاب الگو",
+  'designPatterns.empty': "الگوی مطابقی در بسته قفل‌شده نیست.",
+  'designPatterns.instanceId': "شناسه نمونه الگو",
+  'designPatterns.previewHint': "پیش‌نمایش کل پیش‌نویس فعلی را اعتبارسنجی می‌کند. افزودن فقط همین پیش‌نویس را تغییر می‌دهد.",
+  'designPatterns.preview': "پیش‌نمایش الگو",
+  'designPatterns.add': "افزودن به پیش‌نویس صفحه",
+  'designPatterns.added': "الگو به پیش‌نویس صفحه افزوده شد. برای نگهداری آن سند را ذخیره کنید.",
+  'designPatterns.stale': "این پیش‌نمایش دیگر با پروژه یا پیش‌نویس مطابقت ندارد. دوباره پیش‌نمایش کنید.",
+
 };

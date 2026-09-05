@@ -443,7 +443,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
       </div>
       </div>
       <div id={`${inputId}-structure`} role="tabpanel" aria-labelledby={`${inputId}-structure-tab`} hidden={tab !== 'structure'}>
-        {state ? <ProjectStructurePanel scope={scope} state={state} viewerOnly={viewerOnly} externalBusy={busy} onState={(next) => adoptState(next)} onBusyChange={setStructureBusy} /> : null}
+        {state ? <ProjectStructurePanel scope={scope} state={state} sourceIdentity={files} viewerOnly={viewerOnly} externalBusy={busy} onState={(next) => adoptState(next)} onBusyChange={setStructureBusy} /> : null}
       </div>
       <div id={`${inputId}-handoff`} role="tabpanel" aria-labelledby={`${inputId}-handoff-tab`} hidden={tab !== 'handoff'}>
         {handoffOpened && state ? <DesignHandoffPanel scope={scope} state={state} files={files} viewerOnly={viewerOnly} externalBusy={busy} onState={(next) => adoptState(next)} onBusyChange={setStructureBusy} /> : null}

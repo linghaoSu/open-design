@@ -1,4 +1,5 @@
 import {
+  ProjectDesignRuntimePatternsResponseSchema, ProjectDesignRuntimePatternResponseSchema, ProjectDesignRuntimeInstantiatePatternRequestSchema, ProjectDesignRuntimeInstantiatePatternResponseSchema, type ProjectDesignRuntimeInstantiatePatternRequest,
   CodeIdentitySchema,
   ProjectDesignRuntimeRegisterLocalBindingRequestSchema, ProjectDesignRuntimeRegisterLocalBindingResponseSchema,
   ProjectDesignRuntimeRefreshCodeResponseSchema, ProjectDesignRuntimeCreateHandoffRequestSchema,
@@ -248,3 +249,10 @@ export const saveProjectDesignRuntimeValidationSettings = (scope: ProjectDesignR
   request(scope, '/validation/settings', ProjectDesignRuntimeResponseSchema, 'PUT', ProjectDesignRuntimeValidationSettingsRequestSchema.parse(input));
 export const validateProjectDesignRuntimeArtifacts = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeValidateArtifactsRequest) =>
   request(scope, '/validation/artifacts', ProjectDesignRuntimeValidateArtifactsResponseSchema, 'POST', ProjectDesignRuntimeValidateArtifactsRequestSchema.parse(input));
+
+export const listProjectDesignRuntimePatterns = (scope: ProjectDesignRuntimeScope, query = '') =>
+  request(scope, `/patterns?query=${encodeURIComponent(query)}`, ProjectDesignRuntimePatternsResponseSchema);
+export const getProjectDesignRuntimePattern = (scope: ProjectDesignRuntimeScope, patternId: string) =>
+  request(scope, `/patterns/${encodeURIComponent(DesignEntityIdSchema.parse(patternId))}`, ProjectDesignRuntimePatternResponseSchema);
+export const instantiateProjectDesignRuntimePattern = (scope: ProjectDesignRuntimeScope, patternId: string, input: ProjectDesignRuntimeInstantiatePatternRequest) =>
+  request(scope, `/patterns/${encodeURIComponent(DesignEntityIdSchema.parse(patternId))}/instantiate`, ProjectDesignRuntimeInstantiatePatternResponseSchema, 'POST', ProjectDesignRuntimeInstantiatePatternRequestSchema.parse(input));

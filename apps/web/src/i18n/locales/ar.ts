@@ -5586,4 +5586,17 @@ export const ar: Dict = {
   'designHandoff.reloadBinding': "إعادة تحميل الربط",
   'designHandoff.staleResult': "تنتمي هذه النتيجة إلى مراجعة أقدم للمشروع. أنشئها مجددًا قبل التنزيل.",
 
+  'designPatterns.title': "الأنماط",
+  'designPatterns.description': "اضبط نمطًا من نظام التصميم المثبّت، وعاينه، ثم أضفه إلى مسودة هذه الشاشة.",
+  'designPatterns.noLock': "ثبّت إصدارًا لنظام التصميم في قسم الإصدارات لاستخدام أنماطه.",
+  'designPatterns.load': "البحث عن الأنماط",
+  'designPatterns.choose': "اختيار نمط",
+  'designPatterns.empty': "لا توجد أنماط مطابقة في الحزمة المثبّتة.",
+  'designPatterns.instanceId': "معرّف مثيل النمط",
+  'designPatterns.previewHint': "تتحقق المعاينة من المسودة الحالية كاملةً. الإضافة تغيّر هذه المسودة فقط.",
+  'designPatterns.preview': "معاينة النمط",
+  'designPatterns.add': "إضافة إلى مسودة الشاشة",
+  'designPatterns.added': "أُضيف النمط إلى مسودة الشاشة. احفظ المستند للاحتفاظ به.",
+  'designPatterns.stale': "لم تعد هذه المعاينة تطابق المشروع أو المسودة. أعد المعاينة.",
+
 };

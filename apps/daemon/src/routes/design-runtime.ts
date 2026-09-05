@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from 'express';
 import {
+  ProjectDesignRuntimeInstantiatePatternRequestSchema,
   ProjectDesignRuntimeValidationSettingsRequestSchema, ProjectDesignRuntimeValidateArtifactsRequestSchema,
   ProjectDesignRuntimeReviewUpgradeRequestSchema,
   ProjectDesignRuntimeApplyUpgradeRequestSchema,
@@ -105,6 +106,7 @@ function sendFailure(res: Response, error: unknown): void {
 export function registerDesignRuntimeRoutes(app: Express, deps: RegisterDesignRuntimeRoutesDeps): void {
   const prefix = '/api/projects/:id/design-runtime';
   const service = deps.designRuntime;
+  const patternId = (req: Request) => parseInput(DesignEntityIdSchema, req.params.patternId);
   const componentId = (req: Request) => parseInput(DesignEntityIdSchema, req.params.componentId);
   const draftId = (req: Request) => parseInput(DesignEntityIdSchema, req.params.draftId);
   const handle = (mode: 'read' | 'write', action: (req: Request) => unknown | Promise<unknown>) => async (req: Request, res: Response) => {
@@ -123,6 +125,9 @@ export function registerDesignRuntimeRoutes(app: Express, deps: RegisterDesignRu
   app.post(`${prefix}/validation/artifacts`, handle('read', (req) => service.validateArtifacts(String(req.params.id), parseInput(ProjectDesignRuntimeValidateArtifactsRequestSchema, req.body))));
   app.post(`${prefix}/upgrades/review`, handle('read', (req) => service.reviewUpgrade(String(req.params.id), parseInput(ProjectDesignRuntimeReviewUpgradeRequestSchema, req.body))));
   app.post(`${prefix}/upgrades/apply`, handle('write', (req) => service.applyUpgrade(String(req.params.id), parseInput(ProjectDesignRuntimeApplyUpgradeRequestSchema, req.body))));
+  app.get(`${prefix}/patterns`, handle('read', (req) => service.patterns(String(req.params.id), parseInput(ProjectDesignRuntimeSearchRequestSchema, req.query).query)));
+  app.get(`${prefix}/patterns/:patternId`, handle('read', (req) => service.pattern(String(req.params.id), patternId(req))));
+  app.post(`${prefix}/patterns/:patternId/instantiate`, handle('read', (req) => service.instantiatePattern(String(req.params.id), patternId(req), parseInput(ProjectDesignRuntimeInstantiatePatternRequestSchema, req.body))));
   app.get(`${prefix}/versions/:designSystemId/:version/migrations`, handle('read', (req) => service.migrationRecipes(String(req.params.id), parseInput(DesignEntityIdSchema, req.params.designSystemId), parseInput(DesignSystemSemVerSchema, req.params.version))));
   app.post(`${prefix}/upgrades/recipes`, handle('read', (req) => service.instantiateMigrationRecipe(String(req.params.id), parseInput(ProjectDesignRuntimeInstantiateMigrationRecipeRequestSchema, req.body))));
   app.get(`${prefix}/versions`, handle('read', (req) => service.versions(String(req.params.id))));

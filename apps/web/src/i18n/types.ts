@@ -5754,4 +5754,17 @@ export interface Dict {
   'designValidation.noSources': string;
   'designValidation.clearHint': string;
 
+  'designPatterns.title': string;
+  'designPatterns.description': string;
+  'designPatterns.noLock': string;
+  'designPatterns.load': string;
+  'designPatterns.choose': string;
+  'designPatterns.empty': string;
+  'designPatterns.instanceId': string;
+  'designPatterns.previewHint': string;
+  'designPatterns.preview': string;
+  'designPatterns.add': string;
+  'designPatterns.added': string;
+  'designPatterns.stale': string;
+
 }

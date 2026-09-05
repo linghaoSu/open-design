@@ -6041,4 +6041,17 @@ export const zhTW: Dict = {
   'designHandoff.reloadBinding': "重新載入綁定",
   'designHandoff.staleResult': "此結果屬於較早的專案修訂版本。下載前請重新建立。",
 
+  'designPatterns.title': "模式",
+  'designPatterns.description': "設定鎖定設計系統中的模式，預覽後將其加入此頁面草稿。",
+  'designPatterns.noLock': "請在版本面板鎖定設計系統版本，以使用其中的模式。",
+  'designPatterns.load': "尋找模式",
+  'designPatterns.choose': "選擇模式",
+  'designPatterns.empty': "鎖定套件中沒有相符的模式。",
+  'designPatterns.instanceId': "模式實例 ID",
+  'designPatterns.previewHint': "預覽會驗證整份目前草稿。加入操作只修改此草稿。",
+  'designPatterns.preview': "預覽模式",
+  'designPatterns.add': "加入頁面草稿",
+  'designPatterns.added': "模式已加入頁面草稿。請儲存文件以保留。",
+  'designPatterns.stale': "此預覽已不再對應目前專案或草稿。請重新預覽。",
+
 };

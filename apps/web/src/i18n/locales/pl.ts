@@ -5586,4 +5586,17 @@ export const pl: Dict = {
   'designHandoff.reloadBinding': "Załaduj powiązanie ponownie",
   'designHandoff.staleResult': "Ten wynik dotyczy wcześniejszej rewizji projektu. Utwórz go ponownie przed pobraniem.",
 
+  'designPatterns.title': "Wzorce",
+  'designPatterns.description': "Skonfiguruj wzorzec z zablokowanego systemu projektowego, wyświetl podgląd i dodaj go do szkicu tego ekranu.",
+  'designPatterns.noLock': "Zablokuj wersję systemu projektowego w sekcji Wersje, aby używać jej wzorców.",
+  'designPatterns.load': "Znajdź wzorce",
+  'designPatterns.choose': "Wybierz wzorzec",
+  'designPatterns.empty': "Brak pasujących wzorców w zablokowanym pakiecie.",
+  'designPatterns.instanceId': "ID instancji wzorca",
+  'designPatterns.previewHint': "Podgląd waliduje cały bieżący szkic. Dodanie zmienia tylko ten szkic.",
+  'designPatterns.preview': "Podgląd wzorca",
+  'designPatterns.add': "Dodaj do szkicu ekranu",
+  'designPatterns.added': "Wzorzec dodano do szkicu ekranu. Zapisz dokument, aby go zachować.",
+  'designPatterns.stale': "Ten podgląd nie odpowiada już projektowi lub szkicowi. Wyświetl podgląd ponownie.",
+
 };

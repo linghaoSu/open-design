@@ -5586,4 +5586,17 @@ export const id: Dict = {
   'designHandoff.reloadBinding': "Muat ulang pengikatan",
   'designHandoff.staleResult': "Hasil ini berasal dari revisi proyek sebelumnya. Buat kembali sebelum mengunduh.",
 
+  'designPatterns.title': "Pola",
+  'designPatterns.description': "Konfigurasikan pola dari sistem desain terkunci, pratinjau, lalu tambahkan ke draf layar ini.",
+  'designPatterns.noLock': "Kunci versi sistem desain di Versi untuk memakai polanya.",
+  'designPatterns.load': "Cari pola",
+  'designPatterns.choose': "Pilih pola",
+  'designPatterns.empty': "Tidak ada pola yang cocok di paket terkunci.",
+  'designPatterns.instanceId': "ID instans pola",
+  'designPatterns.previewHint': "Pratinjau memvalidasi seluruh draf saat ini. Menambahkan hanya mengubah draf ini.",
+  'designPatterns.preview': "Pratinjau pola",
+  'designPatterns.add': "Tambahkan ke draf layar",
+  'designPatterns.added': "Pola ditambahkan ke draf layar. Simpan dokumen untuk mempertahankannya.",
+  'designPatterns.stale': "Pratinjau ini tidak lagi sesuai dengan proyek atau draf. Pratinjau lagi.",
+
 };

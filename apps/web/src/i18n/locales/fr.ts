@@ -5586,4 +5586,17 @@ export const fr: Dict = {
   'designHandoff.reloadBinding': "Recharger la liaison",
   'designHandoff.staleResult': "Ce résultat appartient à une révision antérieure du projet. Recréez-le avant le téléchargement.",
 
+  'designPatterns.title': "Modèles",
+  'designPatterns.description': "Configurez un modèle du système de design verrouillé, prévisualisez-le, puis ajoutez-le au brouillon de cet écran.",
+  'designPatterns.noLock': "Verrouillez une version du système de design dans Versions pour utiliser ses modèles.",
+  'designPatterns.load': "Rechercher des modèles",
+  'designPatterns.choose': "Choisir un modèle",
+  'designPatterns.empty': "Aucun modèle correspondant dans le paquet verrouillé.",
+  'designPatterns.instanceId': "ID de l’instance du modèle",
+  'designPatterns.previewHint': "L’aperçu valide tout le brouillon actuel. L’ajout ne modifie que ce brouillon.",
+  'designPatterns.preview': "Aperçu du modèle",
+  'designPatterns.add': "Ajouter au brouillon de l’écran",
+  'designPatterns.added': "Modèle ajouté au brouillon de l’écran. Enregistrez le document pour le conserver.",
+  'designPatterns.stale': "Cet aperçu ne correspond plus au projet ou au brouillon. Générez un nouvel aperçu.",
+
 };

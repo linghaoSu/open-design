@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  DesignPatternSearchResultSchema, DesignPatternReadResultSchema, DesignPatternInstantiationResultSchema, InstantiateDesignPatternRequestSchema,
   ProjectDesignValidationSettingsSchema,
   DesignValidationSourceSchema,
   DesignValidationOutputSchema,
@@ -385,3 +386,18 @@ export const ProjectDesignRuntimeValidateArtifactsRequestSchema = z.object({
 export type ProjectDesignRuntimeValidateArtifactsRequest = z.infer<typeof ProjectDesignRuntimeValidateArtifactsRequestSchema>;
 export const ProjectDesignRuntimeValidateArtifactsResponseSchema = z.object({ revision: revisionSchema, result: StructuredDesignValidationResultSchema }).strict();
 export type ProjectDesignRuntimeValidateArtifactsResponse = z.infer<typeof ProjectDesignRuntimeValidateArtifactsResponseSchema>;
+
+export const ProjectDesignRuntimePatternsResponseSchema = z.object({ revision: revisionSchema, ...DesignPatternSearchResultSchema.shape }).strict();
+export type ProjectDesignRuntimePatternsResponse = z.infer<typeof ProjectDesignRuntimePatternsResponseSchema>;
+export const ProjectDesignRuntimePatternResponseSchema = z.object({ revision: revisionSchema, ...DesignPatternReadResultSchema.shape }).strict();
+export type ProjectDesignRuntimePatternResponse = z.infer<typeof ProjectDesignRuntimePatternResponseSchema>;
+export const ProjectDesignRuntimeInstantiatePatternRequestSchema = InstantiateDesignPatternRequestSchema.omit({ patternId: true }).extend({
+  expectedRevision: revisionSchema, document: UIIRDocumentSchema,
+}).strict();
+export type ProjectDesignRuntimeInstantiatePatternRequest = z.infer<typeof ProjectDesignRuntimeInstantiatePatternRequestSchema>;
+export const ProjectDesignRuntimeInstantiatePatternResponseSchema = z.object({ revision: revisionSchema }).passthrough().transform(({ revision, ...result }, ctx) => {
+  const parsed = DesignPatternInstantiationResultSchema.safeParse(result);
+  if (!parsed.success) { for (const issue of parsed.error.issues) ctx.addIssue(issue); return z.NEVER; }
+  return { revision, ...parsed.data };
+});
+export type ProjectDesignRuntimeInstantiatePatternResponse = z.infer<typeof ProjectDesignRuntimeInstantiatePatternResponseSchema>;

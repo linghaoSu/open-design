@@ -6034,4 +6034,17 @@ export const zhCN: Dict = {
   'designHandoff.reloadBinding': "重新加载绑定",
   'designHandoff.staleResult': "此结果属于较早的项目修订版本。下载前请重新创建。",
 
+  'designPatterns.title': "模式",
+  'designPatterns.description': "配置锁定设计系统中的模式，预览后将其添加到此页面草稿。",
+  'designPatterns.noLock': "请在版本面板锁定设计系统版本，以使用其中的模式。",
+  'designPatterns.load': "查找模式",
+  'designPatterns.choose': "选择模式",
+  'designPatterns.empty': "锁定包中没有匹配的模式。",
+  'designPatterns.instanceId': "模式实例 ID",
+  'designPatterns.previewHint': "预览会验证整个当前草稿。添加操作只修改此草稿。",
+  'designPatterns.preview': "预览模式",
+  'designPatterns.add': "添加到页面草稿",
+  'designPatterns.added': "模式已添加到页面草稿。保存文档以持久保留。",
+  'designPatterns.stale': "此预览已不再对应当前项目或草稿。请重新预览。",
+
 };

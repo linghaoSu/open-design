@@ -30,6 +30,7 @@ interface EditorActions {
 export interface SemanticTreeEditorProps extends Catalog, EditorActions {
   nodes: readonly UIIRNode[];
   maxRoots?: number;
+  accepts?: readonly string[];
   onChange(nodes: UIIRNode[]): void;
 }
 
@@ -112,11 +113,11 @@ function setProp(node: Exclude<UIIRNode, { type: 'text' }>, name: string, value:
   return withoutProps;
 }
 
-export function SemanticTreeEditor({ nodes, maxRoots, onChange, ...context }: SemanticTreeEditorProps) {
+export function SemanticTreeEditor({ nodes, maxRoots, accepts, onChange, ...context }: SemanticTreeEditorProps) {
   const t = useT();
   return <section className={styles.editor} aria-label={t('semanticEditor.title')}>
     {context.onCreateLocalComponent ? <Button disabled={context.disabled} onClick={context.onCreateLocalComponent}>{t('semanticEditor.newComponent')}</Button> : null}
-    <NodeList {...context} nodes={nodes} onChange={onChange} scopeId="root" maxNodes={maxRoots} minNodes={maxRoots === 1 ? 1 : 0} />
+    <NodeList {...context} nodes={nodes} onChange={onChange} scopeId="root" accepts={accepts} maxNodes={maxRoots} minNodes={maxRoots === 1 ? 1 : 0} />
   </section>;
 }
 
@@ -278,7 +279,7 @@ function NodeEditor({ node, onChange, children, ...context }: Catalog & EditorAc
   </article>;
 }
 
-function ScalarPropEditor({ nodeId, name, definition, value, explicit, instance, disabled, mappedBy, onChange }: {
+export function ScalarPropEditor({ nodeId, name, definition, value, explicit, instance, disabled, mappedBy, onChange }: {
   nodeId: string;
   name: string;
   definition: ComponentPropDefinition;

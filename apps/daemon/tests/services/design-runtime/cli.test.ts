@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ProjectComponentDefinition, ProjectDesignRuntimeState, ReferenceGraphQueryResult, ResolvedUIIRResult, SharedComponentDraft, SharedComponentImpact, ValidationDiagnostic } from '@open-design/contracts';
+import { instantiateDesignPattern } from '../../../src/services/design-runtime/pattern-runtime.js';
 import { instantiateDesignSystemMigrationRecipe } from '../../../src/services/design-runtime/migration-recipes.js';
 import { upgradeFixture } from '../../fixtures/design-runtime/design-system-upgrade.js';
 import { reviewDesignSystemUpgrade, applyDesignSystemUpgrade } from '../../../src/services/design-runtime/design-system-upgrade.js';
@@ -737,5 +738,48 @@ describe('saved design validation CLI', () => {
     expect(injected.code).toBe(2); expect(requests).toHaveLength(0);
     const stale = await runCli(['design-runtime', 'validate-artifacts', projectId, '--daemon-url', url, '--json', '--expected-revision', '7', '--prompt-file', '-'], JSON.stringify(artifactInput));
     expect(stale.code).toBe(1); expect(JSON.parse(stale.stderr)).toEqual({ status: 409, ...failure }); expect(requests).toHaveLength(1);
+  });
+});
+
+
+describe('pattern authoring CLI', () => {
+  function patternData() {
+    const value = upgradeFixture(); const pattern = value.from.package.patterns.patterns[0]!;
+    const input = { instanceId: 'resource-list', destinationScreenId: 'Applications', props: { title: 'Resources' }, slots: { actions: [{ schemaVersion: 1 as const, type: 'component' as const, id: 'button', ref: 'ds:acme/Button' }] }, document: value.context.document! };
+    const { document, ...configuration } = input;
+    const result = { revision: 7, ...instantiateDesignPattern({ lock: value.context.lock, projectComponents: value.context.projectComponents, document }, value.from, { ...configuration, patternId: pattern.id }) };
+    return { input, pattern, result, dependency: value.context.lock.dependencies[0]! };
+  }
+  it('lists and inspects exact active-package patterns through their shared endpoints', async () => {
+    const value = patternData();
+    const stub = await startServer(({ url }) => ({ body: { revision: 7, schemaVersion: 1, dependency: value.dependency, ...(url.includes('?') ? { patterns: [value.pattern] } : { pattern: value.pattern }) } }));
+    const listed = await runCli(['design-runtime', 'patterns', projectId, '--query', 'resource list', '--daemon-url', stub.url, '--json']);
+    expect(listed.code).toBe(0); expect(JSON.parse(listed.stdout).patterns).toEqual([value.pattern]);
+    const detail = await runCli(['design-runtime', 'pattern', projectId, value.pattern.id, '--daemon-url', stub.url, '--json']);
+    expect(detail.code).toBe(0); expect(JSON.parse(detail.stdout).pattern).toEqual(value.pattern);
+    expect(stub.requests.map(({ method, url }) => [method, url])).toEqual([['GET', `${prefix}/patterns?query=resource%20list`], ['GET', `${prefix}/patterns/ResourceList`]]);
+  });
+  it('previews stdin draft input using one revision read and performs no save or mutation endpoint', async () => {
+    const value = patternData(); const stub = await startServer(({ method }) => ({ body: method === 'GET' ? { state: state() } : value.result }));
+    const output = await runCli(['design-runtime', 'instantiate-pattern', projectId, value.pattern.id, '--daemon-url', stub.url, '--json', '--prompt-file', '-', '--workspace', 'team', '--workspace-member', 'member'], JSON.stringify(value.input));
+    expect(output.code, output.stderr).toBe(0); expect(JSON.parse(output.stdout)).toEqual(value.result);
+    expect(stub.requests.map(({ method, url }) => [method, url])).toEqual([['GET', prefix], ['POST', `${prefix}/patterns/ResourceList/instantiate`]]);
+    expect(stub.requests[1]).toMatchObject({ headers: { 'x-od-workspace-id': 'team', 'x-od-workspace-member-id': 'member' }, body: { ...value.input, expectedRevision: 7 } });
+  });
+  it('returns invalid-configuration diagnostics and preserves conflicts without retrying', async () => {
+    const value = patternData(); const invalid = { ...value.result, node: null, origins: [], diagnostics: [{ schemaVersion: 1, code: 'ODDS1004', severity: 'error', message: 'Required slot is empty.' }] };
+    let conflict = false; const body = { error: { code: 'DESIGN_RUNTIME_REVISION_CONFLICT', message: 'Changed', details: { expectedRevision: 7, currentRevision: 8 } } };
+    const stub = await startServer(() => conflict ? { status: 409, body } : { body: invalid });
+    const args = ['design-runtime', 'instantiate-pattern', projectId, value.pattern.id, '--daemon-url', stub.url, '--json', '--expected-revision', '7', '--prompt-file', '-'];
+    const blocked = await runCli(args, JSON.stringify(value.input)); expect(blocked.code).toBe(1); expect(JSON.parse(blocked.stdout)).toEqual(invalid);
+    conflict = true; const failed = await runCli(args, JSON.stringify(value.input)); expect(failed.code).toBe(1); expect(JSON.parse(failed.stderr)).toEqual({ status: 409, ...body }); expect(stub.requests).toHaveLength(2);
+  });
+  it('rejects injected authority before HTTP even when no revision was supplied', async () => {
+    const value = patternData(); const stub = await startServer();
+    for (const extra of [{ registry: {} }, { lock: {} }, { projectComponents: {} }, { package: {} }, { version: 'latest' }]) {
+      const output = await runCli(['design-runtime', 'instantiate-pattern', projectId, value.pattern.id, '--daemon-url', stub.url, '--json', '--prompt-file', '-'], JSON.stringify({ ...value.input, ...extra }));
+      expect(output.code).toBe(2);
+    }
+    expect(stub.requests).toHaveLength(0);
   });
 });

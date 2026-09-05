@@ -63,7 +63,7 @@ until every required milestone and invariant has direct current-state evidence.
 | 8 | Upgrade impact, deterministic migrations, review and explicit apply | Diff + graph + overrides identifies affected nodes/screens; migration validates before atomic lock/document update; failure/conflict leaves live state intact | Complete |
 | 9 | Machine-readable handoff and persistent project-component code bindings | Manifest includes lock, target, IR, registry, bindings and change context; deterministic round-trip, package compatibility, UI/CLI export | Complete |
 | 10 | Explore/Guided project modes and generation repair loop | Structured diagnostics after generation; bounded repair; normal Explore behavior preserved; equivalent generation paths validated | In progress |
-| 11 | Pattern registry and design grammar | Pattern retrieval/configuration and slot composition validated deterministically; reusable resource-list fixture | In progress |
+| 11 | Pattern registry and design grammar | Pattern retrieval/configuration and slot composition validated deterministically; reusable resource-list fixture | Complete |
 | 12 | Strict mode semantic UI generation and source enforcement | Intent → retrieve → IR → validate → render/source → source validation → preview; unknown components/props/variants/slots/tokens/raw forbidden styles/reimplemented bound controls rejected | Pending |
 | 13 | Visual impact preview of representative affected screens | Current/proposed side-by-side uses graph-selected screens and the locked production component runtime; UI exercised with screenshot evidence | Pending |
 
@@ -275,7 +275,18 @@ fail without silently renaming nodes. Public slot rules inspect resolved local r
 and every returned node retains its source origin. The existing local engine shares
 the extracted default/mapping materializer. Root ran 24 daemon cases and 56 contract
 cases; package build and daemon source/test typechecks passed. Public pattern
-retrieval and insertion into the screen editor remain in progress.
+retrieval and configuration now use matching HTTP/CLI operations and the Structure
+screen editor. Preview validates the whole authored draft against daemon-owned
+package and local-definition facts; Add edits only the draft, and Save is explicit.
+Root ran 13 daemon HTTP/core cases, 5 contract cases, 23 pattern/semantic editor
+cases and 2 provider cases; the agent's combined regression includes 69 CLI and
+64 web/locale cases. The full browser workflow published and locked a ResourceList
+pattern, configured a title and two slot items, checked that Preview and Add left
+persisted state unchanged, saved the result and reopened identical node identities.
+It passed in 31.2 seconds (1.1 minutes with the shared harness), and the screenshot
+was inspected. The first attempt correctly rejected a test publication that omitted
+required constraints; the fixture was corrected without changing product behavior.
+Full `pnpm guard` and `pnpm typecheck` passed.
 
 Phase 2/3 acceptance includes 88 focused contract tests, 147 daemon design-runtime
 tests, the existing 16 project CLI tests, 30 web provider/panel/locale tests, and

@@ -11,7 +11,7 @@ API. Existing design-system discovery, generation, and rendering retain their
 current behavior.
 
 The [active delivery plan](../specs/current/structured-design-runtime.md) tracks
-acceptance and the remaining upgrade, handoff, compiler, and generation work.
+acceptance and the remaining generation and visual preview work.
 
 ## Existing extension points
 
@@ -55,10 +55,10 @@ acceptance and the remaining upgrade, handoff, compiler, and generation work.
   registry, explicit binding, and `ODDS1003` rejection.
 
 No new workspace package is needed. A later milestone can extract pure runtime
-algorithms once actual shared consumers justify that boundary. Prompt integration,
-migrations, production rendering, and handoff remain tracked separately in the
-active plan. Immutable versions and exact resolution live in the same daemon
-service boundary.
+algorithms once actual shared consumers justify that boundary. Immutable versions,
+reviewed migrations, pattern composition and handoff live in the same daemon service
+boundary. Prompt integration and production rendering are tracked separately in the
+active plan.
 
 ## Project workflow and persistence
 
@@ -87,7 +87,7 @@ Drift is assessed when the index is recompiled, not by a background file watcher
 
 Every write carries `expectedRevision`. A concurrent change returns HTTP 409 with
 the expected and current revisions; callers must review the refreshed state before
-trying again. Registry identity changes require the future explicit upgrade flow.
+trying again. Dependency upgrades require the explicit review/application flow.
 Read-only project members can browse metadata and validate values. Mutations use
 the existing project write authority. Persistence uses the daemon database and
 follows the root [daemon data directory contract](../AGENTS.md#daemon-data-directory-contract).
@@ -132,6 +132,9 @@ All paths below are relative to `/api/projects/:id/design-runtime`:
 | Inspect saved mode and effective constraints | `GET /validation/settings` | `validation-settings <projectId>` |
 | Save mode and project constraints | `PUT /validation/settings` | `save-validation-settings <projectId> --prompt-file <path\|->` |
 | Validate actual project source files | `POST /validation/artifacts` | `validate-artifacts <projectId> --prompt-file <path\|->` |
+| Search exact locked patterns | `GET /patterns?query=...` | `patterns <projectId> --query <text>` |
+| Inspect a locked pattern | `GET /patterns/:patternId` | `pattern <projectId> <patternId>` |
+| Configure a pattern for a screen draft | `POST /patterns/:patternId/instantiate` | `instantiate-pattern <projectId> <patternId> --prompt-file <path\|->` |
 
 CLI commands begin with `od design-runtime` and support `--json`, `--daemon-url`,
 `--workspace`, and `--workspace-member`. Commands with request bodies read JSON from a
@@ -273,6 +276,26 @@ Recipe binding decisions cover unchanged package bindings. Manual binding overla
 are skipped and reported for an explicit choice. Package authors can include optional
 `migrations` metadata when importing or publishing a version; publishing inherits it
 from the active package unless an explicit array replaces it (`[]` clears it).
+
+## Locked patterns
+
+In **Structure**, select a screen and open **Patterns**. Search the active exact
+package, select a pattern, then configure its public properties and slots using
+the existing semantic editors. Defaults come from that immutable pattern. The
+daemon validates slot acceptance, required values and the whole destination draft,
+including references to project components and IDs on other screens.
+
+**Preview pattern** returns a semantic subtree with deterministic IDs and source
+origins. **Add to draft** inserts it into the selected screen; **Save document**
+persists it. Neither retrieval nor preview changes project state. Workspace viewers
+can inspect and configure previews but cannot add or save them. A changed package,
+project, draft, permission or configuration invalidates the preview.
+
+The CLI uses the same three endpoints. `instantiate-pattern` accepts an explicit
+draft document, destination screen, instance ID, properties and slot nodes; the
+daemon supplies the lock, package and project component definitions. Returned
+diagnostics prevent partial insertion. Missing locks and unavailable versions do
+not fall back to the newest catalog entry.
 
 ## Compatibility and identity
 

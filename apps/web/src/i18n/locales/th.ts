@@ -5586,4 +5586,17 @@ export const th: Dict = {
   'designHandoff.reloadBinding': "โหลดการผูกอีกครั้ง",
   'designHandoff.staleResult': "ผลลัพธ์นี้เป็นของรีวิชันโปรเจกต์ก่อนหน้า สร้างใหม่ก่อนดาวน์โหลด",
 
+  'designPatterns.title': "แพตเทิร์น",
+  'designPatterns.description': "กำหนดค่าแพตเทิร์นจากระบบออกแบบที่ล็อกไว้ ดูตัวอย่าง แล้วเพิ่มลงในร่างหน้าจอนี้",
+  'designPatterns.noLock': "ล็อกเวอร์ชันระบบออกแบบในส่วนเวอร์ชันเพื่อใช้แพตเทิร์น",
+  'designPatterns.load': "ค้นหาแพตเทิร์น",
+  'designPatterns.choose': "เลือกแพตเทิร์น",
+  'designPatterns.empty': "ไม่พบแพตเทิร์นที่ตรงกันในแพ็กเกจที่ล็อกไว้",
+  'designPatterns.instanceId': "ID อินสแตนซ์แพตเทิร์น",
+  'designPatterns.previewHint': "การดูตัวอย่างตรวจสอบร่างปัจจุบันทั้งหมด การเพิ่มจะแก้ไขเฉพาะร่างนี้",
+  'designPatterns.preview': "ดูตัวอย่างแพตเทิร์น",
+  'designPatterns.add': "เพิ่มลงในร่างหน้าจอ",
+  'designPatterns.added': "เพิ่มแพตเทิร์นลงในร่างหน้าจอแล้ว บันทึกเอกสารเพื่อเก็บไว้",
+  'designPatterns.stale': "ตัวอย่างนี้ไม่ตรงกับโปรเจกต์หรือร่างปัจจุบันแล้ว โปรดดูตัวอย่างอีกครั้ง",
+
 };

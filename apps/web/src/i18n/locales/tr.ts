@@ -5586,4 +5586,17 @@ export const tr: Dict = {
   'designHandoff.reloadBinding': "Bağlamayı yeniden yükle",
   'designHandoff.staleResult': "Bu sonuç daha eski bir proje revizyonuna ait. İndirmeden önce yeniden oluşturun.",
 
+  'designPatterns.title': "Kalıplar",
+  'designPatterns.description': "Sabitlenmiş tasarım sisteminden bir kalıp yapılandırın, önizleyin ve bu ekran taslağına ekleyin.",
+  'designPatterns.noLock': "Kalıpları kullanmak için Sürümler bölümünde bir tasarım sistemi sürümünü sabitleyin.",
+  'designPatterns.load': "Kalıp bul",
+  'designPatterns.choose': "Kalıp seç",
+  'designPatterns.empty': "Sabitlenmiş pakette eşleşen kalıp yok.",
+  'designPatterns.instanceId': "Kalıp örneği kimliği",
+  'designPatterns.previewHint': "Önizleme güncel taslağın tamamını doğrular. Ekleme yalnızca bu taslağı değiştirir.",
+  'designPatterns.preview': "Kalıbı önizle",
+  'designPatterns.add': "Ekran taslağına ekle",
+  'designPatterns.added': "Kalıp ekran taslağına eklendi. Kalıcı olması için belgeyi kaydedin.",
+  'designPatterns.stale': "Bu önizleme artık proje veya taslakla eşleşmiyor. Yeniden önizleyin.",
+
 };

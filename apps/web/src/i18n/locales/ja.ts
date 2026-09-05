@@ -5586,4 +5586,17 @@ export const ja: Dict = {
   'designHandoff.reloadBinding': "バインディングを再読み込み",
   'designHandoff.staleResult': "この結果は以前のプロジェクトリビジョンに属します。ダウンロード前に再作成してください。",
 
+  'designPatterns.title': "パターン",
+  'designPatterns.description': "固定したデザインシステムのパターンを設定し、プレビューしてからこの画面の下書きに追加します。",
+  'designPatterns.noLock': "パターンを使うには、バージョン画面でデザインシステムのバージョンを固定してください。",
+  'designPatterns.load': "パターンを検索",
+  'designPatterns.choose': "パターンを選択",
+  'designPatterns.empty': "固定パッケージに一致するパターンがありません。",
+  'designPatterns.instanceId': "パターンインスタンス ID",
+  'designPatterns.previewHint': "プレビューは現在の下書き全体を検証します。追加操作はこの下書きのみを変更します。",
+  'designPatterns.preview': "パターンをプレビュー",
+  'designPatterns.add': "画面の下書きに追加",
+  'designPatterns.added': "パターンを画面の下書きに追加しました。保持するには文書を保存してください。",
+  'designPatterns.stale': "このプレビューは現在のプロジェクトまたは下書きと一致しません。再度プレビューしてください。",
+
 };

@@ -5600,4 +5600,17 @@ export const en: Dict = {
   "designHandoff.reloadBinding": "Reload binding",
   "designHandoff.staleResult": "This result belongs to an earlier project revision. Create it again before downloading.",
 
+  'designPatterns.title': "Patterns",
+  'designPatterns.description': "Configure a pattern from the locked design system, preview it, then add it to this screen draft.",
+  'designPatterns.noLock': "Lock a design system version in Versions to use its patterns.",
+  'designPatterns.load': "Find patterns",
+  'designPatterns.choose': "Choose a pattern",
+  'designPatterns.empty': "No matching patterns in the locked package.",
+  'designPatterns.instanceId': "Pattern instance ID",
+  'designPatterns.previewHint': "Preview validates the whole current draft. Adding changes only this draft.",
+  'designPatterns.preview': "Preview pattern",
+  'designPatterns.add': "Add to screen draft",
+  'designPatterns.added': "Pattern added to the screen draft. Save the document to persist it.",
+  'designPatterns.stale': "This preview no longer matches the project or draft. Preview again.",
+
 };

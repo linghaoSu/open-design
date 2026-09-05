@@ -5586,4 +5586,17 @@ export const it: Dict = {
   'designHandoff.reloadBinding': "Ricarica associazione",
   'designHandoff.staleResult': "Questo risultato appartiene a una revisione precedente del progetto. Ricrealo prima di scaricarlo.",
 
+  'designPatterns.title': "Modelli",
+  'designPatterns.description': "Configura un modello del design system bloccato, visualizza l’anteprima e aggiungilo alla bozza di questa schermata.",
+  'designPatterns.noLock': "Blocca una versione del design system in Versioni per usarne i modelli.",
+  'designPatterns.load': "Cerca modelli",
+  'designPatterns.choose': "Scegli un modello",
+  'designPatterns.empty': "Nessun modello corrispondente nel pacchetto bloccato.",
+  'designPatterns.instanceId': "ID istanza del modello",
+  'designPatterns.previewHint': "L’anteprima valida l’intera bozza attuale. L’aggiunta modifica solo questa bozza.",
+  'designPatterns.preview': "Anteprima modello",
+  'designPatterns.add': "Aggiungi alla bozza della schermata",
+  'designPatterns.added': "Modello aggiunto alla bozza della schermata. Salva il documento per conservarlo.",
+  'designPatterns.stale': "Questa anteprima non corrisponde più al progetto o alla bozza. Genera una nuova anteprima.",
+
 };

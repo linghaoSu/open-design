@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import {
+  ProjectDesignRuntimePatternsResponseSchema, ProjectDesignRuntimePatternResponseSchema, ProjectDesignRuntimeInstantiatePatternRequestSchema, ProjectDesignRuntimeInstantiatePatternResponseSchema,
   CodeIdentitySchema,
   ProjectDesignRuntimeRegisterLocalBindingRequestSchema, ProjectDesignRuntimeRegisterLocalBindingResponseSchema,
   ProjectDesignRuntimeRefreshCodeResponseSchema, ProjectDesignRuntimeCreateHandoffRequestSchema,
@@ -58,6 +59,9 @@ import {
 import { resolveDaemonUrl } from '../../daemon-url.js';
 
 export const DESIGN_RUNTIME_CLI_USAGE = `Usage:
+  od design-runtime patterns <projectId> [--query <text>]
+  od design-runtime pattern <projectId> <patternId>
+  od design-runtime instantiate-pattern <projectId> <patternId> --prompt-file <path|->
   od design-runtime project-code-components <projectId> [--query <text>]
   od design-runtime register-local-binding <projectId> --prompt-file <path|->
   od design-runtime refresh-code-component <projectId> <codeComponentId>
@@ -140,7 +144,7 @@ does not activate a dependency. Activate-dependency selects the exact version an
 records the declared range; resolve-dependency uses its locked version and digests.
 Initial publication requires explicit constraints. When a dependency is locked,
 omitted publication metadata preserves that locked package's metadata.
-Use-migration-recipe accepts {designSystemId,version,recipeId,planId,targetRange}
+Instantiate-pattern accepts {instanceId,destinationScreenId,props,slots,document}.\nIt previews the explicit draft against the locked package and current local definitions;\nno project document is saved. Use save-document separately to adopt the returned subtree.\nUse-migration-recipe accepts {designSystemId,version,recipeId,planId,targetRange}
 and returns an editable plan without changing project state. Manual binding
 overlays are preserved; skipped package decisions are returned as warnings.
 Review-upgrade accepts {plan} and returns a review without changing live state.
@@ -167,7 +171,7 @@ malformed arguments exit 2. A staged draft is retained even when its impact exit
 `;
 
 interface CommandSpec {
-  argument?: 'bindingId' | 'componentId' | 'componentRef' | 'draftId' | 'designSystemId' | 'codeComponentId';
+  argument?: 'patternId' | 'bindingId' | 'componentId' | 'componentRef' | 'draftId' | 'designSystemId' | 'codeComponentId';
   exactVersion?: boolean;
   mutates?: boolean;
   revisioned?: boolean;
@@ -176,6 +180,9 @@ interface CommandSpec {
 }
 
 const COMMANDS: Record<string, CommandSpec> = {
+  'patterns': { query: true },
+  'pattern': { argument: 'patternId' },
+  'instantiate-pattern': { argument: 'patternId', revisioned: true, input: ProjectDesignRuntimeInstantiatePatternRequestSchema },
   'project-code-components': { query: true },
   'register-local-binding': { mutates: true, input: ProjectDesignRuntimeRegisterLocalBindingRequestSchema },
   'refresh-code-component': { mutates: true, argument: 'codeComponentId' },
@@ -361,7 +368,7 @@ export async function runDesignRuntimeCli(args: string[], deps: DesignRuntimeCli
     if (!projectId || extra.length || (spec.argument ? !targetId : targetId !== undefined) || (spec.exactVersion ? !exactVersion : exactVersion !== undefined)) {
       invalidInput(`Usage: od design-runtime ${command} <projectId>${spec.argument ? ` <${spec.argument}>` : ''}${spec.exactVersion ? ' <exactVersion>' : ''}.`);
     }
-    if (spec.argument === 'componentId' || spec.argument === 'draftId' || spec.argument === 'designSystemId') parseInput(DesignEntityIdSchema, targetId);
+    if (spec.argument === 'patternId' || spec.argument === 'componentId' || spec.argument === 'draftId' || spec.argument === 'designSystemId') parseInput(DesignEntityIdSchema, targetId);
     if (spec.exactVersion) parseInput(DesignSystemSemVerSchema, exactVersion);
     if (spec.argument === 'componentRef') parseInput(ProjectDesignRuntimeReferencesRequestSchema, { componentRef: targetId });
     if (spec.argument === 'codeComponentId') parseInput(CodeIdentitySchema, targetId);
@@ -409,6 +416,23 @@ export async function runDesignRuntimeCli(args: string[], deps: DesignRuntimeCli
     const output = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
     const encodedTarget = encodeURIComponent(targetId ?? '');
     const mutationBody = { ...input, expectedRevision };
+    if (command === 'patterns') {
+      const data = await request(`/patterns?query=${encodeURIComponent(values.query ?? '')}`, ProjectDesignRuntimePatternsResponseSchema);
+      if (json) output(data); else for (const pattern of data.patterns) process.stdout.write(`${pattern.id} ${pattern.name}\n`);
+      return { exitCode: 0 };
+    }
+    if (command === 'pattern') {
+      const data = await request(`/patterns/${encodedTarget}`, ProjectDesignRuntimePatternResponseSchema);
+      if (data.pattern.id !== targetId) throw new CliFailure(1, createApiErrorResponse(createApiError('INTERNAL_ERROR', 'Returned pattern does not match the requested identity.')));
+      if (json) output(data); else process.stdout.write(`${JSON.stringify(data.pattern, null, 2)}\n`);
+      return { exitCode: 0 };
+    }
+    if (command === 'instantiate-pattern') {
+      const data = await request(`/patterns/${encodedTarget}/instantiate`, ProjectDesignRuntimeInstantiatePatternResponseSchema, 'POST', mutationBody);
+      if (data.patternId !== targetId || data.instanceId !== input.instanceId || data.revision !== expectedRevision) throw new CliFailure(1, createApiErrorResponse(createApiError('INTERNAL_ERROR', 'Returned pattern instance does not match the request.')));
+      if (json) output(data); else { process.stdout.write(`${JSON.stringify(data.node, null, 2)}\n`); printDiagnostics(data.diagnostics); }
+      return { exitCode: diagnosticsExitCode(data.diagnostics) };
+    }
     if (command === 'register-local-binding') {
       const data = await request('/project-code-components/register-binding', ProjectDesignRuntimeRegisterLocalBindingResponseSchema, 'POST', mutationBody);
       if (json) output(data); else { printState(data); process.stdout.write(`Binding: ${data.binding.id}\n`); printDiagnostics(data.diagnostics); }
