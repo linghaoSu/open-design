@@ -3,6 +3,7 @@ import {
   CreateHandoffRequestSchema, HandoffBindingCoverageSchema, HandoffBuildResultSchema,
   HandoffCodeResultSchema, HandoffManifestSchema, HandoffTargetPackageSchema,
   type HandoffManifest, type ValidationDiagnostic,
+  codeImportPackageName,
 } from '../../src/design-runtime/index.js';
 
 const error: ValidationDiagnostic = { schemaVersion: 1, code: 'ODDS7001', severity: 'error', message: 'Action required.' };
@@ -18,6 +19,12 @@ function manifest(): HandoffManifest {
 }
 
 describe('portable handoff contracts', () => {
+  it('derives installation identity from scoped/unscoped imports without admitting path or URL traversal', () => {
+    expect(codeImportPackageName('@acme/ui/button')).toBe('@acme/ui');
+    expect(codeImportPackageName('ui/components/button.js')).toBe('ui');
+    expect(codeImportPackageName('@acme/ui')).toBe('@acme/ui');
+    for (const input of ['../private', '/absolute', '@acme/ui/../private', 'ui//button', 'ui/./button', 'https://host/ui', 'node:fs', 'ui\\private', 'ui/%2e%2e/private', 'ui?query', 'ui#fragment']) expect(codeImportPackageName(input)).toBeNull();
+  });
   it('round-trips the versioned snapshot and rejects crossed project aggregate identities', () => {
     const input = manifest(); expect(HandoffManifestSchema.parse(JSON.parse(JSON.stringify(input)))).toEqual(input);
     const { schemaVersion: _, coverage: _coverage, ready: _ready, diagnostics: _diagnostics, ...request } = input;

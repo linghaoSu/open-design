@@ -1,5 +1,6 @@
 import {
   CreateHandoffRequestSchema, HandoffBuildResultSchema, HandoffManifestSchema,
+  codeImportPackageName,
   type CreateHandoffRequest, type HandoffBuildResult, type HandoffBindingCoverage, type HandoffManifest,
   type UIIRNode, type ValidationDiagnostic,
 } from '@open-design/contracts';
@@ -65,11 +66,13 @@ export function createHandoff(input: CreateHandoffRequest): HandoffBuildResult {
   for (const screen of snapshot.document.screens) screen.children.forEach(visit);
 
   for (const name of [...packageNames].sort()) {
-    const observation = snapshot.targetPackages.find((entry) => entry.name === name);
-    const compatibility = version?.package.codeCompatibility.find((entry) => entry.framework === request.framework && entry.packageName === name);
-    if (!observation || observation.installation.status === 'unknown') diagnostics.push(handoffDiagnostic('ODDS7003', `Installed exact version of ${name} is unknown. A declared dependency range is not installation evidence.`));
-    else if (compatibility && !satisfiesDesignSystemRange(observation.installation.version, compatibility.version)) diagnostics.push(handoffDiagnostic('ODDS7002', `Installed ${name}@${observation.installation.version} does not satisfy design-system code compatibility ${compatibility.version}.`));
-    if (!compatibility) diagnostics.push({ ...handoffDiagnostic('ODDS7002', `No design-system compatibility range is declared for ${name}; package compatibility remains unverified.`), severity: 'warning' });
+    const root = codeImportPackageName(name);
+    if (!root) { diagnostics.push(handoffDiagnostic('ODDS7002', `Production import ${name} is not a supported npm package specifier.`)); continue; }
+    const observation = snapshot.targetPackages.find((entry) => entry.name === root);
+    const compatibility = version?.package.codeCompatibility.filter((entry) => entry.framework === request.framework && (entry.packageName === name || entry.packageName === root)) ?? [];
+    if (!observation || observation.installation.status === 'unknown') diagnostics.push(handoffDiagnostic('ODDS7003', `Installed exact version of ${root} for import ${name} is unknown. A declared dependency range is not installation evidence.`));
+    else for (const constraint of compatibility) if (!satisfiesDesignSystemRange(observation.installation.version, constraint.version)) diagnostics.push(handoffDiagnostic('ODDS7002', `Installed ${root}@${observation.installation.version} for import ${name} does not satisfy ${constraint.packageName} compatibility ${constraint.version}.`));
+    if (!compatibility.length) diagnostics.push({ ...handoffDiagnostic('ODDS7002', `No design-system compatibility range is declared for ${name}; package compatibility remains unverified.`), severity: 'warning' });
   }
   const change = request.changeContext;
   for (const diff of [change?.semanticDiff, change?.upgradeReview?.diff]) {

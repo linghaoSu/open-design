@@ -3,6 +3,7 @@ import { HandoffManifestSchema, type CreateHandoffRequest } from '@open-design/c
 import { handoffFixture } from '../../fixtures/design-runtime/handoff.js';
 import { createHandoff } from '../../../src/services/design-runtime/handoff.js';
 import { registerLocalComponentBinding } from '../../../src/services/design-runtime/local-component-binding.js';
+import { createDesignSystemVersion, createProjectDesignSystemLock } from '../../../src/services/design-runtime/design-system-version.js';
 
 function withLocal(input: CreateHandoffRequest): CreateHandoffRequest {
   input.snapshot.projectComponents.components = [{ schemaVersion: 1, id: 'card', name: 'Existing card', revision: 2,
@@ -13,6 +14,25 @@ function withLocal(input: CreateHandoffRequest): CreateHandoffRequest {
 }
 
 describe('portable engineering handoff', () => {
+  it.each(['@acme/ui', 'ui'])('observes %s subpath imports through the npm root and intersects exact/root compatibility', (root) => {
+    const input = handoffFixture(); const specifier = `${root}/panel`;
+    const pkg = structuredClone(input.snapshot.versions[0]!.package);
+    pkg.codeIndex.components[0]!.packageName = specifier;
+    pkg.codeCompatibility = [{ framework: 'react', packageName: root, version: '^1.0.0' }, { framework: 'react', packageName: specifier, version: '~1.1.0' }];
+    const version = createDesignSystemVersion(pkg);
+    input.snapshot.baseCodeIndex = pkg.codeIndex; input.snapshot.versions = [version]; input.snapshot.lock = createProjectDesignSystemLock(input.projectId, [version]);
+    input.snapshot.targetPackages = [{ name: root, installation: { status: 'observed', version: '1.1.2' } }];
+    expect(createHandoff(input).manifest?.ready).toBe(true);
+    expect(input.snapshot.versions[0]!.package.codeIndex.components[0]!.packageName).toBe(specifier);
+    input.snapshot.targetPackages[0]!.installation = { status: 'observed', version: '1.2.0' };
+    expect(createHandoff(input)).toMatchObject({ manifest: { ready: false }, diagnostics: expect.arrayContaining([expect.objectContaining({ code: 'ODDS7002', message: expect.stringContaining(`${specifier} compatibility ~1.1.0`) })]) });
+    pkg.codeCompatibility[1]!.version = '2.0.0'; const changed = createDesignSystemVersion(pkg);
+    input.snapshot.versions = [changed]; input.snapshot.lock = createProjectDesignSystemLock(input.projectId, [changed]);
+    input.snapshot.targetPackages[0]!.installation = { status: 'observed', version: '2.0.0' };
+    expect(createHandoff(input)).toMatchObject({ manifest: { ready: false }, diagnostics: expect.arrayContaining([expect.objectContaining({ code: 'ODDS7002', message: expect.stringContaining(`${root} compatibility ^1.0.0`) })]) });
+    input.snapshot.targetPackages[0]!.name = specifier;
+    expect(createHandoff(input).diagnostics).toContainEqual(expect.objectContaining({ code: 'ODDS7003' }));
+  });
   it.each(['react', 'vue'] as const)('verifies exact %s lock/source, full UI IR and package observations deterministically', (framework) => {
     const input = handoffFixture(framework); const before = structuredClone(input);
     const result = createHandoff(input);

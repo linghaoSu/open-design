@@ -44,3 +44,15 @@ export type SourceProvenance = z.infer<typeof SourceProvenanceSchema>;
 
 export const ComponentFrameworkSchema = z.enum(['react', 'vue']);
 export type ComponentFramework = z.infer<typeof ComponentFrameworkSchema>;
+
+/** Bare production import specifiers retain their subpath; installation belongs to the npm root. */
+export function codeImportPackageName(specifier: string): string | null {
+  const parts = specifier.split('/');
+  if (parts.some((part) => part === '' || part === '.' || part === '..') || /[\\\s:%?#]/.test(specifier)) return null;
+  const scoped = specifier.startsWith('@');
+  const count = scoped ? 2 : 1;
+  if (parts.length < count) return null;
+  const root = parts.slice(0, count).join('/');
+  if (!/^(?:@[A-Za-z0-9][A-Za-z0-9._-]*\/)?[A-Za-z0-9][A-Za-z0-9._-]*$/.test(root)) return null;
+  return parts.slice(count).every((part) => /^[A-Za-z0-9_$.-]+$/.test(part)) ? root : null;
+}
