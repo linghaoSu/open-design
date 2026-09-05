@@ -18,6 +18,8 @@ export const DesignDiagnosticCodeSchema = z.enum([
   'ODDS2001', // UnknownToken
   'ODDS2002', // ForbiddenRawColor
   'ODDS2003', // ForbiddenRawSpacing
+  'ODDS2004', // ForbiddenRawRadius
+  'ODDS2005', // TokenTypeMismatch
   'ODDS3001', // BrokenBinding
   'ODDS3002', // StaleBinding
   'ODDS3003', // ReimplementedBoundComponent
@@ -36,6 +38,11 @@ export const DesignDiagnosticCodeSchema = z.enum([
   'ODDS5005', // DesignSystemSourceIntegrity
   'ODDS5006', // ImmutableDesignSystemVersion
   'ODDS5007', // InvalidDesignSystemPackage
+  'ODDS6001', // SourceParseFailure
+  'ODDS6002', // UnsupportedSourceAnalysis
+  'ODDS6003', // UnresolvedSourceImport
+  'ODDS6004', // SourceDocumentMismatch
+  'ODDS6005', // IncompleteValidationEvidence
   'ODDS7001', // UnsupportedHandoffOutput
   'ODDS7002', // CodePackageCompatibility
   'ODDS7003', // MissingInstalledPackageEvidence
@@ -54,5 +61,10 @@ export const ValidationDiagnosticSchema = z.object({
   path: z.array(z.union([z.string(), z.number().int().nonnegative()])).optional(),
   allowedValues: z.array(JsonScalarSchema).optional(),
   suggestedFix: z.record(JsonObjectKeySchema, JsonValueSchema).optional(),
+  location: z.object({
+    sourcePath: z.string().min(1),
+    line: z.number().int().positive(),
+    column: z.number().int().positive(),
+  }).strict().optional(),
 }).strict();
 export type ValidationDiagnostic = z.infer<typeof ValidationDiagnosticSchema>;

@@ -18,6 +18,15 @@ function compare(pkg: DesignSystemPackage, mutate: (next: DesignSystemPackage) =
 }
 
 describe('semantic design-system diff', () => {
+  it('freezes authored control roles and reports every role change as policy-significant', () => {
+    const pkg = metadataPackage();
+    const added = compare(pkg, (next) => { next.registry.components[0]!.controlRole = 'button'; });
+    expect(added.changes).toMatchObject([{ path: ['controlRole'], breaking: true, after: { present: true, value: 'button' } }]);
+    expect(added.recommendedBump).toBe('major');
+    pkg.registry.components[0]!.controlRole = 'button';
+    expect(compare(pkg, (next) => { next.registry.components[0]!.controlRole = 'link'; }).changes).toMatchObject([{ path: ['controlRole'], breaking: true }]);
+    expect(compare(pkg, (next) => { delete next.registry.components[0]!.controlRole; }).changes).toMatchObject([{ path: ['controlRole'], breaking: true }]);
+  });
   it('preserves display-name identity, reports different IDs as remove/add, and retains exact full values', () => {
     const pkg = metadataPackage();
     const renamed = compare(pkg, (next) => { next.registry.components[0]!.name = 'Action'; });

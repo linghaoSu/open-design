@@ -62,7 +62,7 @@ until every required milestone and invariant has direct current-state evidence.
 | 7 | Semantic diff using stable component/token IDs | Added/removed/renamed/changed classification; removed variant/prop/token and incompatible slot are breaking | Complete |
 | 8 | Upgrade impact, deterministic migrations, review and explicit apply | Diff + graph + overrides identifies affected nodes/screens; migration validates before atomic lock/document update; failure/conflict leaves live state intact | In progress |
 | 9 | Machine-readable handoff and persistent project-component code bindings | Manifest includes lock, target, IR, registry, bindings and change context; deterministic round-trip, package compatibility, UI/CLI export | In progress |
-| 10 | Explore/Guided project modes and generation repair loop | Structured diagnostics after generation; bounded repair; normal Explore behavior preserved; equivalent generation paths validated | Pending |
+| 10 | Explore/Guided project modes and generation repair loop | Structured diagnostics after generation; bounded repair; normal Explore behavior preserved; equivalent generation paths validated | In progress |
 | 11 | Pattern registry and design grammar | Pattern retrieval/configuration and slot composition validated deterministically; reusable resource-list fixture | Pending |
 | 12 | Strict mode semantic UI generation and source enforcement | Intent → retrieve → IR → validate → render/source → source validation → preview; unknown components/props/variants/slots/tokens/raw forbidden styles/reimplemented bound controls rejected | Pending |
 | 13 | Visual impact preview of representative affected screens | Current/proposed side-by-side uses graph-selected screens and the locked production component runtime; UI exercised with screenshot evidence | Pending |
@@ -207,6 +207,17 @@ output and is atomic across all requested screens. Root ran 62 daemon cases and 
 contract cases, then reran all 21 emitter cases after a Vue interpolation-brace
 regression was fixed. Public persistence, export and generation integration remain
 in progress.
+
+The pre-generation validator and eight-case benchmark foundation are accepted.
+The validator checks exact lock/source evidence, semantic resolution, production
+imports, effective properties, ordered slots, local implementation conformance,
+tokens and protected CSS values. Unhandled source syntax remains incomplete and
+cannot certify Strict. Root ran 68 validator/benchmark/diff daemon cases, three
+contract cases and full `pnpm guard`. The authored React/Vue cases cover all eight
+required page categories; each records an invalid source, an evaluated repair and
+a valid result across three file-order permutations. Reported variance describes
+validator repeatability; model-generation variance remains unmeasured. Saved mode
+settings, public artifact validation and generation completion/repair remain pending.
 
 Phase 2/3 acceptance includes 88 focused contract tests, 147 daemon design-runtime
 tests, the existing 16 project CLI tests, 30 web provider/panel/locale tests, and

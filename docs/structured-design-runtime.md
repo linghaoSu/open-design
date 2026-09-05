@@ -330,9 +330,26 @@ neither application source nor imported modules execute during extraction.
 `validateComponentUsage(registry, { component, props, nodeId? })` checks exact
 design-system references, unknown/required properties, scalar types, and enum
 values. It emits structured diagnostics, including `ODDS1003` for a value outside
-the declared enum. It does not validate slots, raw CSS, tokens, local instances,
-or whole artifacts. The other diagnostic codes reserve the intended namespace;
-their presence in the schema does not mean those validators ship here.
+the declared enum. This single-component operation does not validate slots, raw
+CSS, tokens, local instances or whole artifacts.
+
+The separate internal `validateStructuredDesign` evaluator accepts explicit source
+and semantic snapshots. It checks production import identity, effective properties,
+ordered slots and resolved local templates against the actual source call tree.
+Only exact frozen library bytes are exempt from application style/control checks;
+registered project implementations are analyzed. Authored `controlRole` metadata
+identifies available control replacements without guessing from component names.
+The static subset supports literal React JSX, Vue templates and CSS declarations.
+Dynamic flow, unresolved imports and unsupported CSS grammar produce incomplete
+coverage, and Strict acceptance requires complete proof. Guided source-only input
+can omit the semantic document. Saved mode controls and public artifact validation
+are still being integrated.
+
+Eight maintained React/Vue page fixtures measure reuse, unknown components/tokens,
+raw styles, duplicate structures and evaluated repair steps. Each failing fixture
+is checked before and after its authored repair, repeatedly with permuted source
+order. These measurements establish deterministic validator behavior; they do not
+claim variance across model generations.
 
 `resolveComponentBinding(binding, registry, codeComponents, projectComponents?)` resolves supplied
 metadata by exact identity and verifies the current binding state, framework,

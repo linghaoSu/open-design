@@ -45,6 +45,10 @@ export const ComponentSlotDefinitionSchema = z.object({
 }).strict();
 export type ComponentSlotDefinition = z.infer<typeof ComponentSlotDefinitionSchema>;
 
+/** Authored semantic intent; the source compiler never infers this from names or implementation. */
+export const DesignControlRoleSchema = z.enum(['button', 'link', 'text-input', 'checkbox', 'radio', 'select', 'textarea', 'switch', 'dialog']);
+export type DesignControlRole = z.infer<typeof DesignControlRoleSchema>;
+
 export const ComponentDefinitionSchema = z.object({
   schemaVersion: DesignRuntimeSchemaVersionSchema,
   id: DesignEntityIdSchema,
@@ -52,6 +56,7 @@ export const ComponentDefinitionSchema = z.object({
   props: ComponentPropsSchema,
   slots: z.record(DesignMemberNameSchema, ComponentSlotDefinitionSchema).optional(),
   states: z.array(DesignMemberNameSchema).optional(),
+  controlRole: DesignControlRoleSchema.optional(),
   source: SourceProvenanceSchema.optional(),
   stories: z.array(ComponentStoryDefinitionSchema).superRefine((stories, ctx) => {
     const ids = new Set<string>();

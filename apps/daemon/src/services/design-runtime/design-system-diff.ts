@@ -141,6 +141,10 @@ export function diffDesignSystemVersions(from: DesignSystemVersion, to: DesignSy
         if (!sameSet(a, b)) { const breaking = !containsSet(b, a); emit(entity, [field], a, b, breaking, breaking ? 'Declared component states removed.' : 'Declared component states added.', !breaking); }
         continue;
       }
+      if (entity.kind === 'component' && field === 'controlRole') {
+        emit(entity, [field], a, b, true, 'Authored control semantics changed; duplicate-control policy decisions require review.');
+        continue;
+      }
       const visual = field === 'source' || (entity.kind === 'token' && ['value', 'unit'].includes(field))
         || (entity.kind === 'pattern' && ['template', 'description', 'propMappings', 'slotMappings'].includes(field));
       if (visual) { emit(entity, [field], a, b, false, field === 'source' ? 'Source provenance changed; public import compatibility is reported separately.' : 'Visual or inherited content changed.'); continue; }
