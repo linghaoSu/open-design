@@ -5767,4 +5767,9 @@ export interface Dict {
   'designPatterns.added': string;
   'designPatterns.stale': string;
 
+  'designGenerationTargets.title': string;
+  'designGenerationTargets.description': string;
+  'designGenerationTargets.save': string;
+  'designGenerationTargets.dirty': string;
+  'designGenerationTargets.conflict': string;
 }

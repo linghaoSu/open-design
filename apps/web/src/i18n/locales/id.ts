@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export const id: Dict = {
+  "designGenerationTargets.title": "Target pembuatan",
+  "designGenerationTargets.description": "Rencanakan file keluaran, ekspor, dan ID layar semantik untuk pembuatan. Jalur dan ID layar baru diperbolehkan. Menyimpan target tidak memverifikasi sumber atau cakupan layar.",
+  "designGenerationTargets.save": "Simpan target",
+  "designGenerationTargets.dirty": "Perubahan target ini belum disimpan. Pembuatan menggunakan target terakhir yang disimpan.",
+  "designGenerationTargets.conflict": "Proyek telah berubah. Tinjau perubahan target, lalu terapkan pada versi terbaru atau buang sebelum menyimpan.",
+
   "designUpgrade.recipeTitle": "Resep migrasi yang diterbitkan",
   "designUpgrade.recipeLoad": "Cari resep migrasi",
   "designUpgrade.recipeChoose": "Pilih resep migrasi",

@@ -100,8 +100,9 @@ Multi-component compilation, index/binding operations, project-local inheritance
 reference graphs and staged shared changes have accepted web/CLI/HTTP surfaces.
 Immutable versions, reviewed upgrades, compiler format selection, persistent handoff
 bindings and explicit artifact validation now have matching web/CLI/HTTP surfaces.
-Current work adds public pattern composition, generation completion enforcement and
-real component previews. Internal foundation commits can land independently; their
+Locked pattern retrieval and screen composition are also accepted through all three
+surfaces. Current work adds generation completion enforcement and real component
+previews. Internal foundation commits can land independently; their
 corresponding phase remains incomplete until its listed product and validation
 evidence exists.
 
@@ -287,6 +288,18 @@ It passed in 31.2 seconds (1.1 minutes with the shared harness), and the screens
 was inspected. The first attempt correctly rejected a test publication that omitted
 required constraints; the fixture was corrected without changing product behavior.
 Full `pnpm guard` and `pnpm typecheck` passed.
+
+Generation target authoring is accepted through Validation, the raw settings API
+and two matching CLI commands. Its independent canonical schema permits future
+paths/screens without certifying them; aggregate revision checks protect writes,
+and missing-only legacy backfill does not rewrite stored bytes. Root ran 48 contract
+cases, 10 HTTP/store cases and 11 UI/provider cases. Agent acceptance additionally
+covered real CLI dispatch, all locales and source/test typechecks. The existing
+browser workflow saved two future TSX outputs against Applications and Dashboard,
+reopened them and verified the same daemon declarations. It passed in 33.8 seconds
+(1.3 minutes with the shared harness); the entry and saved targets screenshot was
+inspected. Generation execution and repair remain separate acceptance tasks.
+Repository guard and workspace/root-script typechecks passed at this checkpoint.
 
 Phase 2/3 acceptance includes 88 focused contract tests, 147 daemon design-runtime
 tests, the existing 16 project CLI tests, 30 web provider/panel/locale tests, and

@@ -9,6 +9,7 @@ import { workspaceAccountScopedCacheKey } from '../collab/workspace-identity';
 import { getProjectDesignRuntimeValidationSettings, saveProjectDesignRuntimeValidationSettings, validateProjectDesignRuntimeArtifacts,
   ProjectDesignRuntimeError, type ProjectDesignRuntimeScope } from '../providers/design-runtime';
 import { useT } from '../i18n';
+import { DesignGenerationTargetsPanel } from './DesignGenerationTargetsPanel';
 import { VersionConstraintFields } from './DesignSystemVersionDetails';
 import styles from './DesignRuntimeValidationPanel.module.css';
 
@@ -31,6 +32,8 @@ export function DesignRuntimeValidationPanel(props: Props) {
 }
 function ValidationContent({ scope, state, files, viewerOnly, externalBusy = false, onState, onBusyChange }: Props) {
   const t = useT();
+  const [targetsOpened, setTargetsOpened] = useState(false);
+  const [targetsBusy, setTargetsBusy] = useState(false);
   const [snapshot, setSnapshot] = useState<ProjectDesignRuntimeValidationSettingsResponse | null>(null);
   const [draft, setDraft] = useState<ProjectDesignValidationSettings>(defaultProjectDesignValidationSettings);
   const [baseRevision, setBaseRevision] = useState<number | null>(null);
@@ -48,7 +51,7 @@ function ValidationContent({ scope, state, files, viewerOnly, externalBusy = fal
   const locked = !!snapshot?.lock.dependencies.length;
   const staleDraft = baseRevision !== null && snapshot !== null && baseRevision !== snapshot.revision;
   const staleResult = !!result && (result.revision !== snapshot?.revision || !!state && result.revision !== state.revision);
-  const disabled = busy || externalBusy;
+  const disabled = busy || externalBusy || targetsBusy;
   const paths = [...new Set([...files.map((file) => file.name).filter((path) => /\.(?:tsx?|jsx?|vue|html?|css)$/.test(path) && !path.endsWith('.d.ts')), ...sources.map((source) => source.sourcePath)])].sort();
   const outputSources = sources.filter((source) => source.language !== 'css');
 
@@ -111,6 +114,8 @@ function ValidationContent({ scope, state, files, viewerOnly, externalBusy = fal
     void perform(async (authority, current) => { const response = await validateProjectDesignRuntimeArtifacts(authority, parsed.data); if (current()) setResult(response); });
   }
   return <section className={styles.panel}>
+    <Button data-testid="generation-targets-open" disabled={disabled} aria-expanded={targetsOpened} onClick={() => setTargetsOpened(!targetsOpened)}>{t('designGenerationTargets.title')}</Button>
+    {targetsOpened ? <DesignGenerationTargetsPanel scope={scope} state={state} files={files} viewerOnly={viewerOnly} externalBusy={busy || externalBusy} onState={onState} onBusyChange={(value) => { setTargetsBusy(value); onBusyChange?.(value); }} /> : null}
     <div className={styles.actions}><p>{t('designValidation.description')}</p><Button data-testid="validation-refresh" disabled={disabled} onClick={() => void refresh()}>{t('designRuntime.refresh')}</Button></div>
     {error ? <p role="alert" className={styles.error}>{error}</p> : null}
     {message ? <p role="status" className={styles.notice}>{message}</p> : null}

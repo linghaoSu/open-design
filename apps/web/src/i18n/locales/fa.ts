@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export const fa: Dict = {
+  "designGenerationTargets.title": "هدف‌های تولید",
+  "designGenerationTargets.description": "فایل‌های خروجی، خروجی‌های ماژول و شناسه‌های صفحه‌های معنایی را برنامه‌ریزی کنید. مسیرها و شناسه‌های جدید مجازند. ذخیرهٔ هدف‌ها، کد منبع یا پوشش صفحه‌ها را تأیید نمی‌کند.",
+  "designGenerationTargets.save": "ذخیرهٔ هدف‌های تولید",
+  "designGenerationTargets.dirty": "این تغییرات هدف‌ها ذخیره نشده‌اند. تولید از آخرین هدف‌های ذخیره‌شده استفاده می‌کند.",
+  "designGenerationTargets.conflict": "پروژه تغییر کرده است. تغییرات هدف‌ها را بررسی کنید، سپس پیش از ذخیره آن‌ها را به نسخهٔ فعلی منتقل یا کنار بگذارید.",
+
   "designUpgrade.recipeTitle": "دستورهای مهاجرت منتشرشده",
   "designUpgrade.recipeLoad": "یافتن دستورهای مهاجرت",
   "designUpgrade.recipeChoose": "انتخاب دستور مهاجرت",

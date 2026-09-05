@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export const ja: Dict = {
+  "designGenerationTargets.title": "生成ターゲット",
+  "designGenerationTargets.description": "生成する出力ファイル、エクスポート名、意味構造の画面 ID を計画します。新しいパスと画面 ID も指定できます。ターゲットの保存では、ソースや画面の網羅性は検証されません。",
+  "designGenerationTargets.save": "生成ターゲットを保存",
+  "designGenerationTargets.dirty": "ターゲットの変更は未保存です。生成には最後に保存したターゲットが使われます。",
+  "designGenerationTargets.conflict": "プロジェクトが変更されました。ターゲットの変更を確認し、最新の版に反映するか破棄してから保存してください。",
+
   "designUpgrade.recipeTitle": "公開済みの移行レシピ",
   "designUpgrade.recipeLoad": "移行レシピを検索",
   "designUpgrade.recipeChoose": "移行レシピを選択",

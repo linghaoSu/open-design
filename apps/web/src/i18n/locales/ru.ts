@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export const ru: Dict = {
+  "designGenerationTargets.title": "Цели генерации",
+  "designGenerationTargets.description": "Укажите выходные файлы, экспорты и идентификаторы семантических экранов. Допускаются новые пути и идентификаторы. Сохранение целей не проверяет исходный код или охват экранов.",
+  "designGenerationTargets.save": "Сохранить цели",
+  "designGenerationTargets.dirty": "Изменения целей не сохранены. Генерация использует последние сохранённые цели.",
+  "designGenerationTargets.conflict": "Проект изменился. Проверьте изменения целей, затем перенесите их на текущую версию или отмените перед сохранением.",
+
   "designUpgrade.recipeTitle": "Опубликованные рецепты миграции",
   "designUpgrade.recipeLoad": "Найти рецепты миграции",
   "designUpgrade.recipeChoose": "Выберите рецепт миграции",

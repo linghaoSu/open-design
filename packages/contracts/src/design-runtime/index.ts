@@ -20,3 +20,4 @@ export * from './design-validation.js';
 export * from './migration-recipes.js';
 export * from './migration-recipe-plan.js';
 export * from './pattern-runtime.js';
+export * from './generation-targets.js';

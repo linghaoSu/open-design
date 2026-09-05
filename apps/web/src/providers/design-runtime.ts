@@ -5,6 +5,7 @@ import {
   ProjectDesignRuntimeRefreshCodeResponseSchema, ProjectDesignRuntimeCreateHandoffRequestSchema,
   ProjectDesignRuntimeHandoffResponseSchema, ProjectDesignRuntimeEmitHandoffRequestSchema, ProjectDesignRuntimeEmitHandoffResponseSchema,
   type ProjectDesignRuntimeRegisterLocalBindingRequest, type ProjectDesignRuntimeCreateHandoffRequest, type ProjectDesignRuntimeEmitHandoffRequest,
+  ProjectDesignRuntimeGenerationTargetsRequestSchema, ProjectDesignRuntimeGenerationTargetsResponseSchema, type ProjectDesignRuntimeGenerationTargetsRequest,
   ProjectDesignRuntimeValidationSettingsRequestSchema, ProjectDesignRuntimeValidationSettingsResponseSchema,
   ProjectDesignRuntimeValidateArtifactsRequestSchema, ProjectDesignRuntimeValidateArtifactsResponseSchema,
   type ProjectDesignRuntimeValidationSettingsRequest, type ProjectDesignRuntimeValidateArtifactsRequest,
@@ -256,3 +257,8 @@ export const getProjectDesignRuntimePattern = (scope: ProjectDesignRuntimeScope,
   request(scope, `/patterns/${encodeURIComponent(DesignEntityIdSchema.parse(patternId))}`, ProjectDesignRuntimePatternResponseSchema);
 export const instantiateProjectDesignRuntimePattern = (scope: ProjectDesignRuntimeScope, patternId: string, input: ProjectDesignRuntimeInstantiatePatternRequest) =>
   request(scope, `/patterns/${encodeURIComponent(DesignEntityIdSchema.parse(patternId))}/instantiate`, ProjectDesignRuntimeInstantiatePatternResponseSchema, 'POST', ProjectDesignRuntimeInstantiatePatternRequestSchema.parse(input));
+
+export const getProjectDesignRuntimeGenerationTargets = (scope: ProjectDesignRuntimeScope) =>
+  request(scope, '/generation/targets', ProjectDesignRuntimeGenerationTargetsResponseSchema);
+export const saveProjectDesignRuntimeGenerationTargets = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeGenerationTargetsRequest) =>
+  request(scope, '/generation/targets', ProjectDesignRuntimeResponseSchema, 'PUT', ProjectDesignRuntimeGenerationTargetsRequestSchema.parse(input));

@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export const ko: Dict = {
+  "designGenerationTargets.title": "생성 대상",
+  "designGenerationTargets.description": "생성할 출력 파일, 내보내기 이름, 의미 구조 화면 ID를 계획합니다. 새 경로와 화면 ID도 입력할 수 있습니다. 대상을 저장해도 소스나 화면 포함 범위는 검증되지 않습니다.",
+  "designGenerationTargets.save": "생성 대상 저장",
+  "designGenerationTargets.dirty": "대상 변경 사항이 저장되지 않았습니다. 생성에는 마지막으로 저장된 대상이 사용됩니다.",
+  "designGenerationTargets.conflict": "프로젝트가 변경되었습니다. 대상 변경 사항을 검토한 후 최신 버전에 반영하거나 취소하고 저장하세요.",
+
   "designUpgrade.recipeTitle": "게시된 마이그레이션 레시피",
   "designUpgrade.recipeLoad": "마이그레이션 레시피 찾기",
   "designUpgrade.recipeChoose": "마이그레이션 레시피 선택",

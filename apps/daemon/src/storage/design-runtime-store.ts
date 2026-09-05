@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import {
   ProjectDesignRuntimeStateSchema,
   defaultProjectDesignValidationSettings,
+  defaultDesignGenerationTargets,
   DesignSystemVersionSchema,
   type DesignSystemVersion,
   type ProjectDesignRuntimeVersionSummary,
@@ -115,7 +116,9 @@ export function createDesignRuntimeStore(db: Database.Database): DesignRuntimeSt
     const legacyProjectCode = withDependencies !== null && typeof withDependencies === 'object' && !Array.isArray(withDependencies) && !Object.hasOwn(withDependencies, 'projectCodeIndex');
     const withProjectCode = legacyProjectCode ? { ...withDependencies, projectCodeIndex: { schemaVersion: 1, id: projectId, components: [] } } : withDependencies;
     const legacyValidation = withProjectCode !== null && typeof withProjectCode === 'object' && !Array.isArray(withProjectCode) && !Object.hasOwn(withProjectCode, 'validationSettings');
-    const state = ProjectDesignRuntimeStateSchema.parse(legacyValidation ? { ...withProjectCode, validationSettings: defaultProjectDesignValidationSettings() } : withProjectCode);
+    const withValidation = legacyValidation ? { ...withProjectCode, validationSettings: defaultProjectDesignValidationSettings() } : withProjectCode;
+    const legacyTargets = withValidation !== null && typeof withValidation === 'object' && !Array.isArray(withValidation) && !Object.hasOwn(withValidation, 'generationTargets');
+    const state = ProjectDesignRuntimeStateSchema.parse(legacyTargets ? { ...withValidation, generationTargets: defaultDesignGenerationTargets() } : withValidation);
     if (state.codeIndex.id !== projectId || state.projectCodeIndex.id !== projectId || state.bindings.id !== projectId || state.projectComponents.id !== projectId || state.sharedChanges.id !== projectId || state.dependencies.id !== projectId || state.lock.id !== projectId || (row && state.revision !== row.revision)) {
       throw new Error('Persisted design runtime identity or revision is inconsistent.');
     }

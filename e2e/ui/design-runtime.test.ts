@@ -9,6 +9,7 @@ import type {
   ProjectDesignRuntimeEmitHandoffResponse,
   ProjectDesignRuntimeValidateArtifactsResponse,
   ProjectDesignRuntimeInstantiatePatternResponse,
+  ProjectDesignRuntimeGenerationTargetsResponse,
   UIIRDocument,
 } from '@open-design/contracts';
 import { expect, test } from '@/playwright/suite';
@@ -684,4 +685,40 @@ export const Populated = { args: { title: 'Vue applications' } };`,
   expect(reopenedPattern.ok(), await reopenedPattern.text()).toBeTruthy();
   expect((await reopenedPattern.json() as ProjectDesignRuntimeResponse).state.document).toEqual(savedPatternState.document);
   await expect(page.getByTestId(`semantic-prop-${patternResult.node!.id}-title`)).toHaveValue('Application resources');
+
+  // The next generation can declare future files against saved semantic screens.
+  // Keep authoring separate from validation of the files the agent later writes.
+  await page.getByTestId('design-runtime-validation-tab').click();
+  await page.getByTestId('generation-targets-open').click();
+  const generationTargets = { schemaVersion: 1 as const, outputs: [
+    { sourcePath: 'Applications.tsx', exportName: 'Applications', screenId: 'applications' },
+    { sourcePath: 'Dashboard.tsx', exportName: 'Dashboard', screenId: 'dashboard' },
+  ] };
+  for (const [index, output] of generationTargets.outputs.entries()) {
+    await page.getByTestId('generation-targets-add').click();
+    await page.getByTestId(`generation-target-path-${index}`).fill(output.sourcePath);
+    await page.getByTestId(`generation-target-export-${index}`).fill(output.exportName);
+    await page.getByTestId(`generation-target-screen-${index}`).fill(output.screenId);
+  }
+  const saveTargetsResponse = page.waitForResponse((response) => response.request().method() === 'PUT'
+    && new URL(response.url()).pathname === `${prefix}/generation/targets`);
+  await page.getByTestId('generation-targets-save').click();
+  const savedTargets = await saveTargetsResponse;
+  expect(savedTargets.ok(), await savedTargets.text()).toBeTruthy();
+  expect((await savedTargets.json() as ProjectDesignRuntimeResponse).state.generationTargets).toEqual(generationTargets);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.getByTestId('design-runtime-entry').click();
+  await page.getByTestId('design-runtime-validation-tab').click();
+  await page.getByTestId('generation-targets-open').click();
+  for (const [index, output] of generationTargets.outputs.entries()) {
+    await expect(page.getByTestId(`generation-target-path-${index}`)).toHaveValue(output.sourcePath);
+    await expect(page.getByTestId(`generation-target-export-${index}`)).toHaveValue(output.exportName);
+    await expect(page.getByTestId(`generation-target-screen-${index}`)).toHaveValue(output.screenId);
+  }
+  const reopenedTargets = await page.request.get(`${prefix}/generation/targets`);
+  expect(reopenedTargets.ok(), await reopenedTargets.text()).toBeTruthy();
+  expect((await reopenedTargets.json() as ProjectDesignRuntimeGenerationTargetsResponse).targets).toEqual(generationTargets);
+  const targetsScreenshot = testInfo.outputPath('saved-generation-targets.png');
+  await page.screenshot({ path: targetsScreenshot, fullPage: true });
+  await testInfo.attach('Future generation outputs mapped to saved semantic screens', { path: targetsScreenshot, contentType: 'image/png' });
 });

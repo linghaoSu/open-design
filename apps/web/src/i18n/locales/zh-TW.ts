@@ -1,6 +1,12 @@
 import type { Dict } from "../types";
 
 export const zhTW: Dict = {
+  "designGenerationTargets.title": "生成目標",
+  "designGenerationTargets.description": "為生成規劃輸出檔案、匯出名稱和語義畫面 ID。可以填寫新路徑和新畫面 ID。儲存目標不會驗證原始碼或畫面涵蓋情況。",
+  "designGenerationTargets.save": "儲存生成目標",
+  "designGenerationTargets.dirty": "目標修改尚未儲存。生成使用上次儲存的目標。",
+  "designGenerationTargets.conflict": "專案已變更。請檢查目標修改，再以最新版本保留修改或捨棄修改，然後儲存。",
+
   "designUpgrade.recipeTitle": "已發佈的遷移配方",
   "designUpgrade.recipeLoad": "尋找遷移配方",
   "designUpgrade.recipeChoose": "選擇遷移配方",

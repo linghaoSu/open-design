@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export const pl: Dict = {
+  "designGenerationTargets.title": "Cele generowania",
+  "designGenerationTargets.description": "Zaplanuj pliki wyjściowe, eksporty i identyfikatory ekranów semantycznych. Dozwolone są nowe ścieżki i identyfikatory. Zapisanie celów nie sprawdza kodu źródłowego ani pokrycia ekranów.",
+  "designGenerationTargets.save": "Zapisz cele",
+  "designGenerationTargets.dirty": "Zmiany celów nie zostały zapisane. Generowanie korzysta z ostatnio zapisanych celów.",
+  "designGenerationTargets.conflict": "Projekt się zmienił. Sprawdź zmiany celów, a następnie przenieś je na aktualną wersję lub odrzuć przed zapisaniem.",
+
   "designUpgrade.recipeTitle": "Opublikowane receptury migracji",
   "designUpgrade.recipeLoad": "Znajdź receptury migracji",
   "designUpgrade.recipeChoose": "Wybierz recepturę migracji",

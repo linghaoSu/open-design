@@ -1,6 +1,12 @@
 import type { Dict } from "../types";
 
 export const zhCN: Dict = {
+  "designGenerationTargets.title": "生成目标",
+  "designGenerationTargets.description": "为生成规划输出文件、导出名称和语义屏幕 ID。可以填写新路径和新屏幕 ID。保存目标不会验证源码或屏幕覆盖情况。",
+  "designGenerationTargets.save": "保存生成目标",
+  "designGenerationTargets.dirty": "目标修改尚未保存。生成使用上次保存的目标。",
+  "designGenerationTargets.conflict": "项目已更改。请检查目标修改，再基于最新版本保留修改或放弃修改，然后保存。",
+
   "designUpgrade.recipeTitle": "已发布的迁移配方",
   "designUpgrade.recipeLoad": "查找迁移配方",
   "designUpgrade.recipeChoose": "选择迁移配方",

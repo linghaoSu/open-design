@@ -7,6 +7,7 @@ import {
   ProjectDesignRuntimeRefreshCodeResponseSchema, ProjectDesignRuntimeCreateHandoffRequestSchema,
   ProjectDesignRuntimeHandoffResponseSchema, ProjectDesignRuntimeEmitHandoffRequestSchema, ProjectDesignRuntimeEmitHandoffResponseSchema,
   type HandoffBuildResult,
+  ProjectDesignRuntimeGenerationTargetsRequestSchema, ProjectDesignRuntimeGenerationTargetsResponseSchema,
   ProjectDesignRuntimeValidationSettingsRequestSchema, ProjectDesignRuntimeValidationSettingsResponseSchema,
   ProjectDesignRuntimeValidateArtifactsRequestSchema, ProjectDesignRuntimeValidateArtifactsResponseSchema,
   ProjectDesignRuntimeReviewUpgradeRequestSchema, ProjectDesignRuntimeReviewUpgradeResponseSchema,
@@ -67,6 +68,8 @@ export const DESIGN_RUNTIME_CLI_USAGE = `Usage:
   od design-runtime refresh-code-component <projectId> <codeComponentId>
   od design-runtime handoff <projectId> --prompt-file <path|->
   od design-runtime emit-handoff <projectId> --prompt-file <path|->
+  od design-runtime generation-targets <projectId>
+  od design-runtime save-generation-targets <projectId> --prompt-file <path|->
   od design-runtime validation-settings <projectId>
   od design-runtime save-validation-settings <projectId> --prompt-file <path|->
   od design-runtime validate-artifacts <projectId> --prompt-file <path|->
@@ -153,6 +156,8 @@ Both accept expectedRevision or read it once; apply never retries a conflict.
 No command selects latest or upgrades a dependency implicitly. Clear-dependency
 retains verified locked constraints and the saved validation mode. Broken Guided/Strict
 locks require an explicit save-validation-settings change to Explore before recovery.
+Generation targets JSON: {"targets":{"schemaVersion":1,"outputs":[{"sourcePath":"src/Applications.tsx","exportName":"Applications","screenId":"applications"}]}}.
+Targets may name new files and screens; saving targets does not validate generated output.
 Validation settings JSON: {"settings":<ProjectDesignValidationSettings>}. Artifact validation
 JSON: {"sources":[{"sourcePath":"Screen.tsx","language":"tsx"}],"outputs":[{"sourcePath":"Screen.tsx","exportName":"Screen","screenId":"home"}]}.
 All bytes, saved mode, locked policy and installed package observations are daemon-owned.
@@ -189,6 +194,8 @@ const COMMANDS: Record<string, CommandSpec> = {
   handoff: { revisioned: true, input: ProjectDesignRuntimeCreateHandoffRequestSchema },
   'emit-handoff': { revisioned: true, input: ProjectDesignRuntimeEmitHandoffRequestSchema },
   get: {},
+  'generation-targets': {},
+  'save-generation-targets': { mutates: true, input: ProjectDesignRuntimeGenerationTargetsRequestSchema },
   'validation-settings': {},
   'save-validation-settings': { mutates: true, input: ProjectDesignRuntimeValidationSettingsRequestSchema },
   'validate-artifacts': { revisioned: true, input: ProjectDesignRuntimeValidateArtifactsRequestSchema },
@@ -410,7 +417,9 @@ export async function runDesignRuntimeCli(args: string[], deps: DesignRuntimeCli
         throw new CliFailure(1, createApiErrorResponse(createApiError('INTERNAL_ERROR', `Daemon response did not match the contract: ${error instanceof Error ? error.message : String(error)}`)));
       }
     }
-    if (needsRevision && expectedRevision === undefined) expectedRevision = command === 'save-validation-settings' || command === 'validate-artifacts' || command === 'clear-dependency'
+    if (needsRevision && expectedRevision === undefined) expectedRevision = command === 'save-generation-targets'
+      ? (await request('/generation/targets', ProjectDesignRuntimeGenerationTargetsResponseSchema)).revision
+      : command === 'save-validation-settings' || command === 'validate-artifacts' || command === 'clear-dependency'
       ? (await request('/validation/settings', ProjectDesignRuntimeValidationSettingsResponseSchema)).revision
       : (await request('', ProjectDesignRuntimeResponseSchema)).state.revision;
     const output = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -453,6 +462,16 @@ export async function runDesignRuntimeCli(args: string[], deps: DesignRuntimeCli
       if (json) output(data);
       else { printHandoff(data.handoff); printDiagnostics(data.code.diagnostics); for (const file of data.code.files) process.stdout.write(`File: ${file.sourcePath}\n${file.content}\n`); }
       return { exitCode: data.code.ok ? 0 : 1 };
+    }
+    if (command === 'generation-targets') {
+      const data = await request('/generation/targets', ProjectDesignRuntimeGenerationTargetsResponseSchema);
+      if (json) output(data); else process.stdout.write(`Revision ${data.revision}\nPlanned outputs: ${JSON.stringify(data.targets.outputs, null, 2)}\n`);
+      return { exitCode: 0 };
+    }
+    if (command === 'save-generation-targets') {
+      const data = await request('/generation/targets', ProjectDesignRuntimeResponseSchema, 'PUT', mutationBody);
+      if (json) output(data); else printState(data);
+      return { exitCode: 0 };
     }
     if (command === 'validation-settings') {
       const data = await request('/validation/settings', ProjectDesignRuntimeValidationSettingsResponseSchema);

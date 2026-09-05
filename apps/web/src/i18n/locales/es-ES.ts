@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export const esES: Dict = {
+  "designGenerationTargets.title": "Objetivos de generación",
+  "designGenerationTargets.description": "Planifica archivos de salida, exportaciones e identificadores de pantallas semánticas. Se permiten rutas e identificadores nuevos. Guardar los objetivos no verifica el código fuente ni la cobertura de pantallas.",
+  "designGenerationTargets.save": "Guardar objetivos",
+  "designGenerationTargets.dirty": "Estos cambios en los objetivos no están guardados. La generación utiliza los últimos objetivos guardados.",
+  "designGenerationTargets.conflict": "El proyecto ha cambiado. Revisa tus cambios y aplícalos a la versión actual o descártalos antes de guardar.",
+
   "designUpgrade.recipeTitle": "Recetas de migración publicadas",
   "designUpgrade.recipeLoad": "Buscar recetas de migración",
   "designUpgrade.recipeChoose": "Elegir una receta de migración",

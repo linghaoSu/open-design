@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export const it: Dict = {
+  "designGenerationTargets.title": "Destinazioni di generazione",
+  "designGenerationTargets.description": "Pianifica file di output, esportazioni e ID delle schermate semantiche. Sono consentiti nuovi percorsi e ID. Il salvataggio non verifica il codice sorgente o la copertura delle schermate.",
+  "designGenerationTargets.save": "Salva destinazioni",
+  "designGenerationTargets.dirty": "Queste modifiche alle destinazioni non sono salvate. La generazione usa le ultime destinazioni salvate.",
+  "designGenerationTargets.conflict": "Il progetto è cambiato. Controlla le modifiche e riportale sulla versione attuale o scartale prima di salvare.",
+
   "designUpgrade.recipeTitle": "Ricette di migrazione pubblicate",
   "designUpgrade.recipeLoad": "Trova ricette di migrazione",
   "designUpgrade.recipeChoose": "Scegli una ricetta di migrazione",

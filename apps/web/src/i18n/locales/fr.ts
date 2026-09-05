@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export const fr: Dict = {
+  "designGenerationTargets.title": "Cibles de génération",
+  "designGenerationTargets.description": "Planifiez les fichiers de sortie, les exports et les identifiants des écrans sémantiques. Les nouveaux chemins et identifiants sont autorisés. Enregistrer les cibles ne vérifie ni le code source ni la couverture des écrans.",
+  "designGenerationTargets.save": "Enregistrer les cibles",
+  "designGenerationTargets.dirty": "Ces modifications des cibles ne sont pas enregistrées. La génération utilise les dernières cibles enregistrées.",
+  "designGenerationTargets.conflict": "Le projet a changé. Vérifiez vos modifications, puis reportez-les sur la version actuelle ou abandonnez-les avant d’enregistrer.",
+
   "designUpgrade.recipeTitle": "Recettes de migration publiées",
   "designUpgrade.recipeLoad": "Rechercher des recettes de migration",
   "designUpgrade.recipeChoose": "Choisir une recette de migration",

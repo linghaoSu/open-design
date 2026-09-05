@@ -62,6 +62,7 @@ import { registerLocalComponentBinding, synchronizeLocalComponentBindings, verif
 import { effectiveProjectCodeIndex, readProjectCodeEvidence, refreshProjectCode } from './project-code.js';
 import { buildProjectHandoff } from './project-handoff.js';
 import { emitHandoffCode } from './handoff-emitter.js';
+import { createProjectGenerationTargetsService } from './project-generation-targets.js';
 import { createProjectValidationService } from './project-validation.js';
 import { createProjectPatternService } from './project-patterns.js';
 import { createProjectMigrationRecipeService } from './project-migration-recipes.js';
@@ -207,6 +208,7 @@ export function createProjectDesignRuntimeService({ store, readSource, observeTa
   });
 
   return {
+    ...createProjectGenerationTargetsService({ store, persist }),
     validationSettings: validation.validationSettings,
     saveValidationSettings: validation.saveValidationSettings,
     validateArtifacts: validation.validateArtifacts,

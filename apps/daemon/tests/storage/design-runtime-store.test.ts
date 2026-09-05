@@ -169,3 +169,25 @@ describe('project version catalog transactions', () => {
     } finally { db.close(); }
   });
 });
+
+describe('generation target storage migration', () => {
+  it('adds only missing targets on read, preserves bytes and revision, then persists canonical targets across reopen', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'od-generation-targets-')); const file = path.join(dir, 'state.sqlite'); let db = new Database(file);
+    try {
+      db.pragma('foreign_keys = ON'); db.exec("CREATE TABLE projects (id TEXT PRIMARY KEY); INSERT INTO projects VALUES ('project');"); migrateDesignRuntimeStore(db);
+      let store = createDesignRuntimeStore(db); const current = store.write('project', 0, store.read('project'));
+      const { generationTargets: _targets, ...legacy } = current; const bytes = JSON.stringify(legacy);
+      db.prepare('UPDATE project_design_runtime SET state_json = ?').run(bytes);
+      expect(store.read('project')).toEqual(current); expect(db.prepare('SELECT state_json, revision FROM project_design_runtime').get()).toEqual({ state_json: bytes, revision: 1 });
+      expect(() => store.write('project', 0, current)).toThrow(DesignRuntimeRevisionConflictError);
+      expect(db.prepare('SELECT state_json FROM project_design_runtime').get()).toEqual({ state_json: bytes });
+      for (const generationTargets of [null, { schemaVersion: 1 }, { schemaVersion: 1, outputs: [{ sourcePath: '../outside' }] }]) {
+        db.prepare('UPDATE project_design_runtime SET state_json = ?').run(JSON.stringify({ ...legacy, generationTargets })); expect(() => store.read('project')).toThrow();
+      }
+      db.prepare('UPDATE project_design_runtime SET state_json = ?').run(bytes);
+      const saved = store.write('project', 1, { ...store.read('project'), generationTargets: { schemaVersion: 1, outputs: [{ sourcePath: 'future/New.tsx', exportName: 'New', screenId: 'new-screen' }] } });
+      db.close(); db = new Database(file); db.pragma('foreign_keys = ON'); migrateDesignRuntimeStore(db); store = createDesignRuntimeStore(db);
+      expect(store.read('project')).toEqual(saved); expect(saved.revision).toBe(2); expect(saved.document).toBeNull();
+    } finally { db.close(); rmSync(dir, { recursive: true, force: true }); }
+  });
+});

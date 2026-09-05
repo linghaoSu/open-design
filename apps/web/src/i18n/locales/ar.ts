@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export const ar: Dict = {
+  "designGenerationTargets.title": "أهداف التوليد",
+  "designGenerationTargets.description": "خطط لملفات المخرجات والتصديرات ومعرّفات الشاشات الدلالية. يمكن إدخال مسارات ومعرّفات شاشات جديدة. حفظ الأهداف لا يتحقق من المصدر أو تغطية الشاشات.",
+  "designGenerationTargets.save": "حفظ أهداف التوليد",
+  "designGenerationTargets.dirty": "تعديلات الأهداف هذه غير محفوظة. يستخدم التوليد آخر أهداف محفوظة.",
+  "designGenerationTargets.conflict": "تغيّر المشروع. راجع تعديلات الأهداف، ثم انقلها إلى الإصدار الحالي أو تجاهلها قبل الحفظ.",
+
   "designUpgrade.recipeTitle": "وصفات الترحيل المنشورة",
   "designUpgrade.recipeLoad": "البحث عن وصفات الترحيل",
   "designUpgrade.recipeChoose": "اختر وصفة ترحيل",

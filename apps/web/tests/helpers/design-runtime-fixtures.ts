@@ -3,7 +3,7 @@ import type { ProjectDesignRuntimeState } from '@open-design/contracts';
 
 export function emptyDesignRuntimeState(revision = 0): ProjectDesignRuntimeState {
   return {
-    schemaVersion: 1, revision, registry: null, validationSettings: defaultProjectDesignValidationSettings(),
+    schemaVersion: 1, revision, registry: null, validationSettings: defaultProjectDesignValidationSettings(), generationTargets: { schemaVersion: 1 as const, outputs: [] },
     codeIndex: { schemaVersion: 1, id: 'project', components: [] },
     projectCodeIndex: { schemaVersion: 1, id: 'project', components: [] },
     bindings: { schemaVersion: 1, id: 'project', bindings: [] },

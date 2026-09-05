@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   DesignPatternSearchResultSchema, DesignPatternReadResultSchema, DesignPatternInstantiationResultSchema, InstantiateDesignPatternRequestSchema,
+  DesignGenerationTargetsSchema,
   ProjectDesignValidationSettingsSchema,
   DesignValidationSourceSchema,
   DesignValidationOutputSchema,
@@ -70,6 +71,7 @@ export const ProjectDesignRuntimeStateSchema = z.object({
   schemaVersion: DesignRuntimeSchemaVersionSchema,
   revision: revisionSchema,
   validationSettings: ProjectDesignValidationSettingsSchema,
+  generationTargets: DesignGenerationTargetsSchema,
   registry: ComponentRegistrySchema.nullable(),
   codeIndex: CodeComponentIndexSchema,
   /** Registered project implementations remain separate from package-owned codeIndex. */
@@ -401,3 +403,9 @@ export const ProjectDesignRuntimeInstantiatePatternResponseSchema = z.object({ r
   return { revision, ...parsed.data };
 });
 export type ProjectDesignRuntimeInstantiatePatternResponse = z.infer<typeof ProjectDesignRuntimeInstantiatePatternResponseSchema>;
+
+/** Planned outputs are authoring intent; saving them does not certify source or semantic coverage. */
+export const ProjectDesignRuntimeGenerationTargetsRequestSchema = z.object({ expectedRevision: revisionSchema, targets: DesignGenerationTargetsSchema }).strict();
+export type ProjectDesignRuntimeGenerationTargetsRequest = z.infer<typeof ProjectDesignRuntimeGenerationTargetsRequestSchema>;
+export const ProjectDesignRuntimeGenerationTargetsResponseSchema = z.object({ revision: revisionSchema, targets: DesignGenerationTargetsSchema }).strict();
+export type ProjectDesignRuntimeGenerationTargetsResponse = z.infer<typeof ProjectDesignRuntimeGenerationTargetsResponseSchema>;

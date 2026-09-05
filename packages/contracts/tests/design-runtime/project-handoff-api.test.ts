@@ -9,7 +9,7 @@ import {
 const code = { schemaVersion: 1, id: 'project/card', framework: 'react', name: 'Card', sourcePath: 'src/Card.tsx', exportName: 'Card', props: {} };
 const binding = { schemaVersion: 1, id: 'local/card', componentRef: 'local:card', framework: 'react', status: 'bound', verified: true, definitionRevision: 2, codeComponentId: code.id };
 const source = { framework: code.framework, sourcePath: code.sourcePath, exportName: code.exportName, codeComponentId: code.id };
-const state = { schemaVersion: 1, revision: 1, validationSettings: defaultProjectDesignValidationSettings(), registry: null,
+const state = { schemaVersion: 1, revision: 1, validationSettings: defaultProjectDesignValidationSettings(), generationTargets: { schemaVersion: 1 as const, outputs: [] }, registry: null,
   codeIndex: { schemaVersion: 1, id: 'project', components: [] }, projectCodeIndex: { schemaVersion: 1, id: 'project', components: [code] },
   bindings: { schemaVersion: 1, id: 'project', bindings: [binding] },
   projectComponents: { schemaVersion: 1, id: 'project', components: [{ schemaVersion: 1, id: 'card', name: 'Card', revision: 2, props: {}, propMappings: [], template: { schemaVersion: 1, type: 'text', id: 'text', text: 'Card' } }] },
@@ -44,7 +44,7 @@ describe('public local code and handoff contracts', () => {
   });
 
   it('keeps successful handoff responses attached to their exact project revision and emission readiness', () => {
-    const { validationSettings: _settings, sharedChanges: _changes, revision: _revision, schemaVersion: _schemaVersion, codeIndex, ...snapshot } = state;
+    const { validationSettings: _settings, generationTargets: _targets, sharedChanges: _changes, revision: _revision, schemaVersion: _schemaVersion, codeIndex, ...snapshot } = state;
     const manifest = { schemaVersion: 1, id: 'handoff', projectId: 'project', projectRevision: 1, framework: 'react',
       snapshot: { ...snapshot, baseCodeIndex: codeIndex, versions: [], projectSources: [{ codeComponentId: code.id, sourceText: '' }], targetPackages: [] }, coverage: [], ready: true, diagnostics: [],
     };

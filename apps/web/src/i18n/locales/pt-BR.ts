@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export const ptBR: Dict = {
+  "designGenerationTargets.title": "Destinos da geração",
+  "designGenerationTargets.description": "Planeje arquivos de saída, exportações e IDs de telas semânticas. Novos caminhos e IDs são permitidos. Salvar os destinos não verifica o código-fonte nem a cobertura das telas.",
+  "designGenerationTargets.save": "Salvar destinos",
+  "designGenerationTargets.dirty": "Estas alterações nos destinos não foram salvas. A geração usa os últimos destinos salvos.",
+  "designGenerationTargets.conflict": "O projeto mudou. Revise suas alterações e aplique-as à versão atual ou descarte-as antes de salvar.",
+
   "designUpgrade.recipeTitle": "Receitas de migração publicadas",
   "designUpgrade.recipeLoad": "Buscar receitas de migração",
   "designUpgrade.recipeChoose": "Escolher uma receita de migração",

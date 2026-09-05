@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export const th: Dict = {
+  "designGenerationTargets.title": "เป้าหมายการสร้าง",
+  "designGenerationTargets.description": "วางแผนไฟล์ผลลัพธ์ ชื่อส่งออก และ ID หน้าจอเชิงความหมายสำหรับการสร้าง ระบุเส้นทางและ ID หน้าจอใหม่ได้ การบันทึกเป้าหมายไม่ได้ตรวจสอบซอร์สโค้ดหรือความครอบคลุมของหน้าจอ",
+  "designGenerationTargets.save": "บันทึกเป้าหมายการสร้าง",
+  "designGenerationTargets.dirty": "การแก้ไขเป้าหมายนี้ยังไม่ถูกบันทึก การสร้างจะใช้เป้าหมายที่บันทึกไว้ล่าสุด",
+  "designGenerationTargets.conflict": "โปรเจกต์เปลี่ยนแปลงแล้ว ตรวจสอบการแก้ไขเป้าหมาย แล้วนำไปใช้กับเวอร์ชันปัจจุบันหรือละทิ้งก่อนบันทึก",
+
   "designUpgrade.recipeTitle": "สูตรการย้ายข้อมูลที่เผยแพร่",
   "designUpgrade.recipeLoad": "ค้นหาสูตรการย้ายข้อมูล",
   "designUpgrade.recipeChoose": "เลือกสูตรการย้ายข้อมูล",

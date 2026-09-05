@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export const en: Dict = {
+  "designGenerationTargets.title": "Generation targets",
+  "designGenerationTargets.description": "Plan output files, exports, and semantic screen IDs for generation. New paths and screen IDs are allowed. Saving targets does not verify source or screen coverage.",
+  "designGenerationTargets.save": "Save generation targets",
+  "designGenerationTargets.dirty": "These target edits are unsaved. Generation uses the last saved targets.",
+  "designGenerationTargets.conflict": "The project changed. Review your target edits, then rebase or discard them before saving.",
+
   "designUpgrade.recipeTitle": "Published migration recipes",
   "designUpgrade.recipeLoad": "Find migration recipes",
   "designUpgrade.recipeChoose": "Choose a migration recipe",

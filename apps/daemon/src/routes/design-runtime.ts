@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from 'express';
 import {
   ProjectDesignRuntimeInstantiatePatternRequestSchema,
+  ProjectDesignRuntimeGenerationTargetsRequestSchema,
   ProjectDesignRuntimeValidationSettingsRequestSchema, ProjectDesignRuntimeValidateArtifactsRequestSchema,
   ProjectDesignRuntimeReviewUpgradeRequestSchema,
   ProjectDesignRuntimeApplyUpgradeRequestSchema,
@@ -120,6 +121,8 @@ export function registerDesignRuntimeRoutes(app: Express, deps: RegisterDesignRu
   };
 
   app.get(prefix, handle('read', (req) => ({ state: service.get(String(req.params.id)) })));
+  app.get(`${prefix}/generation/targets`, handle('read', (req) => service.generationTargets(String(req.params.id))));
+  app.put(`${prefix}/generation/targets`, handle('write', (req) => ({ state: service.saveGenerationTargets(String(req.params.id), parseInput(ProjectDesignRuntimeGenerationTargetsRequestSchema, req.body)) })));
   app.get(`${prefix}/validation/settings`, handle('read', (req) => service.validationSettings(String(req.params.id))));
   app.put(`${prefix}/validation/settings`, handle('write', (req) => ({ state: service.saveValidationSettings(String(req.params.id), parseInput(ProjectDesignRuntimeValidationSettingsRequestSchema, req.body)) })));
   app.post(`${prefix}/validation/artifacts`, handle('read', (req) => service.validateArtifacts(String(req.params.id), parseInput(ProjectDesignRuntimeValidateArtifactsRequestSchema, req.body))));

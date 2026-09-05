@@ -38,7 +38,7 @@ afterEach(async () => {
 
 function state(revision = 7): ProjectDesignRuntimeState {
   return {
-    schemaVersion: 1, revision, validationSettings: defaultProjectDesignValidationSettings(),
+    schemaVersion: 1, revision, validationSettings: defaultProjectDesignValidationSettings(), generationTargets: { schemaVersion: 1 as const, outputs: [] },
     registry: { schemaVersion: 1, id: 'acme', components: [{ schemaVersion: 1, id: 'button', name: 'Button', props: {} }] },
     codeIndex: { schemaVersion: 1, id: 'acme', components: [{ schemaVersion: 1, id: 'acme/Button', framework: 'react', name: 'Button', exportName: 'Button', sourcePath: 'src/Button.tsx', props: {} }] },
     projectCodeIndex: { schemaVersion: 1, id: 'acme', components: [] },
@@ -617,7 +617,7 @@ describe('reviewed upgrade CLI', () => {
     const review = reviewDesignSystemUpgrade(fixture.context, fixture.from, fixture.to, plan);
     const input = { plan, reviewId: review.id, baseDigest: review.baseDigest, planDigest: review.planDigest };
     const { projectId: _id, projectSources: _sources, ...contextState } = fixture.context;
-    const previous = { ...contextState, schemaVersion: 1 as const, validationSettings: defaultProjectDesignValidationSettings(), registry: fixture.from.package.registry };
+    const previous = { ...contextState, schemaVersion: 1 as const, validationSettings: defaultProjectDesignValidationSettings(), generationTargets: { schemaVersion: 1 as const, outputs: [] }, registry: fixture.from.package.registry };
     return { fixture, review, input, previous };
   }
 
@@ -781,5 +781,30 @@ describe('pattern authoring CLI', () => {
       expect(output.code).toBe(2);
     }
     expect(stub.requests).toHaveLength(0);
+  });
+});
+
+describe('generation target CLI', () => {
+  const targets = { schemaVersion: 1, outputs: [{ sourcePath: 'future/Applications.tsx', exportName: 'Applications', screenId: 'applications' }] };
+  it('reads and authors targets through the shared raw HTTP endpoint with one CAS fetch', async () => {
+    const { requests, url } = await startServer((request) => request.method === 'GET'
+      ? { body: { revision: 7, targets } } : { body: { state: { ...state(8), generationTargets: targets } } });
+    const read = await runCli(['design-runtime', 'generation-targets', projectId, '--daemon-url', url, '--json']); expect(read.code).toBe(0); expect(JSON.parse(read.stdout)).toEqual({ revision: 7, targets });
+    const saved = await runCli(['design-runtime', 'save-generation-targets', projectId, '--daemon-url', url, '--json', '--prompt-file', '-'], JSON.stringify({ targets }));
+    expect(saved.code).toBe(0); expect(JSON.parse(saved.stdout).state.generationTargets).toEqual(targets);
+    expect(requests.map((request) => [request.method, request.url])).toEqual([['GET', `${prefix}/generation/targets`], ['GET', `${prefix}/generation/targets`], ['PUT', `${prefix}/generation/targets`]]);
+    expect(requests[2]!.body).toEqual({ expectedRevision: 7, targets });
+  });
+  it('uses an explicit revision directly and never retries a conflicting save', async () => {
+    const { requests, url } = await startServer(() => ({ status: 409, body: { error: { code: 'DESIGN_RUNTIME_REVISION_CONFLICT', message: 'Changed', details: { expectedRevision: 2, currentRevision: 3 } } } }));
+    const result = await runCli(['design-runtime', 'save-generation-targets', projectId, '--daemon-url', url, '--json', '--prompt-file', await inputFile({ expectedRevision: 2, targets })]);
+    expect(result.code).toBe(1); expect(requests).toHaveLength(1); expect(requests[0]).toMatchObject({ method: 'PUT', url: `${prefix}/generation/targets`, body: { expectedRevision: 2, targets } });
+  });
+  it('rejects malformed target identity and caller readiness before any HTTP', async () => {
+    const { requests, url } = await startServer();
+    for (const body of [{ targets, ready: true }, { targets: { schemaVersion: 1, outputs: [{ sourcePath: '../outside.tsx' }] } }, { targets: { ...targets, outputs: [targets.outputs[0], targets.outputs[0]] } }]) {
+      const result = await runCli(['design-runtime', 'save-generation-targets', projectId, '--daemon-url', url, '--json', '--prompt-file', '-'], JSON.stringify(body)); expect(result.code).toBe(2);
+    }
+    expect(requests).toHaveLength(0);
   });
 });

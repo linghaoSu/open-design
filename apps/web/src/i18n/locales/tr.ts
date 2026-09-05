@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export const tr: Dict = {
+  "designGenerationTargets.title": "Üretim hedefleri",
+  "designGenerationTargets.description": "Üretilecek çıktı dosyalarını, dışa aktarımları ve anlamsal ekran kimliklerini planlayın. Yeni yollar ve ekran kimlikleri kullanılabilir. Hedefleri kaydetmek kaynak kodunu veya ekran kapsamını doğrulamaz.",
+  "designGenerationTargets.save": "Üretim hedeflerini kaydet",
+  "designGenerationTargets.dirty": "Bu hedef değişiklikleri kaydedilmedi. Üretim, son kaydedilen hedefleri kullanır.",
+  "designGenerationTargets.conflict": "Proje değişti. Hedef değişikliklerinizi inceleyin, ardından kaydetmeden önce güncel sürüme aktarın veya silin.",
+
   "designUpgrade.recipeTitle": "Yayımlanmış geçiş tarifleri",
   "designUpgrade.recipeLoad": "Geçiş tariflerini bul",
   "designUpgrade.recipeChoose": "Bir geçiş tarifi seçin",

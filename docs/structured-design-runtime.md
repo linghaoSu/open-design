@@ -132,6 +132,8 @@ All paths below are relative to `/api/projects/:id/design-runtime`:
 | Inspect saved mode and effective constraints | `GET /validation/settings` | `validation-settings <projectId>` |
 | Save mode and project constraints | `PUT /validation/settings` | `save-validation-settings <projectId> --prompt-file <path\|->` |
 | Validate actual project source files | `POST /validation/artifacts` | `validate-artifacts <projectId> --prompt-file <path\|->` |
+| Read generation output declarations | `GET /generation/targets` | `generation-targets <projectId>` |
+| Save generation output declarations | `PUT /generation/targets` | `save-generation-targets <projectId> --prompt-file <path\|->` |
 | Search exact locked patterns | `GET /patterns?query=...` | `patterns <projectId> --query <text>` |
 | Inspect a locked pattern | `GET /patterns/:patternId` | `pattern <projectId> <patternId>` |
 | Configure a pattern for a screen draft | `POST /patterns/:patternId/instantiate` | `instantiate-pattern <projectId> <patternId> --prompt-file <path\|->` |
@@ -155,6 +157,25 @@ od design-runtime validate <projectId> --json --prompt-file - <<'JSON'
 {"component":"ds:acme/button","props":{"variant":"primary"}}
 JSON
 ```
+
+In **Validation → Generation targets**, declare each intended output's source path,
+export and semantic screen ID. Paths and screen IDs can describe files and screens
+that the next generation will create. Saving the declarations records authoring
+intent; it does not verify nonexistent files or certify their implementation.
+Each declared screen has one output mapping. The daemon later verifies actual
+files and screen coverage under the saved mode. Output declarations do not exempt
+other generated sources from inspection.
+
+```bash
+od design-runtime save-generation-targets <projectId> --json --prompt-file - <<'JSON'
+{"targets":{"schemaVersion":1,"outputs":[{"sourcePath":"Applications.tsx","exportName":"Applications","screenId":"applications"}]}}
+JSON
+```
+
+The UI preserves unsaved declarations after a revision conflict and provides an
+explicit rebase action. The raw settings endpoint remains readable when a locked
+package needs recovery. Writes use project write authority and the same revision
+check as other structured design edits.
 
 ## Screens and shared revisions
 

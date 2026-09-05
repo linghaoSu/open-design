@@ -11,7 +11,7 @@ const review = { schemaVersion: 1, id: 'review', projectId: 'project', baseRevis
   diff: { schemaVersion: 1, from, to, changes: [], recommendedBump: 'none' }, current: resolved, proposed: resolved,
   affectedUsages: [], affectedScreens: [], invalidOverrides: [], codeImpact: { bindings: [], sourceFiles: [], coverage: 'registered-bindings' }, bindingTransitions: [],
   tokenUsageCoverage: 'not-indexed', sourceUsageCoverage: 'conservative-design-system-screens', diagnostics: [], canApply: true };
-const state = { schemaVersion: 1, revision: 4, validationSettings: defaultProjectDesignValidationSettings(), registry: { schemaVersion: 1, id: 'acme', components: [] },
+const state = { schemaVersion: 1, revision: 4, validationSettings: defaultProjectDesignValidationSettings(), generationTargets: { schemaVersion: 1 as const, outputs: [] }, registry: { schemaVersion: 1, id: 'acme', components: [] },
   codeIndex: { schemaVersion: 1, id: 'project', components: [] }, bindings: { schemaVersion: 1, id: 'project', bindings: [] },
   projectCodeIndex: { schemaVersion: 1, id: 'project', components: [] },
   projectComponents: { schemaVersion: 1, id: 'project', components: [] }, document: null, sharedChanges: { schemaVersion: 1, id: 'project', drafts: [], history: [] },

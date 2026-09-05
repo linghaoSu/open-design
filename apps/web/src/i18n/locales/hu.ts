@@ -1,6 +1,12 @@
 import type { Dict } from '../types';
 
 export const hu: Dict = {
+  "designGenerationTargets.title": "Generálási célok",
+  "designGenerationTargets.description": "Tervezze meg a kimeneti fájlokat, exportokat és szemantikus képernyőazonosítókat. Új útvonalak és azonosítók is megadhatók. A mentés nem ellenőrzi a forráskódot vagy a képernyők lefedettségét.",
+  "designGenerationTargets.save": "Célok mentése",
+  "designGenerationTargets.dirty": "A célok módosításai nincsenek mentve. A generálás a legutóbb mentett célokat használja.",
+  "designGenerationTargets.conflict": "A projekt megváltozott. Ellenőrizze a módosításokat, majd mentés előtt vigye át őket az aktuális verzióra, vagy vesse el őket.",
+
   "designUpgrade.recipeTitle": "Közzétett migrációs receptek",
   "designUpgrade.recipeLoad": "Migrációs receptek keresése",
   "designUpgrade.recipeChoose": "Migrációs recept kiválasztása",
