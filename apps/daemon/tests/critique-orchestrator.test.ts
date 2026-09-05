@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, existsSync, readFileSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -8,6 +8,10 @@ import { migrateCritique, getCritiqueRun } from '../src/critique/persistence.js'
 import { runOrchestrator, type CritiqueSseBus, type OrchestratorParams } from '../src/critique/orchestrator.js';
 import type { CritiqueSseEvent } from '@open-design/contracts/critique';
 import { defaultCritiqueConfig, type CritiqueConfig } from '@open-design/contracts/critique';
+import { critiqueDesignPublicationInput } from '../src/critique/design-publication.js';
+import { createDesignRuntimeStore, migrateDesignRuntimeStore } from '../src/storage/design-runtime-store.js';
+import { createDesignGenerationStore } from '../src/storage/design-generation-store.js';
+import { createDesignGenerationService } from '../src/services/design-runtime/generation-execution.js';
 
 // ---------------------------------------------------------------------------
 // DB fixture
@@ -285,6 +289,112 @@ describe('runOrchestrator - happy path', () => {
     expect(observations).toHaveLength(1);
     expect(observations[0]?.artifactPathOnRow).toBeTruthy();
     expect(observations[0]?.fileExistsOnDisk).toBe(true);
+  });
+});
+
+describe('runOrchestrator - validated artifact publication', () => {
+  function params(extra: Partial<OrchestratorParams> = {}): OrchestratorParams {
+    return { runId: 'publication', projectId: 'p1', conversationId: 'c1', artifactId: 'artifact',
+      artifactDir: join(tmpDir, 'published'), adapter: 'claude', cfg: defaultCritiqueConfig(), db,
+      bus: makeBus().bus, stdout: streamOf(happyStream3Rounds()), ...extra };
+  }
+
+  it('waits for validation, then publishes the same frozen body and MIME', async () => {
+    const { bus, events } = makeBus();
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const validating = new Promise<void>((resolve) => { entered = resolve; });
+    const task = runOrchestrator(params({ bus, validateArtifact: async (artifact) => {
+      expect(artifact).toEqual({ body: '<html><body>final</body></html>', mime: 'text/html' });
+      expect(Object.isFrozen(artifact)).toBe(true);
+      expect(Reflect.set(artifact!, 'body', 'different bytes')).toBe(false);
+      entered(); await gate; return { allowed: true };
+    } }));
+    await validating;
+    expect(getCritiqueRun(db, 'publication')?.artifactPath).toBeNull();
+    expect(existsSync(join(tmpDir, 'published', 'artifact.html'))).toBe(false);
+    expect(events.some((event) => event.event === 'critique.ship')).toBe(false);
+    release();
+    const result = await task;
+    expect(result.status).toBe('shipped');
+    expect(readFileSync(result.artifactPath!, 'utf8')).toBe('<html><body>final</body></html>');
+    expect(events.filter((event) => event.event === 'critique.ship')).toHaveLength(1);
+  });
+
+  it.each(['denied', 'throws'] as const)('does not persist or announce an artifact when validation %s', async (failure) => {
+    const { bus, events } = makeBus();
+    const result = await runOrchestrator(params({ bus, validateArtifact: async () => {
+      if (failure === 'throws') throw new Error('validation unavailable');
+      return { allowed: false, reason: 'Current bytes violate the frozen design policy.' };
+    } }));
+    expect(result.status).toBe('failed');
+    expect(result.artifactPath).toBeNull();
+    expect(getCritiqueRun(db, 'publication')?.artifactPath).toBeNull();
+    expect(existsSync(join(tmpDir, 'published', 'artifact.html'))).toBe(false);
+    expect(events.some((event) => event.event === 'critique.ship')).toBe(false);
+    expect(events.some((event) => event.event === 'critique.failed')).toBe(true);
+  });
+
+  it('does not announce delivery when accepted bytes cannot be persisted', async () => {
+    const { bus, events } = makeBus();
+    const artifactDir = join(tmpDir, 'existing-file');
+    await writeFile(artifactDir, 'unrelated content');
+    const validateArtifact = vi.fn(async () => ({ allowed: true }));
+    const result = await runOrchestrator(params({ bus, artifactDir, validateArtifact }));
+    expect(validateArtifact).toHaveBeenCalledOnce();
+    expect(result.status).toBe('failed');
+    expect(result.artifactPath).toBeNull();
+    expect(getCritiqueRun(db, 'publication')?.artifactPath).toBeNull();
+    expect(readFileSync(artifactDir, 'utf8')).toBe('unrelated content');
+    expect(events.some((event) => event.event === 'critique.ship')).toBe(false);
+    expect(events.some((event) => event.event === 'critique.failed')).toBe(true);
+  });
+
+  it('cancellation while validation waits prevents publication and synthetic ship', async () => {
+    const { bus, events } = makeBus(); const controller = new AbortController();
+    const result = await runOrchestrator(params({ bus, signal: controller.signal, validateArtifact: async () => {
+      controller.abort(); return { allowed: true };
+    } }));
+    expect(result.status).toBe('interrupted');
+    expect(result.artifactPath).toBeNull();
+    expect(events.some((event) => event.event === 'critique.ship')).toBe(false);
+    expect(events.some((event) => event.event === 'critique.interrupted')).toBe(true);
+  });
+
+  it.each([
+    ['guided', 'text/html', 'blocked'], ['strict', 'text/html', 'blocked'],
+    ['explore', 'text/html', 'advisory'], ['strict', 'image/svg+xml', 'blocked'],
+    ['explore', 'image/svg+xml', 'advisory'],
+    ['guided', 'unavailable', 'blocked'], ['strict', 'unavailable', 'blocked'], ['explore', 'unavailable', 'advisory'],
+  ] as const)('uses the canonical %s policy for exact %s artifact bytes (%s)', async (mode, mime, decision) => {
+    const projectRoot = join(tmpDir, 'project'); await mkdir(projectRoot);
+    migrateDesignRuntimeStore(db);
+    const state = createDesignRuntimeStore(db); const current = state.read('p1');
+    state.write('p1', current.revision, { ...current, validationSettings: { ...current.validationSettings, mode } });
+    const executions = createDesignGenerationStore(db);
+    const authority = { projectId: 'p1', conversationId: 'c1', scope: 'account-workspace' };
+    const service = createDesignGenerationService({ state, executions, root: () => projectRoot,
+      currentScope: () => authority.scope, observeTargetPackages: async () => [] });
+    await service.start('publication', authority); await service.captureBaseline('publication', authority);
+    const { bus, events } = makeBus();
+    const result = await runOrchestrator(params({ bus,
+      stdout: streamOf(mime === 'unavailable' ? happyStream3Rounds().replace(/<SHIP[\s\S]*?<\/SHIP>/, '')
+        : happyStream3Rounds().replaceAll('mime="text/html"', `mime="${mime}"`)),
+      validateArtifact: async (artifact) => {
+        const input = critiqueDesignPublicationInput(artifact);
+        const report = await service.complete('publication', authority, { ...input,
+          canonicalEntry: input.externalSources[0]?.sourcePath ?? null, canceled: () => false });
+        expect(report.decision).toBe(decision);
+        if (mime === 'text/html') expect(report.inventory.changed).toContain('__od_critique__/artifact.html');
+        else expect(report.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({
+          code: 'ODDS6005', message: expect.stringContaining(mime === 'unavailable' ? 'unavailable' : 'sha256:'),
+        })]));
+        return { allowed: report.decision === 'accepted' || report.decision === 'advisory' };
+      } }));
+    expect(result.status).toBe(decision === 'blocked' ? 'failed' : mime === 'unavailable' ? 'below_threshold' : 'shipped');
+    expect(events.some((event) => event.event === 'critique.ship')).toBe(decision !== 'blocked');
+    expect(result.artifactPath === null).toBe(decision === 'blocked' || mime === 'unavailable');
   });
 });
 
@@ -788,9 +898,9 @@ describe('runOrchestrator - fallback on timeout/abort (Defect 7)', () => {
     expect(row?.status).toBe('timed_out');
     expect(row?.score).toBeCloseTo(7.5, 1);
 
-    // A synthetic ship event should have been emitted.
+    // A timeout preserves the score without advertising unavailable bytes.
     const shipEvents = events.filter((e) => e.event === 'critique.ship');
-    expect(shipEvents).toHaveLength(1);
+    expect(shipEvents).toHaveLength(0);
   }, 15000);
 
   it('abort after 1 completed round: status=interrupted, score matches that round', async () => {
@@ -842,6 +952,6 @@ describe('runOrchestrator - fallback on timeout/abort (Defect 7)', () => {
     expect(row?.score).toBeCloseTo(8.0, 1);
 
     const shipEvents = events.filter((e) => e.event === 'critique.ship');
-    expect(shipEvents).toHaveLength(1);
+    expect(shipEvents).toHaveLength(0);
   });
 });

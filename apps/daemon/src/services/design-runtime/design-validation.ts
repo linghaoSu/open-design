@@ -57,7 +57,7 @@ function observedTree(node: AnalyzedDesignNode): unknown {
 }
 
 /** Facts first, policy second. No filesystem, source execution, cached readiness or inferred component names. */
-export function validateStructuredDesign(input: ValidateStructuredDesignRequest): StructuredDesignValidationResult {
+export function validateStructuredDesign(input: ValidateStructuredDesignRequest, host?: { auditPaths: readonly string[] }): StructuredDesignValidationResult {
   const parsed = ValidateStructuredDesignRequestSchema.safeParse(input);
   const coverage = { semantic: false, source: false, imports: false, styles: false, bindings: false, conformance: false };
   const metrics = emptyMetrics();
@@ -125,7 +125,7 @@ export function validateStructuredDesign(input: ValidateStructuredDesignRequest)
     if (node.type === 'component') Object.values(node.slots ?? {}).forEach((children) => children.forEach(visitTokens));
   };
   (resolvedDocument ?? snapshot.document)?.screens.forEach((screen) => screen.children.forEach(visitTokens));
-  const source = analyzeDesignSources({ sources: request.sources, codes, provenCodeSources, frozenSources }, request.outputs);
+  const source = analyzeDesignSources({ sources: request.sources, codes, provenCodeSources, frozenSources, ...(host ? { auditPaths: host.auditPaths } : {}) }, request.outputs);
   issues.push(...source.diagnostics); coverage.source = source.complete && request.outputs.length > 0; coverage.imports = source.importsComplete;
   coverage.styles = true;
   for (const style of source.styles) {
@@ -163,6 +163,7 @@ export function validateStructuredDesign(input: ValidateStructuredDesignRequest)
   };
   source.outputs.forEach((output) => output.nodes.forEach(visitSource));
   source.implementations.forEach((implementation) => implementation.nodes.forEach(visitSource));
+  source.audits.forEach((nodes) => nodes.forEach(visitSource));
   metrics.componentReuse = reuse(reusedComponents, componentTotal); metrics.bindingReuse = reuse(reusedBindings, bindingTotal);
   metrics.duplicateStructures = [...duplicates.values()].reduce((total, count) => total + Math.max(0, count - 1), 0);
   // Re-prove the exact expected production calls independently for each output framework.

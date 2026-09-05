@@ -3,8 +3,8 @@ import type { DesignTokenRegistry, ValidationDiagnostic } from '@open-design/con
 
 export interface StyleFinding { code: ValidationDiagnostic['code']; message: string; sourcePath: string; line: number; column: number }
 export interface StyleAnalysis { findings: StyleFinding[]; imports: string[]; complete: boolean; unknownTokens: number; rawColors: number; rawSpacing: number; rawRadius: number }
-const colorProperties = new Set(['color', 'background-color', 'border-color', 'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color', 'border-inline-color', 'border-block-color', 'border-inline-start-color', 'border-inline-end-color', 'border-block-start-color', 'border-block-end-color', 'outline-color', 'fill', 'stroke', 'text-decoration-color', 'caret-color', 'accent-color']);
-const spacingProperties = /^(?:margin|padding)(?:-(?:top|right|bottom|left|inline|block|inline-start|inline-end|block-start|block-end))?$|^(?:gap|row-gap|column-gap|top|right|bottom|left|inset|inset-inline|inset-block)$/;
+const colorProperties = /^(?:color|.+-color|fill|stroke)$/;
+const spacingProperties = /^(?:scroll-)?(?:margin|padding)(?:-(?:top|right|bottom|left|inline|block|inline-start|inline-end|block-start|block-end))?$|^(?:gap|row-gap|column-gap|top|right|bottom|left|inset(?:-(?:inline|block)(?:-(?:start|end))?)?)$/;
 const radiusProperties = /^border-(?:(?:top|bottom)-(?:left|right)-|(?:start|end)-(?:start|end)-)?radius$/;
 const keywords = new Set(['inherit', 'initial', 'unset', 'revert', 'revert-layer', 'currentcolor', 'transparent', 'none', 'auto']);
 const basicColors = new Set(['black', 'silver', 'gray', 'white', 'maroon', 'red', 'purple', 'fuchsia', 'green', 'lime', 'olive', 'yellow', 'navy', 'blue', 'teal', 'aqua', 'orange', 'rebeccapurple']);
@@ -33,7 +33,7 @@ export function analyzeDesignStyles(sourceText: string, sourcePath: string, toke
         // Application-defined custom properties cannot impersonate frozen token declarations.
         result.complete = false; issue('ODDS6002', `Application CSS variable definitions require explicit token publication: ${property}.`, line, column);
       }
-      const kind = colorProperties.has(property) ? 'color' : spacingProperties.test(property) ? 'spacing' : radiusProperties.test(property) ? 'radius' : undefined;
+      const kind = colorProperties.test(property) ? 'color' : spacingProperties.test(property) ? 'spacing' : radiusProperties.test(property) ? 'radius' : undefined;
       const references = [...value.matchAll(/var\(\s*(--[A-Za-z][A-Za-z0-9_-]*)\s*(?=[,)])/g)];
       for (const reference of references) {
         const token = variables.get(reference[1]!);
@@ -44,7 +44,7 @@ export function analyzeDesignStyles(sourceText: string, sourcePath: string, toke
       if (/var\s*\(/i.test(withoutVariables)) {
         result.complete = false; issue('ODDS6002', 'CSS variable fallbacks and computed variable names are not statically certified.', line, column);
       }
-      if (['background', 'background-image', 'border', 'border-top', 'border-right', 'border-bottom', 'border-left', 'border-block', 'border-inline', 'border-block-start', 'border-block-end', 'border-inline-start', 'border-inline-end', 'outline', 'box-shadow', 'text-shadow', 'border-image', 'all'].includes(property)) {
+      if (['background', 'background-image', 'border', 'border-top', 'border-right', 'border-bottom', 'border-left', 'border-block', 'border-inline', 'border-block-start', 'border-block-end', 'border-inline-start', 'border-inline-end', 'outline', 'column-rule', 'box-shadow', 'text-shadow', 'border-image', 'all'].includes(property)) {
         // Shorthands may contain protected values even when they cannot be classified fully.
         result.complete = false; issue('ODDS6002', `Expand ${property} to supported explicit declarations before strict validation.`, line, column);
         if (/#(?:[\da-f]{3,8})\b|(?:rgb|hsl|oklch|oklab|lab|lch)\s*\(/i.test(withoutVariables) || withoutVariables.toLowerCase().split(/[^a-z]+/).some((word) => basicColors.has(word))) { result.rawColors++; issue('ODDS2002', `Raw color literal in ${property}.`, line, column); }

@@ -1,3 +1,4 @@
+import { renderDesignGenerationDirective, type DesignGenerationPromptFacts } from './design-generation.js';
 /**
  * Prompt composer. The base is the OD-adapted "expert designer" system
  * prompt (see ./official-system.ts) — a full identity, workflow, and
@@ -185,6 +186,7 @@ Active design system exception: the active design system is the visual direction
 export interface ComposeInput {
   // Mirrored internal request-recipe slot. Generic/BYOK callers do not infer
   // this from plugin ids; the daemon must supply a verified recipe payload.
+  designGenerationFacts?: DesignGenerationPromptFacts | undefined;
   odNextStrategyRecipe?: OdNextStrategyRequestRecipeV2 | undefined;
   agentId?: string | null | undefined;
   skillBody?: string | undefined;
@@ -279,6 +281,7 @@ export interface ComposeInput {
 }
 
 export function composeSystemPrompt({
+  designGenerationFacts,
   odNextStrategyRecipe,
   agentId,
   skillBody,
@@ -317,6 +320,7 @@ export function composeSystemPrompt({
   // side of this fork.
   if (odNextStrategyRecipe) {
     return composeOdNextStrategyRequestPromptV2(odNextStrategyRecipe, {
+      designGenerationFacts,
       agentId,
       sessionMode,
       locale,
@@ -566,6 +570,8 @@ export function composeSystemPrompt({
     parts.push(ACTIVE_DESIGN_SYSTEM_VISUAL_DIRECTION_OVERRIDE);
   }
 
+  const generationDirective = renderDesignGenerationDirective(designGenerationFacts);
+  if (generationDirective) parts.push('\n\n', generationDirective);
   return parts.join('');
 }
 

@@ -1,3 +1,4 @@
+import type { DesignGenerationReport } from '../design-runtime/design-generation.js';
 import type { LiveArtifactRefreshStatus } from '../api/live-artifacts.js';
 import type { RunFailureCategory, RunFailureDetail } from '../api/chat.js';
 import type { StrategyTaskProjectionV2 } from '../plugins/strategy-v2.js';
@@ -80,6 +81,7 @@ export interface ChatSseChunkPayload {
 }
 
 export interface ChatSseEndPayload {
+  designGeneration?: DesignGenerationReport;
   code: number | null;
   signal?: string | null;
   status?: 'succeeded' | 'failed' | 'canceled';
@@ -178,6 +180,11 @@ export interface ChatSseDiagnosticPayload {
  * showing the continuation's answer twice, next to the row the daemon persists
  * for that Run.
  */
+export interface DesignGenerationDiagnostic extends ChatSseDiagnosticPayload {
+  type: 'design_generation';
+  report: DesignGenerationReport;
+}
+
 export interface StrategyTaskContinuationDiagnostic extends ChatSseDiagnosticPayload {
   type: 'strategy_task_continuation';
   taskExecutionId: string | null;

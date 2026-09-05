@@ -3,8 +3,8 @@
  * Phase 6.2 artifact-extraction expansion:
  *   - A signal-terminated child (e.g. SIGTERM from /api/runs/:id/cancel)
  *     finalizes the critique row as 'interrupted', not 'below_threshold'.
- *     The synthetic ship event for the best-so-far round carries
- *     status='interrupted' so transcripts and SSE clients see the real cause.
+ *     Interrupted runs preserve round evidence without advertising an
+ *     artifact whose bytes have not passed publication validation.
  *   - Shipped runs now persist the SHIP <ARTIFACT> body to disk and pin
  *     the absolute path on the row, so the artifact endpoint can stream
  *     the bytes the agent shipped (CDATA wrapper stripped).
@@ -115,11 +115,9 @@ describe('orchestrator lifecycle (PR #481 round 3 review)', () => {
     const row = getCritiqueRun(db, 'r-sigterm');
     expect(row?.status).toBe('interrupted');
 
-    // Synthetic ship event must carry status='interrupted' (not below_threshold).
-    const shipEvents = events.filter((e) => e.event === 'critique.ship');
-    expect(shipEvents).toHaveLength(1);
-    const shipPayload = shipEvents[0]?.data as { status: string } | undefined;
-    expect(shipPayload?.status).toBe('interrupted');
+    // Preserve interruption evidence without claiming an available artifact.
+    expect(events.filter((event) => event.event === 'critique.ship')).toHaveLength(0);
+    expect(events.filter((event) => event.event === 'critique.interrupted')).toHaveLength(1);
 
     // Round 1 closed with composite ~9.0, so the fallback round should hold.
     expect(result.composite).not.toBeNull();

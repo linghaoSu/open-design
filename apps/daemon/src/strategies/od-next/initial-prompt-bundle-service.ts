@@ -1,3 +1,4 @@
+import type { DesignGenerationPromptFacts } from '@open-design/contracts';
 import path from 'node:path';
 
 import {
@@ -72,6 +73,7 @@ type ResearchInput = {
 } | null;
 
 export interface OdNextInitialPromptMeta {
+  designGenerationFacts?: DesignGenerationPromptFacts;
   agentId: string;
   message?: unknown;
   currentPrompt?: unknown;
@@ -328,6 +330,7 @@ export function createOdNextInitialPromptBundleService(
       odNextRuntimeFacts,
       odNextStableContextPrompt,
     } = await deps.composeDaemonSystemPrompt({
+      designGenerationFacts: meta.designGenerationFacts,
       agentId,
       projectId,
       skillId,

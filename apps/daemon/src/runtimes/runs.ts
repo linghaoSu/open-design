@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { strategyTaskProvesDelivery, todoSnapshotHasUnfinishedWork } from '@open-design/contracts';
+import { DesignGenerationReportSchema, strategyTaskProvesDelivery, todoSnapshotHasUnfinishedWork } from '@open-design/contracts';
 import {
   collectProcessTreePids,
   listProcessSnapshots,
@@ -597,6 +597,7 @@ function durableRunState(run) {
     ...(typeof run.artifactVersionId === 'string'
       ? { artifactVersionId: run.artifactVersionId }
       : {}),
+    ...(run.designGeneration ? { designGeneration: run.designGeneration } : {}),
     ...(typeof run.deliverableValid === 'boolean'
       ? { deliverableValid: run.deliverableValid }
       : {}),
@@ -645,6 +646,11 @@ function readDurableRunState(statePath) {
       || typeof value.status !== 'string'
     ) {
       return null;
+    }
+    if (value.designGeneration !== undefined) {
+      const report = DesignGenerationReportSchema.safeParse(value.designGeneration);
+      if (report.success && report.data.runId === value.id) value.designGeneration = report.data;
+      else delete value.designGeneration;
     }
     return value;
   } catch {
@@ -1392,6 +1398,7 @@ export function createChatRunService({
     ...(typeof run.artifactVersionId === 'string'
       ? { artifactVersionId: run.artifactVersionId }
       : {}),
+    ...(run.designGeneration ? { designGeneration: run.designGeneration } : {}),
     ...(typeof run.deliverableValid === 'boolean'
       ? { deliverableValid: run.deliverableValid }
       : {}),
@@ -1472,6 +1479,7 @@ export function createChatRunService({
       failureCategory: run.failureCategory ?? null,
       failureDetail: run.failureDetail ?? null,
       ...(run.strategyTask ? { strategyTask: run.strategyTask } : {}),
+      ...(run.designGeneration ? { designGeneration: run.designGeneration } : {}),
     }, terminalAt, false);
     for (const sse of run.clients) sse.end();
     run.clients.clear();

@@ -1,3 +1,4 @@
+import type { DesignGenerationReport } from '../design-runtime/design-generation.js';
 import type { ProjectFile, ProjectFileKind } from './files';
 import type { RunResultPackageResponse, RunWorkspace } from './workspaces.js';
 import type {
@@ -757,6 +758,7 @@ export interface ChatRunStatusResponse {
   /** Filesystem-backed validation of the one canonical artifact entry this
    *  run can deliver. Present for terminal runs when the daemon can inspect
    *  the project; callers must not infer validity from artifactCount alone. */
+  designGeneration?: DesignGenerationReport;
   deliverableValid?: boolean;
   deliverableValidation?:
     | 'valid'

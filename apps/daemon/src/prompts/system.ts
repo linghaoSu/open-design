@@ -1,3 +1,4 @@
+import { renderDesignGenerationDirective, type DesignGenerationPromptFacts } from '@open-design/contracts';
 /**
  * Prompt composer. The base is the OD-adapted "expert designer" system
  * prompt (see ./official-system.ts) — a full identity, workflow, and
@@ -692,6 +693,7 @@ export interface ComposeInput {
   // after verifying bundled provenance and the Applied Strategy Binding.
   // When present it is the whole stable system prompt; ordinary composition
   // remains byte-identical and ignores no default quality section.
+  designGenerationFacts?: DesignGenerationPromptFacts | undefined;
   odNextStrategyRecipe?: OdNextStrategyRequestRecipeV2 | undefined;
   agentId?: string | null | undefined;
   streamFormat?: string | undefined;
@@ -851,6 +853,7 @@ export interface ComposeInput {
 }
 
 export function composeSystemPrompt({
+  designGenerationFacts,
   odNextStrategyRecipe,
   agentId,
   skillBody,
@@ -904,6 +907,7 @@ export function composeSystemPrompt({
   // before changing prompt text on either side.
   if (odNextStrategyRecipe) {
     return composeOdNextStrategyRequestPromptV2(odNextStrategyRecipe, {
+      designGenerationFacts,
       agentId,
       sessionMode,
       locale,
@@ -1453,6 +1457,8 @@ export function composeSystemPrompt({
         "stop and ask the user a real question instead.",
   );
 
+  const generationDirective = renderDesignGenerationDirective(designGenerationFacts);
+  if (generationDirective) parts.push('\n\n', generationDirective);
   return parts.join('');
 }
 

@@ -177,6 +177,7 @@ export interface ChatRun {
     | 'unknown';
   artifactVersionId?: string;
   deliverableValid?: boolean;
+  designGeneration?: ChatRunStatusResponse['designGeneration'];
   deliverableValidation?: ChatRunStatusResponse['deliverableValidation'];
   deliverableEntryFile?: string;
   deliverableArtifactKind?: ChatRunStatusResponse['deliverableArtifactKind'];

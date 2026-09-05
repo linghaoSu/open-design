@@ -83,6 +83,8 @@ export interface OrchestratorParams {
    * iterable.
    */
   stdout: AsyncIterable<string>;
+  /** Host policy check over the exact captured bytes, before artifact publication. */
+  validateArtifact?: (artifact: Readonly<Pick<ShipArtifactPayload, 'body' | 'mime'>> | null) => Promise<{ allowed: boolean; reason?: string }>;
   /**
    * Optional abort signal. Aborting causes the orchestrator to flush
    * best-so-far state and emit critique.interrupted before returning.
@@ -200,6 +202,17 @@ export async function runOrchestrator(
   const collectedEvents: PanelEvent[] = [];
   const roundStates = new Map<number, RoundState>();
   const completedRounds: RoundState[] = [];
+  const assertPublicationActive = (): void => {
+    if (params.signal?.aborted) throw new PublicationAbortError();
+  };
+  const validatePublication = async (candidate: Readonly<Pick<ShipArtifactPayload, 'body' | 'mime'>> | null): Promise<void> => {
+    assertPublicationActive();
+    if (params.validateArtifact) {
+      const validation = await params.validateArtifact(candidate);
+      assertPublicationActive();
+      if (!validation.allowed) throw new Error(validation.reason ?? 'Critique artifact failed host validation.');
+    }
+  };
   let artifactPath: string | null = null;
   let shipEvent: Extract<PanelEvent, { type: 'ship' }> | null = null;
   // Buffered SHIP artifact body coming from the parser side-channel. The
@@ -479,22 +492,28 @@ export async function runOrchestrator(
         summary: ship.summary,
       };
 
-      // Persist the SHIP artifact body now that the row is being finalized.
-      // Failures here are logged but do not block finalization: the run
-      // still goes terminal so the orchestrator's caller can drive the chat
-      // run lifecycle, and the artifact endpoint will return 404 instead of
-      // pointing at a missing file. Phase 14 (artifact backfill) will fill
-      // in older rows that were created before this code path existed.
-      const captured = artifactBuffer.value;
+      // Successful validation precedes persistence. A failed write is a
+      // terminal delivery failure, so no ship event advertises missing bytes.
+      const captured = artifactBuffer.value === null ? null : Object.freeze({
+        body: artifactBuffer.value.body, mime: artifactBuffer.value.mime,
+      });
+      // Policy failures reach the outer terminal handler. Missing candidates
+      // are explicit evidence rather than an implicitly accepted delivery.
+      await validatePublication(captured);
       if (captured !== null) {
         try {
           await fs.mkdir(artifactDir, { recursive: true });
+          assertPublicationActive();
           const written = await writeShipArtifact(
             artifactDir,
             captured.body,
             captured.mime,
             { maxBytes: cfg.parserMaxBlockBytes },
           );
+          if (params.signal?.aborted) {
+            await fs.rm(written.absPath, { force: true });
+            throw new PublicationAbortError();
+          }
           artifactPath = written.absPath;
           // Pin artifactPath on the row BEFORE we emit critique.ship,
           // so the GET /artifact endpoint sees the path the moment a
@@ -504,13 +523,11 @@ export async function runOrchestrator(
           // after any client request triggered by critique.ship.
           updateCritiqueRun(db, runId, { artifactPath });
         } catch (err) {
+          if (err instanceof PublicationAbortError) throw err;
           // ArtifactTooLargeError / ArtifactEmptyError are agent-side
           // problems (the parser already validated non-empty, so empty
           // here means the agent shipped a CDATA-only body). Filesystem
-          // errors are environment problems. Either way, leaving
-          // artifactPath null makes the run still finalize and the ship
-          // event still emit; the artifact endpoint will 404 instead of
-          // claiming bytes that don't exist.
+          // errors are environment problems. Neither permits publication.
           if (
             err instanceof ArtifactTooLargeError
             || err instanceof ArtifactEmptyError
@@ -526,6 +543,7 @@ export async function runOrchestrator(
             );
           }
           artifactPath = null;
+          throw err;
         }
       } else {
         // SHIP arrived without an <ARTIFACT> side-channel payload. The
@@ -541,6 +559,7 @@ export async function runOrchestrator(
 
       // File is on disk, row knows about it. Now emit critique.ship so
       // SSE subscribers can fetch /artifact without racing the writer.
+      assertPublicationActive();
       collectedEvents.push(normalizedShip);
       bus.emit(panelEventToSse(normalizedShip));
     } else {
@@ -549,6 +568,8 @@ export async function runOrchestrator(
       killChild();
       const fallback = selectFallbackRound(completedRounds, cfg.fallbackPolicy);
       if (fallback !== null) {
+        // A closed round without a SHIP has no verified deliverable bytes.
+        await validatePublication(null);
         finalStatus = 'below_threshold';
         finalComposite = fallback.composite;
         // Emit a synthetic ship event.
@@ -582,24 +603,11 @@ export async function runOrchestrator(
     // Classify the error.
     if (err instanceof AbortError) {
       finalStatus = 'interrupted';
-      // Defect 7: ship best-so-far when at least one round completed.
+      // Preserve the best completed score without announcing unavailable bytes.
       const fallback = completedRounds.length > 0
         ? selectFallbackRound(completedRounds, cfg.fallbackPolicy)
         : null;
-      if (fallback !== null) {
-        finalComposite = fallback.composite;
-        const syntheticShip: Extract<PanelEvent, { type: 'ship' }> = {
-          type: 'ship',
-          runId,
-          round: fallback.n,
-          composite: fallback.composite,
-          status: 'interrupted',
-          artifactRef: { projectId, artifactId: params.artifactId },
-          summary: `Interrupted after round ${fallback.n}, best composite ${fallback.composite.toFixed(2)}`,
-        };
-        collectedEvents.push(syntheticShip);
-        bus.emit(panelEventToSse(syntheticShip));
-      }
+      if (fallback !== null) finalComposite = fallback.composite;
       const interruptedEvent: Extract<PanelEvent, { type: 'interrupted' }> = {
         type: 'interrupted',
         runId,
@@ -610,24 +618,11 @@ export async function runOrchestrator(
       bus.emit(panelEventToSse(interruptedEvent));
     } else if (err instanceof TimeoutError) {
       finalStatus = 'timed_out';
-      // Defect 7: ship best-so-far when at least one round completed.
+      // Preserve the best completed score without announcing unavailable bytes.
       const fallback = completedRounds.length > 0
         ? selectFallbackRound(completedRounds, cfg.fallbackPolicy)
         : null;
-      if (fallback !== null) {
-        finalComposite = fallback.composite;
-        const syntheticShip: Extract<PanelEvent, { type: 'ship' }> = {
-          type: 'ship',
-          runId,
-          round: fallback.n,
-          composite: fallback.composite,
-          status: 'timed_out',
-          artifactRef: { projectId, artifactId: params.artifactId },
-          summary: `Timed out after round ${fallback.n}, best composite ${fallback.composite.toFixed(2)}`,
-        };
-        collectedEvents.push(syntheticShip);
-        bus.emit(panelEventToSse(syntheticShip));
-      }
+      if (fallback !== null) finalComposite = fallback.composite;
       const failedEvent: Extract<PanelEvent, { type: 'failed' }> = {
         type: 'failed',
         runId,
@@ -649,26 +644,13 @@ export async function runOrchestrator(
       // is classified as 'interrupted' so the persisted critique row
       // reflects the actual cause (user/operator interruption) rather
       // than getting flushed through the no-SHIP fallback as
-      // 'below_threshold'. If at least one round closed cleanly, ship
-      // the best-so-far via selectFallbackRound, mirroring the abort path.
+      // 'below_threshold'. Keep the best score and round history without
+      // publishing an artifact that was never validated.
       finalStatus = 'interrupted';
       const fallback = completedRounds.length > 0
         ? selectFallbackRound(completedRounds, cfg.fallbackPolicy)
         : null;
-      if (fallback !== null) {
-        finalComposite = fallback.composite;
-        const syntheticShip: Extract<PanelEvent, { type: 'ship' }> = {
-          type: 'ship',
-          runId,
-          round: fallback.n,
-          composite: fallback.composite,
-          status: 'interrupted',
-          artifactRef: { projectId, artifactId: params.artifactId },
-          summary: `Child terminated by signal ${err.signal} after round ${fallback.n}, best composite ${fallback.composite.toFixed(2)}`,
-        };
-        collectedEvents.push(syntheticShip);
-        bus.emit(panelEventToSse(syntheticShip));
-      }
+      if (fallback !== null) finalComposite = fallback.composite;
       const interruptedEvent: Extract<PanelEvent, { type: 'interrupted' }> = {
         type: 'interrupted',
         runId,
@@ -817,6 +799,9 @@ class AbortError extends Error {
     this.name = 'AbortError';
   }
 }
+
+/** A canceled publication cannot announce an unvalidated synthetic artifact. */
+class PublicationAbortError extends AbortError {}
 
 class TimeoutError extends Error {
   constructor(

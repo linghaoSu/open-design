@@ -461,6 +461,7 @@ import { diagnoseClaudeCliFailure } from './claude-diagnostics.js';
 import { loadCritiqueConfigFromEnv } from './critique/config.js';
 import { reconcileStaleRuns } from './critique/persistence.js';
 import { runOrchestrator } from './critique/orchestrator.js';
+import { critiqueDesignPublicationInput } from './critique/design-publication.js';
 import { createRunRegistry } from './critique/run-registry.js';
 import { handleCritiqueInterrupt } from './critique/interrupt-handler.js';
 import { handleCritiqueArtifact } from './critique/artifact-handler.js';
@@ -841,6 +842,8 @@ import { registerDaemonRoutes } from './routes/daemon.js';
 import { registerGenuiRoutes } from './routes/genui.js';
 import { registerDesignSystemRoutes } from './routes/design-systems.js';
 import { registerDesignRuntimeRoutes } from './routes/design-runtime.js';
+import { createDesignGenerationStore } from './storage/design-generation-store.js';
+import { createDesignGenerationService } from './services/design-runtime/generation-execution.js';
 import { createDesignRuntimeStore, DesignRuntimeProjectNotFoundError } from './storage/design-runtime-store.js';
 import { decodeDesignRuntimeSource } from './services/design-runtime/source-text.js';
 import { createProjectDesignRuntimeService } from './services/design-runtime/project-service.js';
@@ -7523,6 +7526,7 @@ export async function startServer({
       readRunTelemetrySinkConfig(process.env, configuredAmrEnv()),
     ),
   );
+  let finalizeDesignGeneration = null;
   const design = {
     runs: createChatRunService({
       createSseResponse,
@@ -7547,6 +7551,7 @@ export async function startServer({
       onTerminal: createAmrTerminalReportFinalizer(amrTerminalReportOutbox),
       beforeFinish: (run, status) => {
         if (status !== 'failed' && status !== 'canceled') return;
+        finalizeDesignGeneration?.(run, status);
         try {
           reconcileStrategyTaskRunTerminal(db, { runId: run.id, status });
           const latestTask = getStrategyTaskExecutionByRunId(db, run.id);
@@ -8462,8 +8467,9 @@ export async function startServer({
         }
       : {}),
   });
+  const designRuntimeStore = createDesignRuntimeStore(db);
   const designRuntime = createProjectDesignRuntimeService({
-    store: createDesignRuntimeStore(db),
+    store: designRuntimeStore,
     observeTargetPackages: async (projectId, packageNames) => {
       const project = getProject(db, projectId);
       if (!project) throw new DesignRuntimeProjectNotFoundError();
@@ -8476,6 +8482,41 @@ export async function startServer({
       return decodeDesignRuntimeSource(source.buffer);
     },
   });
+  const generationProjectRoot = (projectId) => {
+    const project = getProject(db, projectId);
+    if (!project) throw new DesignRuntimeProjectNotFoundError();
+    return resolveProjectDir(PROJECTS_DIR, projectId, project.metadata);
+  };
+  const generationScope = (projectId, workspaceScope = pinRunWorkspaceScopeForProject(db, projectId)) => ({
+    workspaceId: workspaceScope?.workspaceId ?? null,
+    accountIdentity: velaWorkspaceDirectoryIdentity(undefined, configuredAmrEnv()),
+    projectRoot: generationProjectRoot(projectId),
+  });
+  const designGeneration = createDesignGenerationService({ state: designRuntimeStore, executions: createDesignGenerationStore(db),
+    root: generationProjectRoot, currentScope: (projectId) => generationScope(projectId),
+    observeTargetPackages: (projectId, names) => observeInstalledTargetPackages(generationProjectRoot(projectId), names) });
+  finalizeDesignGeneration = (run, status) => {
+    try {
+      const report = designGeneration.abort(run.id, status);
+      if (report) run.designGeneration = report;
+    } catch (error) {
+      // Invalid durable evidence already prevents acceptance. It must not also
+      // prevent the physical Run from persisting its failure or cancellation.
+      delete run.designGeneration;
+      console.error('[design-generation] terminal evidence unavailable', error);
+    }
+  };
+  const prepareDesignGeneration = async (meta) => {
+    if (typeof meta.projectId !== 'string' || !meta.projectId) return null;
+    const prepared = await designGeneration.prepare({ projectId: meta.projectId, conversationId: meta.conversationId ?? null,
+      scope: generationScope(meta.projectId, meta.workspaceScope) });
+    return { facts: { policy: prepared.policy, targets: prepared.targets }, claim: (run) => {
+      const execution = designGeneration.claim(run.id, prepared);
+      const peers = design.runs.list({ projectId: run.projectId, status: 'active' }).filter((other) => other.id !== run.id);
+      if (peers.length) designGeneration.markContended([run.id, ...peers.map((other) => other.id)]);
+      return execution;
+    } };
+  };
   registerDesignRuntimeRoutes(app, { designRuntime, authorizeProjectRequest });
   registerTerminalRoutes(app, {
     db,
@@ -9334,6 +9375,7 @@ export async function startServer({
   });
 
   const composeDaemonSystemPrompt = async ({
+    designGenerationFacts,
     agentId,
     projectId,
     skillId,
@@ -10027,6 +10069,7 @@ export async function startServer({
     // attribution — a second, hand-maintained copy of these inputs would drift
     // from the real ones and mislabel the telemetry it exists to explain.
     const defaultSystemPromptInputs = {
+      designGenerationFacts,
       agentId,
       skillBody,
       skillName,
@@ -10163,6 +10206,7 @@ export async function startServer({
       : undefined;
     const odNextStableRequestContext = odNextStrategyRecipe
       ? {
+          designGenerationFacts,
           agentId,
           streamFormat,
           executionProfile: executionProfileFromStreamFormat(streamFormat),
@@ -10531,6 +10575,50 @@ export async function startServer({
           : null;
       design.runs.persistState(run);
     }
+    let designExecution = null;
+    const designAuthority = typeof run.projectId === 'string' && run.projectId
+      ? { projectId: run.projectId, conversationId: run.conversationId ?? null, scope: generationScope(run.projectId, run.workspaceScope) } : null;
+    if (designAuthority) {
+      try {
+        designExecution = await designGeneration.start(run.id, designAuthority, strategyTaskAtStart?.runs[0]?.runId);
+        const peers = design.runs.list({ projectId: run.projectId, status: 'active' }).filter((other) => other.id !== run.id && designGeneration.forRun(other.id)?.id !== designExecution.id);
+        if (peers.length) designGeneration.markContended([run.id, ...peers.map((other) => other.id)]);
+        if (run.cancelRequested || TERMINAL_RUN_STATUSES.has(run.status)) return;
+      } catch (error) { return failRun('DESIGN_GENERATION_AUTHORITY_CONFLICT', error instanceof Error ? error.message : String(error)); }
+    }
+    let designPublicationEvidence = null;
+    const passDesignCompletionGate = async (external = {}) => {
+      if (!designAuthority || !designExecution) return true;
+      const canceled = () => run.cancelRequested || TERMINAL_RUN_STATUSES.has(run.status);
+      try {
+        if (external.externalSources || external.externalDiagnostics) {
+          if (designPublicationEvidence && JSON.stringify(designPublicationEvidence) !== JSON.stringify(external)) throw new Error('The immutable external publication evidence changed.');
+          designPublicationEvidence ??= structuredClone(external);
+        }
+        // Critique checks before writing, then again before physical success. Its
+        // virtual bytes must survive that await instead of becoming project-only input.
+        const publication = designPublicationEvidence ?? external;
+        const project = getProject(db, run.projectId);
+        const entry = await validateRunDeliverable({ projectsRoot: PROJECTS_DIR, projectId: run.projectId,
+          projectMetadata: project?.metadata, runStatus: 'succeeded', artifactCount: 1 });
+        if (canceled()) return false;
+        const report = await designGeneration.complete(run.id, designAuthority, {
+          production: strategyTaskAtStart ? strategyTaskAtStart.inputStage === 'production' || strategyTaskAtStart.route === 'direct_edit'
+            : false,
+          retainActive: !!strategyTaskAtStart && strategyTaskAtStart.inputStage !== 'production' && strategyTaskAtStart.route !== 'direct_edit',
+          ...publication, canonicalEntry: publication.externalSources?.[0]?.sourcePath ?? entry.entryFile, canceled,
+        });
+        run.designGeneration = report;
+        design.runs.persistState(run);
+        design.runs.emit(run, 'diagnostic', { type: 'design_generation', report });
+        if (canceled()) return false;
+        if (report.decision === 'blocked') {
+          return failRun(report.reasonCodes.includes('DESIGN_GENERATION_AUTHORITY_CONFLICT') ? 'DESIGN_GENERATION_AUTHORITY_CONFLICT' : 'DESIGN_GENERATION_VALIDATION_FAILED',
+            [...report.diagnostics, ...(report.validation?.diagnostics ?? [])].filter((issue) => issue.severity === 'error').map((issue) => `${issue.code}: ${issue.message}`).join('\n') || 'Design generation validation did not pass.'), false;
+        }
+        return report.decision !== 'canceled';
+      } catch (error) { failRun('DESIGN_GENERATION_AUTHORITY_CONFLICT', error instanceof Error ? error.message : String(error)); return false; }
+    };
     // Stash the original user prompt + per-turn config so the
     // langfuse-bridge report path can include them without reaching back
     // into chatBody across the createChatRunService boundary. Each field
@@ -10966,6 +11054,7 @@ export async function startServer({
           odNextStableContextPrompt: '',
         }
       : await composeDaemonSystemPrompt({
+        designGenerationFacts: designExecution ? { policy: designExecution.policy, targets: designExecution.targets } : undefined,
         agentId,
         projectId,
         skillId,
@@ -11086,6 +11175,12 @@ export async function startServer({
     // no-project runs (packaged daemons / service launches do not start
     // their working directory from the workspace root).
     const effectiveCwd = cwd ?? PROJECT_ROOT;
+    if (designAuthority) {
+      try {
+        designExecution = await designGeneration.captureBaseline(run.id, designAuthority);
+        if (run.cancelRequested || TERMINAL_RUN_STATUSES.has(run.status)) return;
+      } catch (error) { return failRun('DESIGN_GENERATION_AUTHORITY_CONFLICT', error instanceof Error ? error.message : String(error)); }
+    }
     // Baseline the project's artifact files before the agent runs, so the
     // run-finished handler can diff against them and report `artifact_count`
     // for ANY agent (not just claude_code). Only for real project runs: a
@@ -13915,6 +14010,10 @@ export async function startServer({
             child,
             childExitPromise,
             signal: critiqueAbort.signal,
+            validateArtifact: async (artifact) => ({
+              allowed: await passDesignCompletionGate(critiqueDesignPublicationInput(artifact)),
+              reason: 'Critique artifact did not pass the frozen design generation policy.',
+            }),
           });
           // Map the critique terminal status to the chat run lifecycle.
           // 'shipped' and 'below_threshold' both ran to a ship decision and
@@ -13926,7 +14025,7 @@ export async function startServer({
           if (run.cancelRequested) {
             finishStrategyAwarePhysicalRun('canceled', 1, null);
           } else if (succeeded) {
-            finishRun('succeeded', 0, null);
+            if (await passDesignCompletionGate()) finishRun('succeeded', 0, null);
           } else {
             finishStrategyAwarePhysicalRun('failed', 1, null);
           }
@@ -15623,6 +15722,7 @@ export async function startServer({
         publishNativeSessionRecoveryMetadata();
       }
       if (status === 'succeeded') {
+        let designCompletionChecked = false;
         if (strategyProtocol && !strategyProtocolResult) {
           strategyProtocolResult = strategyProtocol.finish();
           const tail = strategyProtocolResult.visibleText.slice(strategyVisibleEmitted.length);
@@ -15800,6 +15900,8 @@ export async function startServer({
           // host facts. Never let the stale continuation allocate a new Run or
           // mutate the already-terminal task after that boundary.
           if (run.cancelRequested || design.runs.isTerminal(run.status)) return;
+          if (!await passDesignCompletionGate()) return;
+          designCompletionChecked = true;
           let transition;
           try {
             transition = prepareAutomaticStrategyContinuation({
@@ -15895,6 +15997,7 @@ export async function startServer({
             };
           }
         }
+        if (!designCompletionChecked && !await passDesignCompletionGate()) return;
       }
       const retried = finishWithRetryDecision(status, code, signal);
       if (!retried && pendingStrategyContinuation) {
@@ -16198,7 +16301,7 @@ export async function startServer({
     http: httpDeps,
     paths: { BUNDLED_PLUGINS_DIR, PROJECTS_DIR, RUNTIME_DATA_DIR },
     agents: { detectAgents, getAgentDef },
-    chat: { prepareOdNextInitialPromptBundle, startChatRun },
+    chat: { prepareDesignGeneration, prepareOdNextInitialPromptBundle, startChatRun },
     lifecycle: { isDaemonShuttingDown: () => daemonShuttingDown },
     plugins: {
       connectorService,
@@ -16722,7 +16825,7 @@ export async function startServer({
     validation: validationDeps,
     finalize: finalizeDeps,
     handoff: handoffDeps,
-    chat: { prepareOdNextInitialPromptBundle, startChatRun },
+    chat: { prepareDesignGeneration, prepareOdNextInitialPromptBundle, startChatRun },
     messages: {
       pinAssistantMessageOnRunCreate,
       reconcileAssistantMessageOnRunEnd,
@@ -16753,7 +16856,7 @@ export async function startServer({
     http: httpDeps,
     authorizeProjectRequest,
     paths: pathDeps,
-    chat: { prepareOdNextInitialPromptBundle, startChatRun },
+    chat: { prepareDesignGeneration, prepareOdNextInitialPromptBundle, startChatRun },
     agents: agentDeps,
     critique: critiqueDeps,
     appConfig: { readAppConfig },

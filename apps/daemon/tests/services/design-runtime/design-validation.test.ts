@@ -82,12 +82,30 @@ describe('structural design validation', () => {
   });
 
   it.each([
-    'background-image:linear-gradient(red,blue)', 'border-top:1px solid red', 'border-start-start-radius:12px', 'border-inline-color:red', 'c\\6flor:red',
+    'background-image:linear-gradient(red,blue)', 'border-top:1px solid red', 'border-start-start-radius:12px', 'border-inline-color:red', 'c\\6flor:red', 'inset-inline-start:12px', 'column-rule-color:red',
+    'inset-block-end:12px', 'scroll-margin-inline-start:12px', 'scroll-padding-block:12px', 'stop-color:red', 'text-emphasis-color:red', '-webkit-text-fill-color:red', 'column-rule:1px solid red',
   ])('does not certify protected CSS escape %s', (declaration) => {
     const request = validationFixture(); request.sources[1]!.sourceText = `main{${declaration}}`;
     const result = validateStructuredDesign(request);
     expect(result.strictReady).toBe(false);
-    expect(result.diagnostics.some((issue) => ['ODDS6002', 'ODDS2002', 'ODDS2004'].includes(issue.code))).toBe(true);
+    expect(result.diagnostics.some((issue) => ['ODDS6002', 'ODDS2002', 'ODDS2003', 'ODDS2004'].includes(issue.code))).toBe(true);
+  });
+  it('requires the actual default Vue SFC export rather than accepting an arbitrary selected name', () => {
+    const request = validationFixture('vue'); request.outputs[0]!.exportName = 'MissingExport';
+    expect(validateStructuredDesign(request)).toMatchObject({ strictReady: false, coverage: { source: false } });
+  });
+  it('matches Vue null interpolation to empty text instead of the JavaScript string null', () => {
+    const request = validationFixture('vue');
+    const source = request.sources[0]!;
+    source.sourceText = source.sourceText.replace('{{ "Resource Alpha" }}', '{{null}}');
+    const root = request.snapshot.document!.screens[0]!.children[0]!;
+    if (root.type !== 'component') throw new Error('root');
+    const text = root.slots!.body!.find((node) => node.type === 'text');
+    if (!text || text.type !== 'text') throw new Error('text');
+    text.text = 'null';
+    expect(validateStructuredDesign(request)).toMatchObject({ strictReady: false, coverage: { conformance: false } });
+    text.text = '';
+    expect(validateStructuredDesign(request).strictReady).toBe(true);
   });
 
   it.each(['react', 'vue'] as const)('blocks missing import bytes and tampered exact %s library bytes', (framework) => {

@@ -1,3 +1,4 @@
+import type { DesignGenerationPromptFacts } from '@open-design/contracts';
 import type { Express, Request, Response } from 'express';
 import type Database from 'better-sqlite3';
 import fs from 'node:fs';
@@ -348,6 +349,7 @@ function seededUserMessageTurnMetadataFields(
 
 
 interface RunCreateMeta extends InternalRunCreateInput, JsonRecord {
+  designGenerationFacts?: DesignGenerationPromptFacts;
   projectId?: string;
   conversationId?: string;
   userMessageId?: string;
@@ -573,6 +575,7 @@ export interface RegisterRunRoutesDeps {
   };
   chat: {
     startChatRun: (meta: RunCreateMeta, run: ChatRun) => Promise<unknown>;
+    prepareDesignGeneration?: (meta: RunCreateMeta) => Promise<{ facts: DesignGenerationPromptFacts; claim(run: ChatRun): void } | null>;
     prepareOdNextInitialPromptBundle?: (input: {
       meta: RunCreateMeta;
       frozenSkillPackage: FrozenSkillPackageV1;
@@ -2582,6 +2585,15 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       && !await fallbackAutomaticBeforeStart(automaticSnapshotPreparationError)
     ) return;
     let frozenSkillPackage: FrozenSkillPackageV1 | undefined;
+    let preparedDesignGeneration: Awaited<ReturnType<NonNullable<RegisterRunRoutesDeps['chat']['prepareDesignGeneration']>>> = null;
+    if (!clarificationContinuation && !idempotentStrategyRetry && ctx.chat.prepareDesignGeneration) {
+      try {
+        preparedDesignGeneration = await ctx.chat.prepareDesignGeneration(meta);
+        if (preparedDesignGeneration) meta.designGenerationFacts = preparedDesignGeneration.facts;
+      } catch (error) {
+        return sendApiError(res, 409, 'DESIGN_GENERATION_AUTHORITY_CONFLICT', error instanceof Error ? error.message : String(error));
+      }
+    }
     if (
       !clarificationContinuation
       && !idempotentStrategyRetry
@@ -2726,9 +2738,10 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     try {
       preparedRun = internalRuns.prepare({
         meta,
-        ...((runUserSeed || clarificationTask || strategyRolloutDecision?.effectiveMode === 'active')
+        ...((preparedDesignGeneration || runUserSeed || clarificationTask || strategyRolloutDecision?.effectiveMode === 'active')
           ? {
               beforeClaimCommit: (candidate) => {
+                preparedDesignGeneration?.claim(candidate);
                 if (!clarificationContinuation && createdTaskInputSnapshot) {
                   candidate.odNextTaskInputSnapshot = createdTaskInputSnapshot;
                   // `createOrReuse` persisted the optimistic Run before the
@@ -2827,7 +2840,7 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         if (!await fallbackAutomaticBeforeStart(error.preparationCause)) return;
         preparedRun = internalRuns.prepare({
           meta,
-          ...(runUserSeed ? { beforeClaimCommit: () => seedRunUserMessage() } : {}),
+          ...((runUserSeed || preparedDesignGeneration) ? { beforeClaimCommit: (candidate) => { preparedDesignGeneration?.claim(candidate); seedRunUserMessage(); } } : {}),
           resume: {
             requested: requestBody.resume === true,
             canResume: (candidate) =>

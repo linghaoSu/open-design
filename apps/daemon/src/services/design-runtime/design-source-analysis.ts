@@ -13,6 +13,7 @@ export interface DesignSourceAnalysis {
   outputs: Array<{ output: DesignValidationOutput; nodes: AnalyzedDesignNode[] }>;
   diagnostics: ValidationDiagnostic[]; complete: boolean; importsComplete: boolean;
   visited: string[]; styles: Array<{ sourcePath: string; content: string; inline: boolean }>;
+  audits: AnalyzedDesignNode[][];
   implementations: Array<{ codeId: string; props: Record<string, JsonScalar>; nodes: AnalyzedDesignNode[] }>;
 }
 export interface SourceAnalysisContext {
@@ -21,6 +22,8 @@ export interface SourceAnalysisContext {
   /** Byte values are supplied only after the caller re-verifies package/source evidence. */
   provenCodeSources: ReadonlyMap<string, string>;
   frozenSources: ReadonlyMap<string, string>;
+  /** Internal host inventory paths; omitted public validation audits every supplied source. */
+  auditPaths?: readonly string[];
 }
 interface Imported { path: string; exported: string; code?: CodeComponentDefinition; runtime?: boolean }
 interface Module { source: DesignValidationSource; program: t.Program; imports: Map<string, Imported>; exports: Map<string, t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression> }
@@ -29,8 +32,8 @@ const canonical = (value: unknown): string => JSON.stringify(value);
 
 /** A closed static subset. Unknown source never masquerades as an empty, valid tree. */
 export function analyzeDesignSources(context: SourceAnalysisContext, outputs: readonly DesignValidationOutput[]): DesignSourceAnalysis {
-  const result: DesignSourceAnalysis = { outputs: [], diagnostics: [], complete: true, importsComplete: true, visited: [], styles: [], implementations: [] };
-  const implementationIds = new Set<string>();
+  const result: DesignSourceAnalysis = { outputs: [], diagnostics: [], complete: true, importsComplete: true, visited: [], styles: [], implementations: [], audits: [] };
+  const implementationIds = new Set<string>(); const renderedJsx = new WeakSet<t.Node>(); const renderedFunctions = new Set<string>(); const renderedVue = new Set<string>();
   const environments: Array<Map<string, JsonScalar | Record<string, JsonScalar>>> = [];
   const sources = new Map(context.sources.map((source) => [source.sourcePath, source]));
   // Registered project source evidence is an explicit byte input too, not an exemption.
@@ -147,6 +150,7 @@ export function analyzeDesignSources(context: SourceAnalysisContext, outputs: re
   }
   function jsx(module: Module, node: t.Node | null | undefined): AnalyzedDesignNode[] {
     const at = location(module.source.sourcePath, node);
+    if (node) renderedJsx.add(node);
     if (!node || node.type === 'JSXEmptyExpression') return [];
     if (node.type === 'JSXText') { const text = node.value.replace(/\s+/g, ' '); return text.trim() ? [{ type: 'text', text, location: at }] : []; }
     if (node.type === 'StringLiteral' || node.type === 'NumericLiteral') return [{ type: 'text', text: String(node.value), location: at }];
@@ -200,13 +204,21 @@ export function analyzeDesignSources(context: SourceAnalysisContext, outputs: re
     auditImplementation(resultNode);
     return [resultNode];
   }
+  function auditUnrenderedJsx(module: Module, node: t.Node): void {
+    if (node.type.startsWith('TS')) return;
+    if ((node.type === 'JSXElement' || node.type === 'JSXFragment') && !renderedJsx.has(node)) {
+      fail('ODDS6002', 'Additional JSX outside the proven call tree requires explicit source conformance.', location(module.source.sourcePath, node));
+      result.audits.push(jsx(module, node)); return;
+    }
+    for (const value of Object.values(node)) for (const child of Array.isArray(value) ? value : [value]) if (child && typeof child === 'object' && 'type' in child && typeof child.type === 'string') auditUnrenderedJsx(module, child as t.Node);
+  }
   function renderFunction(module: Module | undefined, exported: string, suppliedProps?: Record<string, JsonScalar>): AnalyzedDesignNode[] {
     if (!module) return [];
     const key = canonical([module.source.sourcePath, exported]);
     if (activeCalls.has(key) || activeCalls.size > 100) { fail('ODDS6002', 'Cyclic or excessive source composition cannot be certified.', location(module.source.sourcePath)); return []; }
     const fn = module.exports.get(exported);
     if (!fn) { fail('ODDS6003', `Selected export ${exported} is not a static component function.`, location(module.source.sourcePath)); return []; }
-    activeCalls.add(key);
+    activeCalls.add(key); renderedFunctions.add(key);
     const environment = new Map<string, JsonScalar | Record<string, JsonScalar>>();
     if (fn.async || fn.generator || fn.params.length && (!suppliedProps || fn.params.length !== 1)) fail('ODDS6002', 'Functions require synchronous static rendering and an explicitly materialized production props input.', location(module.source.sourcePath, fn));
     const parameter = suppliedProps ? fn.params[0] : undefined;
@@ -224,7 +236,12 @@ export function analyzeDesignSources(context: SourceAnalysisContext, outputs: re
     environments.push(environment);
     let returned: t.Node | null | undefined = fn.body;
     if (fn.body.type === 'BlockStatement') {
-      if (fn.body.body.length !== 1 || fn.body.body[0]?.type !== 'ReturnStatement') { fail('ODDS6002', 'Screen bodies must contain one static return; control flow and local mutation are unsupported.', location(module.source.sourcePath, fn)); returned = undefined; }
+      if (fn.body.body.length !== 1 || fn.body.body[0]?.type !== 'ReturnStatement') {
+        fail('ODDS6002', 'Screen bodies must contain one static return; control flow and local mutation are unsupported.', location(module.source.sourcePath, fn));
+        // A called helper can be unchanged since the run baseline. Still measure its
+        // visible literals without claiming which unsupported branch executes.
+        auditUnrenderedJsx(module, fn.body); returned = undefined;
+      }
       else returned = fn.body.body[0].argument;
     }
     const nodes = jsx(module, returned); environments.pop(); activeCalls.delete(key); return nodes;
@@ -246,7 +263,7 @@ export function analyzeDesignSources(context: SourceAnalysisContext, outputs: re
       if (node.type === 2) return typeof node.content === 'string' && node.content.trim() ? [{ type: 'text' as const, text: node.content, location: at }] : [];
       if (node.type === 3) return [];
       if (node.type === 5 && typeof node.content === 'object' && typeof node.content.content === 'string') {
-        try { const value = scalar(parseExpression(node.content.content, { plugins: ['typescript'] }), at); return value === undefined ? [] : [{ type: 'text' as const, text: String(value), location: at }]; }
+        try { const value = scalar(parseExpression(node.content.content, { plugins: ['typescript'] }), at); return value === undefined ? [] : [{ type: 'text' as const, text: value === null ? '' : String(value), location: at }]; }
         catch { fail('ODDS6001', 'Vue text expression cannot be parsed.', at); return []; }
       }
       if (node.type !== 1 || !node.tag) { fail('ODDS6002', 'Dynamic Vue text/control flow is outside the static template grammar.', at); return []; }
@@ -288,10 +305,11 @@ export function analyzeDesignSources(context: SourceAnalysisContext, outputs: re
   }
   const vueTemplates = new Map<string, VueNode[]>(); const htmlTrees = new Map<string, AnalyzedDesignNode[]>();
   function renderVue(path: string, props?: Record<string, JsonScalar>): AnalyzedDesignNode[] {
+    renderedVue.add(path);
     const module = modules.get(path); if (!module) return [];
     const key = canonical([path, 'default']);
     if (activeCalls.has(key)) { fail('ODDS6002', 'Cyclic Vue component implementation.', location(path)); return []; }
-    activeCalls.add(key);
+    activeCalls.add(key); renderedFunctions.add(key);
     const environment = new Map<string, JsonScalar | Record<string, JsonScalar>>(Object.entries(props ?? {}));
     if (props) for (const statement of module.program.body) if (statement.type === 'VariableDeclaration') for (const declaration of statement.declarations) if (declaration.id.type === 'Identifier') environment.set(declaration.id.name, props);
     environments.push(environment); const nodes = vueNodes(module, vueTemplates.get(path) ?? []); environments.pop(); activeCalls.delete(key); return nodes;
@@ -350,15 +368,34 @@ export function analyzeDesignSources(context: SourceAnalysisContext, outputs: re
   }
   for (const output of [...outputs].sort((a, b) => canonical(a).localeCompare(canonical(b), 'en'))) {
     visitFile(output.sourcePath); const source = sources.get(output.sourcePath);
+    if (source?.language === 'vue' && output.exportName !== undefined && output.exportName !== 'default') fail('ODDS6002', 'A Vue SFC output must select its default export.', location(output.sourcePath));
     const nodes = source?.language === 'tsx' ? renderFunction(modules.get(output.sourcePath), output.exportName ?? 'default')
       : source?.language === 'vue' ? renderVue(output.sourcePath) : source?.language === 'html' ? htmlTrees.get(output.sourcePath) ?? [] : [];
     if (!source || source.language === 'css') fail('ODDS6002', 'A screen output must name React, Vue or HTML source.', location(output.sourcePath));
     result.outputs.push({ output, nodes });
   }
-  // Included files outside the graph cannot silently hide additional application behavior.
-  for (const source of context.sources) if (!result.visited.includes(source.sourcePath) && !context.frozenSources.has(source.sourcePath)) {
-    fail('ODDS6003', `Supplied application source ${source.sourcePath} is outside the selected entry graph.`, location(source.sourcePath));
-    visitFile(source.sourcePath);
+  // Audit every daemon-observed changed file, including unselected functions in a selected module.
+  const auditPaths = context.auditPaths ?? context.sources.map((source) => source.sourcePath);
+  for (const path of auditPaths) {
+    const source = sources.get(path);
+    if (!source) { fail('ODDS6003', 'An observed application source is missing from the byte snapshot.', location(path)); continue; }
+    if (context.frozenSources.get(path) === source.sourceText) continue;
+    const wasVisited = result.visited.includes(path);
+    if (!wasVisited) {
+      fail('ODDS6003', `Supplied application source ${path} is outside the selected entry graph.`, location(path));
+      visitFile(path);
+    }
+    if (source.language === 'tsx') {
+      const module = modules.get(path);
+      for (const name of module?.exports.keys() ?? []) if (!renderedFunctions.has(canonical([path, name]))) {
+        fail('ODDS6003', `Function ${name} is outside the selected production call graph.`, location(path));
+        result.audits.push(renderFunction(module, name));
+      }
+      // Unknown branches/initializers still expose their known literal controls and styles.
+      // They remain incomplete; this walk never claims to choose an executed branch.
+      if (module) auditUnrenderedJsx(module, module.program);
+    } else if (source.language === 'vue' && !renderedVue.has(path)) result.audits.push(renderVue(path));
+    else if (source.language === 'html' && !wasVisited) result.audits.push(htmlTrees.get(path) ?? []);
   }
   return result;
 }

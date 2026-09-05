@@ -1,6 +1,8 @@
 import type { JsonValue } from './common.js';
 
 export const API_ERROR_CODES = [
+  'DESIGN_GENERATION_VALIDATION_FAILED',
+  'DESIGN_GENERATION_AUTHORITY_CONFLICT',
   // Generic HTTP/API failures.
   'BAD_REQUEST',
   'UNAUTHORIZED',

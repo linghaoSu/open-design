@@ -70,6 +70,7 @@ type RunStatus = {
   endedWithUnfinishedWork?: boolean;
   error?: string | null;
   errorCode?: string | null;
+  designGeneration?: import('@open-design/contracts').DesignGenerationReport;
   strategyTask?: {
     taskExecutionId: string;
     inputStage: string;
@@ -1710,6 +1711,29 @@ describe('OD Next automatic production through the real server', () => {
     // it captures, so three physical Runs settle well past the shared default.
   }, 90_000);
 
+  it('retains frozen design authority across actual planning edits and automatic production', async () => {
+    const fixture = await createFixture('repair');
+    await writeFile(fixture.logPath + '.generation-simple', 'enabled');
+    queueFixtureIds(fixture);
+    const created = await postRun(started!.url, createRunRequest(fixture, 'Build the operator prototype.'));
+    const terminal = await waitForTask(fixture.taskExecutionId, 'completed');
+    expect(terminal.runs.map((mapping) => mapping.inputStage)).toEqual(['request', 'production']);
+    const statuses = await Promise.all(terminal.runs.map((mapping) => getRun(started!.url, mapping.runId)));
+    expect(statuses.map((run) => run.status)).toEqual(['succeeded', 'succeeded']);
+    expect(statuses.map((run) => run.designGeneration?.decision)).toEqual(['advisory', 'advisory']);
+    expect(new Set(statuses.map((run) => run.designGeneration?.executionId)).size).toBe(1);
+    expect(new Set(statuses.map((run) => run.designGeneration?.policyDigest)).size).toBe(1);
+    expect(new Set(statuses.map((run) => run.designGeneration?.inventory.baselineDigest)).size).toBe(1);
+    expect(statuses[1]?.designGeneration?.inventory.changed).toEqual(expect.arrayContaining(['planning.html', 'index.html']));
+    const invocations = await readProjectInvocations(fixture.logPath, fixture.projectId);
+    expect(invocations).toHaveLength(2);
+    expect(invocations[0]?.stdin).toContain('Host design generation policy');
+    const firstBundle = parseOdNextPromptBundleV2(invocations[0]!.stdin);
+    expect(firstBundle).toBeTruthy();
+    const rows = database().prepare('SELECT execution_id FROM design_generation_runs WHERE run_id IN (?, ?)').all(created.runId, terminal.latestRunId) as Array<{ execution_id: string }>;
+    expect(rows).toHaveLength(2); expect(rows[0]?.execution_id).toBe(rows[1]?.execution_id);
+  }, 90_000);
+
   it('runs parsed plan -> serialization repair -> production after each source end and remains exactly-once across restart', async () => {
     const fixture = await createFixture('repair');
     const sourcePdfAttachment = path.join(
@@ -3008,6 +3032,9 @@ function finish() {
     fs.writeFileSync(path.join(process.cwd(), 'index.html'), '<!doctype html><title>Production</title>');
     staleTodoList = true;
     text = ${JSON.stringify(production)};
+  } else if (fs.existsSync(logPath + '.generation-simple')) {
+    fs.writeFileSync(path.join(process.cwd(), 'planning.html'), '<!doctype html><title>Planning artifact</title>');
+    text = ${JSON.stringify([machineBlock('open-design-plan-contract', plan), machineBlock('open-design-runtime-state', runtimeState({ outcome: 'plan_ready' }))].join('\n'))};
   } else {
     text = ${JSON.stringify(initialRepair)};
   }

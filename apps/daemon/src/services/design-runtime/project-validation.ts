@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import {
-  codeImportPackageName, ProjectDesignRuntimeValidationSettingsRequestSchema, ProjectDesignRuntimeValidateArtifactsRequestSchema,
+  ProjectDesignRuntimeValidationSettingsRequestSchema, ProjectDesignRuntimeValidateArtifactsRequestSchema,
   StructuredDesignValidationResultSchema, type ProjectDesignRuntimeValidationSettingsRequest,
   type ProjectDesignRuntimeValidationSettingsResponse, type ProjectDesignRuntimeValidateArtifactsRequest,
   type ProjectDesignRuntimeValidateArtifactsResponse, type ProjectDesignRuntimeState, type HandoffTargetPackage,
@@ -9,7 +9,7 @@ import {
 import { DesignRuntimeRevisionConflictError, type DesignRuntimeStore } from '../../storage/design-runtime-store.js';
 import { resolveLockedDesignSystemsSync } from './design-system-version.js';
 import { validateStructuredDesign } from './design-validation.js';
-import { effectiveProjectCodeIndex, readProjectCodeEvidence } from './project-code.js';
+import { collectProjectValidationFacts } from './project-validation-facts.js';
 
 interface Deps {
   store: DesignRuntimeStore;
@@ -53,36 +53,10 @@ export function createProjectValidationService({ store, readSource, observeTarge
     async validateArtifacts(projectId: string, input: ProjectDesignRuntimeValidateArtifactsRequest): Promise<ProjectDesignRuntimeValidateArtifactsResponse> {
       const request = ProjectDesignRuntimeValidateArtifactsRequestSchema.parse(input);
       const state = atRevision(projectId, request.expectedRevision);
-      const resolved = resolve(projectId, state);
-      const versions = state.lock.dependencies.flatMap((entry) => {
-        const value = store.readVersion(projectId, entry.designSystemId, entry.version); return value ? [value] : [];
-      });
-      const frozen = resolved.ok ? resolved.versions[0]?.package : undefined;
-      const files = new Map<string, Promise<string>>();
-      const cachedRead = (path: string) => {
-        let read = files.get(path);
-        if (!read) { read = readSource(projectId, path); files.set(path, read); }
-        return read;
-      };
-      const failures: ValidationDiagnostic[] = [];
-      const selected = request.sources.map(async (source): Promise<DesignValidationSource[]> => {
-        try { return [{ ...source, sourceText: await cachedRead(source.sourcePath) }]; }
-        catch { failures.push({ schemaVersion: 1, code: 'ODDS6003', severity: state.validationSettings.mode === 'strict' ? 'error' : 'warning', message: 'A selected project source file could not be read.', location: { sourcePath: source.sourcePath, line: 1, column: 1 } }); return []; }
-      });
-      const allCodes = effectiveProjectCodeIndex(state);
-      // Unlocked compiled code requires current project bytes too; only verified frozen code is exempt.
-      const projectCodes = { ...allCodes, components: allCodes.components.filter((code) => !frozen?.codeIndex.components.some((entry) => entry.id === code.id)) };
-      const names = [...new Set(allCodes.components.flatMap((code) => { const name = code.packageName ? codeImportPackageName(code.packageName) : null; return name ? [name] : []; }))].sort();
-      const [sources, projectSources, targetPackages] = await Promise.all([
-        Promise.all(selected).then((values) => values.flat()), readProjectCodeEvidence(projectCodes, cachedRead),
-        observeTargetPackages(projectId, names).catch(() => names.map((name) => ({ name, installation: { status: 'unknown' as const } }))),
-      ]);
+      const { request: facts, failures } = await collectProjectValidationFacts({ store, projectId, state, sources: request.sources, outputs: request.outputs,
+        readSource: (path) => readSource(projectId, path), observeTargetPackages: (names) => observeTargetPackages(projectId, names) });
       atRevision(projectId, request.expectedRevision);
-      const result = validateStructuredDesign({ schemaVersion: 1, projectId, projectRevision: state.revision, settings: state.validationSettings,
-        snapshot: { registry: frozen?.registry ?? state.registry, baseCodeIndex: frozen?.codeIndex ?? state.codeIndex,
-          projectCodeIndex: state.projectCodeIndex, bindings: state.bindings, projectComponents: state.projectComponents,
-          document: state.document, tokens: frozen?.tokens ?? { schemaVersion: 1, id: state.registry?.id ?? projectId, tokens: [] },
-          dependencies: state.dependencies, lock: state.lock, versions, projectSources, targetPackages }, sources, outputs: request.outputs });
+      const result = validateStructuredDesign(facts);
       if (!failures.length) return { revision: state.revision, result };
       failures.sort((left, right) => left.location!.sourcePath < right.location!.sourcePath ? -1 : 1);
       const diagnostics = [...result.diagnostics, ...failures];

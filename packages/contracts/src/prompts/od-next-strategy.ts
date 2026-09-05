@@ -1,3 +1,4 @@
+import { renderDesignGenerationDirective, type DesignGenerationPromptFacts } from './design-generation.js';
 import {
   OD_NEXT_PLAN_CONTRACT_BLOCK,
   OD_NEXT_PLAN_CONTRACT_SCHEMA,
@@ -70,6 +71,7 @@ export interface OdNextStrategyRequestRecipeV2 {
  * legacy quality tails that the versioned strategy does not own.
  */
 export interface OdNextStrategyStableRequestContextV2 {
+  designGenerationFacts?: DesignGenerationPromptFacts | undefined;
   agentId?: string | null | undefined;
   sessionMode?: ChatSessionMode | undefined;
   locale?: string | undefined;
@@ -748,7 +750,8 @@ export function renderOdNextRuntimeFactsV2(
   context: OdNextStrategyStableRequestContextV2 = {},
 ): string {
   const planningFacts = input.planningFacts;
-  if (!planningFacts) return '';
+  const generation = renderDesignGenerationDirective(context.designGenerationFacts);
+  if (!planningFacts) return generation;
   if (!SHA256_HEX.test(planningFacts.capabilitySnapshotHash)) {
     throw new TypeError('OD Next planning capabilitySnapshotHash must be 64 lowercase hex characters.');
   }
@@ -767,7 +770,7 @@ ${stableJson({
       ? [...planningFacts.outputKinds]
       : ['artifact'],
     nativeChildLifecycleVerified: planningFacts.nativeChildLifecycleVerified,
-  })}`;
+  })}${generation ? `\n\n${generation}` : ''}`;
 }
 
 /** Legacy markdown wrapper around the output contract and its runtime facts. */

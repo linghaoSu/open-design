@@ -92,6 +92,7 @@ to the **host**, not to either strategy — if a strategy is retired, these stay
 | `id="deck-stage"` | `srcdoc.ts:3145` `isFrameworkDeck` → stage style fix, disables click-nav | ✅ | ✅ |
 | `@media print` block | Share → PDF multi-page stitching | ✅ | ✅ |
 | `<question-form>` | `AssistantMessage.tsx` → `QuestionFormView`; `runAskedUserQuestion` analytics | ✅ `discovery.ts` | ✅ `od-next-strategy.ts:434` |
+| Frozen structured design policy | Daemon generation completion validates current source, semantic targets and exact bindings | ✅ shared `renderDesignGenerationDirective` | ✅ shared directive in runtime facts and the initial frozen bundle |
 | `.od-frames/` device shells | prototype device frames | ❌ | ✅ OD Next only |
 
 Two things to read off this table.
@@ -117,6 +118,25 @@ Next content has two possible homes — the plugin's markdown assets and the
 TypeScript in `od-next-strategy.ts`. The deck contract lives in the TypeScript,
 not in `ppt.md`. Check both before concluding a contract is absent on that
 side.
+
+Structured design generation uses one text owner:
+`packages/contracts/src/prompts/design-generation.ts`. The daemon captures saved
+mode, effective constraints and the exact dependency lock before producing the
+initial prompt bundle. These are host facts; request bodies cannot supply a weaker
+policy. Source and semantic validation enforce the policy at completion.
+
+| Generation path | How the shared policy reaches the model |
+| --- | --- |
+| Daemon classic and slim | `composeDaemonSystemPrompt` forwards execution facts to `composeSystemPrompt`, which appends the shared directive |
+| Contracts API/BYOK mirror | Contracts `composeSystemPrompt` consumes the same renderer |
+| OD Next composer, including its early return | `designGenerationFacts` flows into the stable runtime context and `renderOdNextRuntimeFactsV2` |
+| Actual initial frozen OD Next bundle | Run creation prepares host facts before `prepareOdNextInitialPromptBundle`; the bundle service forwards them to the composer |
+| Later physical stages of the same task | The daemon reuses the durable policy and original pre-agent source baseline |
+
+`apps/daemon/tests/prompts/design-generation.test.ts` covers the composer variants.
+The real-server tests additionally check captured child stdin and the frozen bundle,
+so a bypass around the ordinary composer cannot silently omit this host contract.
+No plugin markdown asset carries a second copy of the directive.
 
 ## Worked example: #7568, then #7651
 

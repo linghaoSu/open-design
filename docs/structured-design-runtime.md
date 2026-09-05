@@ -7,8 +7,8 @@ components, inspect affected screens, and explicitly publish shared revisions.
 Open **Design runtime** from the project file workspace's tab
 bar, select source files and their framework/exports, then choose **Compile registry**.
 The same operations are available through `od design-runtime` and the project HTTP
-API. Existing design-system discovery, generation, and rendering retain their
-current behavior.
+API. Existing design-system discovery remains available alongside these structured
+registries and exact project locks.
 
 The [active delivery plan](../specs/current/structured-design-runtime.md) tracks
 acceptance and the remaining generation and visual preview work.
@@ -35,7 +35,8 @@ acceptance and the remaining generation and visual preview work.
   and `apps/web/src/providers/registry.ts` consumes the daemon HTTP boundary.
 - `apps/daemon/src/prompts/` and `packages/contracts/src/prompts/` compose legacy
   and API/BYOK prompts; OD Next takes an independent path documented in
-  `docs/prompt-composition.md`. This milestone changes none of those paths.
+  `docs/prompt-composition.md`. The structured generation policy uses one shared
+  host directive across all of those paths.
 - Contracts already depend on Zod. The daemon already depends on
   `@babel/parser`, including TypeScript/JSX parsing support.
 
@@ -423,8 +424,22 @@ by passing a weaker mode. Structure shows the effective mode as a read-only valu
 reads their actual bytes, the saved mode, exact package and installed dependency
 observations; callers cannot supply replacement evidence. A read does not increment
 the project revision. Unsupported source remains incomplete and cannot certify Strict.
-These explicit validation operations are implemented; automatic generation completion
-and bounded repair remain tracked separately in the active plan.
+Project generation freezes saved mode, effective constraints and the exact lock
+before composing the initial prompt. The daemon captures a bounded source baseline
+before the agent runs, then validates actual changed UI/CSS files at completion,
+including files outside declared outputs. Current semantic definitions and targets
+can be authored during generation; final validation checks them together and rejects
+concurrent changes. Unknown source coverage cannot certify Strict delivery.
+
+Explore findings remain advisory. Guided requires its configured error policies;
+Strict additionally requires complete semantic/source conformance and binding proof.
+Changing saved policy, account or workspace while a run is active invalidates its
+authority. A question without source or semantic changes does not certify an artifact.
+Later stages of the same logical task retain the original policy and source baseline.
+Critique's external artifact bytes use the same validator before publication and are
+checked again before physical success. Canonical reports are included in run status
+and SSE diagnostics. Bounded automatic repair and its final UI/CLI reporting remain
+tracked in the active plan.
 
 Eight maintained React/Vue page fixtures measure reuse, unknown components/tokens,
 raw styles, duplicate structures and evaluated repair steps. Each failing fixture

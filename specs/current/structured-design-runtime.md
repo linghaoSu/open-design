@@ -301,6 +301,29 @@ reopened them and verified the same daemon declarations. It passed in 33.8 secon
 inspected. Generation execution and repair remain separate acceptance tasks.
 Repository guard and workspace/root-script typechecks passed at this checkpoint.
 
+Generation completion enforcement is accepted as the first integration slice.
+The host freezes saved policy and exact dependency facts before the initial OD Next
+bundle, then captures one bounded source baseline after host resource staging and
+before child execution. Changed files and unselected JSX participate in source
+auditing independently of output declarations. Current IR and target declarations
+may be authored during the run; changes during final validation invalidate its proof.
+Explore remains advisory, including concurrent independent conversations with
+incomplete attribution. Guided/Strict block invalid or incomplete deliveries.
+Question-only runs remain non-applicable, while actual Full Plan planning edits and
+production share one durable policy and baseline. All legacy/BYOK/OD Next prompt
+paths consume one host directive, documented in `docs/prompt-composition.md`.
+
+Critique validates its exact external artifact bytes before publication and reproves
+authority, source, state and installed packages after asynchronous persistence.
+Missing candidates, unsupported MIME, write failures, cancellation and timeout
+cannot announce a validated delivery. Root ran 131 daemon cases across generation,
+source validation and Critique, plus 3 canonical contract cases. Two actual Full Plan
+and serialization-continuation witnesses also passed. Read-only audit regressions
+close Vue export/null-text mismatches and protected CSS property omissions. Full
+repository guard and workspace/root-script typechecks passed. The
+bounded automatic repair coordinator and final UI/CLI logical-task reporting remain
+required; this slice does not complete Phase 10 or 12.
+
 The Phase 13 preview core is accepted independently of its pending public surface.
 Canonical results preserve the full graph/review impact roster alongside selected
 screen samples, current/proposed locks, exact source evidence and explicitly named
