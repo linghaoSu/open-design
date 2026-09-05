@@ -13,4 +13,5 @@ export * from './design-patterns.js';
 export * from './design-constraints.js';
 export * from './design-system-version.js';
 export * from './design-system-diff.js';
+export * from './design-system-upgrade.js';
 export * from './local-component-binding.js';

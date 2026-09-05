@@ -275,9 +275,30 @@ export function recordSharedComponentRegistryChange(
   changeIds: Readonly<Record<string, string>>,
   limits: DesignRuntimeLimits = {},
 ): SharedComponentRegistryChangeResult {
+  return recordRegistryChange(before, after, changes, changeIds, limits, false);
+}
+
+/** Only the exact-package upgrade service calls this explicit same-design-system transition. */
+export function recordSharedComponentDesignSystemUpgrade(
+  before: SharedComponentContext,
+  after: SharedComponentContext,
+  changes: SharedComponentChangeState,
+  changeIds: Readonly<Record<string, string>>,
+  limits: DesignRuntimeLimits = {},
+): SharedComponentRegistryChangeResult {
+  if (!before.registry || !after.registry || before.registry.id !== after.registry.id) {
+    throw new SharedComponentChangeError('CONFLICT', 'A design-system upgrade must retain the same nonnull registry identity.');
+  }
+  return recordRegistryChange(before, after, changes, changeIds, limits, true);
+}
+
+function recordRegistryChange(
+  before: SharedComponentContext, after: SharedComponentContext, changes: SharedComponentChangeState,
+  changeIds: Readonly<Record<string, string>>, limits: DesignRuntimeLimits, allowDesignSystemUpgrade: boolean,
+): SharedComponentRegistryChangeResult {
   const parsed = parseChanges(before, changes);
   const afterRegistry = ProjectComponentRegistrySchema.parse(after.projectComponents);
-  if (afterRegistry.id !== before.projectComponents.id || stableSnapshot(after.registry) !== stableSnapshot(before.registry)) {
+  if (afterRegistry.id !== before.projectComponents.id || (!allowDesignSystemUpgrade && stableSnapshot(after.registry) !== stableSnapshot(before.registry))) {
     throw new SharedComponentChangeError('CONFLICT', 'A project component rewrite cannot change its project or design-system registry.');
   }
   const previous = new Map(before.projectComponents.components.map((definition) => [definition.id, definition]));
