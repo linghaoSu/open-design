@@ -10,8 +10,8 @@ The same operations are available through `od design-runtime` and the project HT
 API. Existing design-system discovery remains available alongside these structured
 registries and exact project locks.
 
-The [active delivery plan](../specs/current/structured-design-runtime.md) tracks
-acceptance and the remaining generation repair integration.
+The [delivery plan](../specs/current/structured-design-runtime.md) records milestone
+acceptance and executable evidence.
 
 ## Existing extension points
 
@@ -467,15 +467,47 @@ including files outside declared outputs. Current semantic definitions and targe
 can be authored during generation; final validation checks them together and rejects
 concurrent changes. Unknown source coverage cannot certify Strict delivery.
 
+For Strict generation, retrieve the available components and locked patterns first,
+then configure a pattern or author a semantic screen with stable references. Validate
+the document before saving it. Declare each generated output's source path, export
+and screen, then render or modify source through its verified production imports.
+Run artifact validation against the written files and prepare a production handoff
+preview. The Preview tab renders those actual React/Vue components. Semantic edits,
+source validation and preview use the same project revision and exact dependency;
+the final generation gate independently checks the resulting files before delivery.
+
 Explore findings remain advisory. Guided requires its configured error policies;
 Strict additionally requires complete semantic/source conformance and binding proof.
 Changing saved policy, account or workspace while a run is active invalidates its
 authority. A question without source or semantic changes does not certify an artifact.
 Later stages of the same logical task retain the original policy and source baseline.
 Critique's external artifact bytes use the same validator before publication and are
-checked again before physical success. Canonical reports are included in run status
-and SSE diagnostics. Bounded automatic repair and its final UI/CLI reporting remain
-tracked in the active plan.
+checked again before physical success.
+
+A Guided or Strict validation failure can claim one automatic repair of the same
+logical task. The claim atomically records its physical Run, original baseline,
+frozen policy and exact versioned repair prompt. The repair keeps the original
+runtime, effective model, native session and strategy plan. Policy or authority
+conflicts block delivery; they cannot authorize a weaker replacement run. A failed
+repair, canceled run or transport failure ends the task without replenishing its
+budget. If a daemon restart loses the exact native continuation evidence, the
+claimed repair fails closed.
+
+Chat shows a design validation report with the logical status, initial/repair
+attempt, source diagnostics and expandable JSON evidence. The task remains active
+while its repair runs. Completion requires both a successful physical Run and the
+current passing report, or an Explore advisory result. Reload follows the same
+execution and folds its physical messages into one turn. Ordinary questions without
+artifact changes keep their normal chat presentation. An OD Next clarification
+uses `awaiting_input`: the current stream ends normally while the task waits for
+the user's answer, without claiming artifact delivery or creating a repair.
+Validated planning edits can retain their report while awaiting that answer.
+
+Run status and SSE expose separate physical reports and the current logical task.
+`od run watch` follows authenticated successors and exits unsuccessfully when the
+logical task is blocked or canceled. `od run list`, `cancel` and `result-package`
+report that same logical identity; cancellation through an earlier Run reaches its
+active repair. Diagnostics alone never redirect a client to another Run.
 
 Eight maintained React/Vue page fixtures measure reuse, unknown components/tokens,
 raw styles, duplicate structures and evaluated repair steps. Each failing fixture
@@ -543,8 +575,8 @@ component/text/instance nodes, with unique node IDs across all screens.
 overrides, validates slot composition and returns deterministic node origins.
 `queryReferenceGraph` follows actual source references with bounded traversal.
 The shared-change service validates every proposed definition and screen before
-publication. These checks are independent of production source rendering, token
-validation and generation repair, which remain separate milestones.
+publication. Production source rendering, token validation and generation repair
+consume these semantic checks through their own execution boundaries.
 
 The executable acceptance test is
 `apps/daemon/tests/services/design-runtime/acceptance.test.ts`. It compiles the

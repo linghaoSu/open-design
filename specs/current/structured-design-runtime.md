@@ -62,9 +62,9 @@ until every required milestone and invariant has direct current-state evidence.
 | 7 | Semantic diff using stable component/token IDs | Added/removed/renamed/changed classification; removed variant/prop/token and incompatible slot are breaking | Complete |
 | 8 | Upgrade impact, deterministic migrations, review and explicit apply | Diff + graph + overrides identifies affected nodes/screens; migration validates before atomic lock/document update; failure/conflict leaves live state intact | Complete |
 | 9 | Machine-readable handoff and persistent project-component code bindings | Manifest includes lock, target, IR, registry, bindings and change context; deterministic round-trip, package compatibility, UI/CLI export | Complete |
-| 10 | Explore/Guided project modes and generation repair loop | Structured diagnostics after generation; bounded repair; normal Explore behavior preserved; equivalent generation paths validated | In progress |
+| 10 | Explore/Guided project modes and generation repair loop | Structured diagnostics after generation; bounded repair; normal Explore behavior preserved; equivalent generation paths validated | Complete |
 | 11 | Pattern registry and design grammar | Pattern retrieval/configuration and slot composition validated deterministically; reusable resource-list fixture | Complete |
-| 12 | Strict mode semantic UI generation and source enforcement | Intent → retrieve → IR → validate → render/source → source validation → preview; unknown components/props/variants/slots/tokens/raw forbidden styles/reimplemented bound controls rejected | Pending |
+| 12 | Strict mode semantic UI generation and source enforcement | Intent → retrieve → IR → validate → render/source → source validation → preview; unknown components/props/variants/slots/tokens/raw forbidden styles/reimplemented bound controls rejected | Complete |
 | 13 | Visual impact preview of representative affected screens | Current/proposed side-by-side uses graph-selected screens and the locked production component runtime; UI exercised with screenshot evidence | Complete |
 
 ## Cross-milestone closure
@@ -94,17 +94,17 @@ The following are part of the final result, not optional placeholders:
   duplicates, repair steps and repeatability; do not substitute visual appeal for
   structural validity.
 
-## Current task boundary
+## Delivery status
 
 Multi-component compilation, index/binding operations, project-local inheritance,
 reference graphs and staged shared changes have accepted web/CLI/HTTP surfaces.
 Immutable versions, reviewed upgrades, compiler format selection, persistent handoff
 bindings and explicit artifact validation now have matching web/CLI/HTTP surfaces.
 Locked pattern retrieval and screen composition are also accepted through all three
-surfaces. Real component previews and generation completion enforcement are accepted;
-current work completes bounded repair and logical-task reporting. Internal foundation commits can land independently; their
-corresponding phase remains incomplete until its listed product and validation
-evidence exists.
+surfaces. Real component previews, generation completion enforcement, bounded repair
+and logical-task reporting are accepted. All roadmap phases now have their required
+contract, runtime, product-surface and validation evidence. The records below retain
+the intermediate checkpoints and the final integration acceptance.
 
 The Phase 4 reference/resolution core and semantic tree editor are accepted, as is
 the Phase 5 immutable draft, impact, publication and undo core (`3c68936db`).
@@ -257,8 +257,9 @@ web cases and 48 contract cases; the agent's combined checks include 72 daemon a
 an actual forbidden color under locked policy, saved Strict and confirmed rejection,
 then verified policy retention after clearing. Its 26.7-second case passed, the
 validation screenshot was inspected, and full `pnpm guard` and `pnpm typecheck`
-passed. Automatic generation completion and bounded repair remain in progress;
-these explicit operations alone do not complete Phase 10 or 12.
+passed. At this checkpoint, automatic generation completion and bounded repair
+still required integration; these explicit operations alone did not complete
+Phase 10 or 12.
 
 The saved-mode authority also covers instance detachment. A real route regression
 first reproduced a saved Strict project accepting a caller's Explore override; the
@@ -298,7 +299,8 @@ covered real CLI dispatch, all locales and source/test typechecks. The existing
 browser workflow saved two future TSX outputs against Applications and Dashboard,
 reopened them and verified the same daemon declarations. It passed in 33.8 seconds
 (1.3 minutes with the shared harness); the entry and saved targets screenshot was
-inspected. Generation execution and repair remain separate acceptance tasks.
+inspected. This checkpoint covered target authoring; generation execution and
+repair have their own acceptance records below.
 Repository guard and workspace/root-script typechecks passed at this checkpoint.
 
 Generation completion enforcement is accepted as the first integration slice.
@@ -321,8 +323,44 @@ source validation and Critique, plus 3 canonical contract cases. Two actual Full
 and serialization-continuation witnesses also passed. Read-only audit regressions
 close Vue export/null-text mismatches and protected CSS property omissions. Full
 repository guard and workspace/root-script typechecks passed. The
-bounded automatic repair coordinator and final UI/CLI logical-task reporting remain
-required; this slice does not complete Phase 10 or 12.
+bounded automatic repair coordinator and final UI/CLI logical-task reporting were
+still required at that checkpoint; the first slice alone did not complete Phase 10
+or 12.
+
+The final generation integration, accepted in `99a047559`, completes Phase 10 and
+12. A host-only atomic
+claim permits one repair using the same policy, original baseline, exact prompt,
+model/provider configuration, native session and locked strategy plan. Normal Full
+Plan stages retain attempt zero; only the repair advances to one. Failed transport,
+exhaustion and cancellation cannot replenish that budget. UI and CLI follow current
+authenticated task projections, recover the same report after reload, and preserve
+physical attempt identity. Clarification uses `awaiting_input` and ends the current
+stream without claiming delivery or allocating another Run.
+
+| Final generation witness | Verified behavior |
+| --- | --- |
+| `apps/daemon/tests/services/design-runtime/generation-repair.test.ts` | Real database and message/Run claims roll back together on stale authority, cancellation or rejected strategy proof |
+| `apps/daemon/tests/runtimes/design-generation-server.test.ts` | Real source writes, successful/exhausted repair, cancellation through the parent, transport failure, configuration drift and unchanged questions |
+| `apps/daemon/tests/runtimes/design-generation-byok-repair.test.ts` | Actual local provider requests preserve model, authentication and endpoint; durable repair text reaches stdin and provider unchanged |
+| `apps/daemon/tests/runtimes/design-generation-critique-repair.test.ts` | Stdin-consuming generator, withheld invalid publication, corrected public artifact bytes and exhausted repair with no published artifact |
+| `apps/daemon/tests/od-next-automatic-simple-server.test.ts` | Simple/complex Full Plan and Direct Edit preserve stage, baseline and exact text; complex repair proves fresh native child packages; questions with/without planning edits wait for input |
+| `apps/daemon/tests/runtimes/design-generation-projection.test.ts` | Status/SSE/message/restart/result/cancel scope and physical/logical identity agree; client-supplied claims are rejected |
+| `e2e/ui/real-daemon-run.test.ts` | One user request drives Guided repair success or exhaustion and restores the report after reload; Strict retrieves, authors IR, validates source and renders the verified production component |
+
+Final contract checks passed 8/8; core/prompt/lifecycle checks passed 78/78, and the
+projection/runtime regression passed 144 cases. Web acceptance passed 100 cases and
+CLI acceptance passed 40 subprocess cases. Root independently repeated the atomic,
+source inventory, ordinary/BYOK/Critique and five actual OD Next witnesses. The two
+Guided browser cases passed in 10.0 and 7.8 seconds (38.7 seconds with the harness).
+The final Strict browser case passed in 7.7 seconds (36.7 seconds with the harness).
+All three screenshots were inspected. Full `pnpm guard` and `pnpm typecheck` passed.
+
+These witnesses also exposed and closed integration defects in analytics header
+preservation, host HTML history inventory, Critique stdin/publication paths,
+BYOK model normalization, Direct Edit route adoption and clarification recovery.
+Unsupported source remains explicit incomplete evidence; a claimed native repair
+whose launch evidence is lost on restart fails closed. These limits preserve the
+single-attempt and Strict proof contracts.
 
 The Phase 13 preview core was accepted before its public surface.
 Canonical results preserve the full graph/review impact roster alongside selected
@@ -362,11 +400,11 @@ The original brief's conceptual names describe responsibilities, not a demand to
 create empty packages or placeholder files. Keep algorithms inside the daemon
 until a real second consumer justifies an additive shared runtime package.
 
-## Remaining integration seams
+## Integration acceptance boundaries
 
-Handoff must preserve project-owned code alongside the immutable package index.
-Package publication and activation must separate package-owned bindings from local
-bindings as well as preserving that separation on reads. Local binding verification
+Handoff preserves project-owned code alongside the immutable package index.
+Package publication and activation separate package-owned bindings from local
+bindings, and reads preserve that separation. Local binding verification
 records the exact shared definition revision; changing only its template still
 requires code revalidation. Handoff checks current registered source evidence and
 distinguishes an observed installed package version from a declared dependency
@@ -377,19 +415,19 @@ Generation modes belong to saved project runtime state. Request bodies cannot
 weaken the saved mode when detaching, clearing dependencies or validating output.
 Explore keeps the existing normal generation path. Guided runs the structural
 validator and a bounded repair loop; Strict additionally requires validated semantic
-IR and validated production source before accepting the preview. Repair attempts
-must preserve analytics lineage and use the existing physical-run creation service.
+IR and validated production source before accepting delivery. Repair attempts
+preserve analytics lineage and use the existing physical-run creation service.
 
-The generation host contract needs one canonical contracts implementation, consumed
+The generation host contract has one canonical contracts implementation, consumed
 by daemon legacy slim/classic, contracts API/BYOK and OD Next runtime context.
-The existing OD Next deliverable check proves artifact presence rather than these
-structural rules, so it cannot serve as the new validator or its repair gate.
-Acceptance must exercise the actual completion path for each affected generation
+The generation gate enforces structural rules alongside the existing OD Next
+deliverable-presence check. Acceptance exercises the actual completion path for
+each affected generation
 mode, including exhaustion and cancellation, with deterministic agent fixtures.
 
-Before Guided/Strict acceptance, the evaluation suite must contain resource list,
+The evaluation suite contains resource list,
 resource detail, settings, form, dialog, dashboard, empty and error states. Metrics
 come from parsed source/IR and binding resolution: reuse, unknown components and
 tokens, raw literals, duplicate controls, repair attempts and repeatability. Visual
-impact compares graph-selected current/proposed screens through the locked
-production runtime; symbolic boxes or only serialized IR do not satisfy Phase 13.
+impact renders graph-selected current/proposed screens through the locked
+React/Vue production runtime.

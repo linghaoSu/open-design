@@ -132,11 +132,29 @@ policy. Source and semantic validation enforce the policy at completion.
 | OD Next composer, including its early return | `designGenerationFacts` flows into the stable runtime context and `renderOdNextRuntimeFactsV2` |
 | Actual initial frozen OD Next bundle | Run creation prepares host facts before `prepareOdNextInitialPromptBundle`; the bundle service forwards them to the composer |
 | Later physical stages of the same task | The daemon reuses the durable policy and original pre-agent source baseline |
+| Host-authored design repair, on every generation path | The exact persisted `open-design.design-repair-turn/v1` envelope is the next prompt payload; it bypasses fresh prompt composition |
 
 `apps/daemon/tests/prompts/design-generation.test.ts` covers the composer variants.
 The real-server tests additionally check captured child stdin and the frozen bundle,
 so a bypass around the ordinary composer cannot silently omit this host contract.
 No plugin markdown asset carries a second copy of the directive.
+
+The shared directive describes the IR-first retrieve, author, validate, source and
+production-preview sequence for Strict. Guided retains ordinary source generation
+and configured validation; Explore findings remain advisory. The daemon enforces
+these modes independently of the prompt.
+
+`packages/contracts/src/prompts/design-repair.ts` owns the versioned repair
+envelope. It contains the failed initial report and frozen policy, plus original
+prompt context for legacy/stateless providers or the frozen strategy identity and
+same-stage continuation for OD Next. The stored canonical text is passed unchanged
+to the runtime's normal input transport. It does not alter existing initial bundle
+or continuation readers. Full Plan repairs remain in production; Direct Edit repairs
+remain in request without re-entering initial request composition. Complex production
+must prove its existing child packages before claiming repair and supplies fresh
+package bindings for that same locked plan. Only the host can claim attempt one,
+atomically with the physical Run and logical task mappings. Missing native session
+evidence or changed runtime/provider configuration blocks the claimed repair.
 
 ## Worked example: #7568, then #7651
 

@@ -6,6 +6,12 @@ import { openNewProjectModal as openNewProjectModalFromProjects } from '@/playwr
 import { runErrorCard } from '@/playwright/chat';
 import { openAllProjectFiles } from '@/playwright/workspace';
 import type { Locator, Page, Request, Response } from '@playwright/test';
+import type {
+  ChatRunStatusResponse,
+  ProjectDesignRuntimeResponse,
+  ProjectDesignRuntimePublishVersionResponse,
+  ProjectDesignRuntimeValidationSettingsResponse,
+} from '@open-design/contracts';
 import {
   createFakeAcpHandshakeRuntime,
   createFakeAgentRuntimes,
@@ -130,6 +136,159 @@ test('[P0] real daemon run streams, persists, and previews an artifact', async (
   await expect(artifactPreview(page)).toBeVisible();
   await expect(artifactPreviewFrame(page).getByRole('heading', { name: GENERATED_HEADING })).toBeVisible();
   await expectProjectFileToContain(page, projectId, GENERATED_FILE, GENERATED_HEADING);
+});
+
+for (const outcome of ['repaired', 'blocked'] as const) {
+  test(`[P1] Guided generation ${outcome} follows one repair and restores its final report`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1600, height: 1100 });
+    await createProject(page, `Guided generation ${outcome}`);
+    await expectWorkspaceReady(page);
+    const { projectId, conversationId } = await currentProjectContext(page);
+    const prefix = `/api/projects/${projectId}/design-runtime`;
+    const settingsResponse = await page.request.get(`${prefix}/validation/settings`);
+    expect(settingsResponse.ok(), await settingsResponse.text()).toBeTruthy();
+    const settings = await settingsResponse.json() as ProjectDesignRuntimeValidationSettingsResponse;
+    const savedResponse = await page.request.put(`${prefix}/validation/settings`, {
+      data: { expectedRevision: settings.revision, settings: { ...settings.settings, mode: 'guided' } },
+    });
+    expect(savedResponse.ok(), await savedResponse.text()).toBeTruthy();
+    const saved = await savedResponse.json() as ProjectDesignRuntimeResponse;
+    const targets = await page.request.put(`${prefix}/generation/targets`, {
+      data: { expectedRevision: saved.state.revision, targets: { schemaVersion: 1, outputs: [{ sourcePath: 'design-generation-canary.html' }] } },
+    });
+    expect(targets.ok(), await targets.text()).toBeTruthy();
+
+    const prompt = 'Create a design generation repair canary'
+      + (outcome === 'blocked' ? '; keep the invalid color after repair' : ' and correct the invalid color when the host requests repair');
+    const createdResponse = await sendPrompt(page, prompt);
+    const { runId } = await createdResponse.json() as { runId: string };
+    const readStatus = async () => {
+      const response = await page.request.get(`/api/runs/${runId}`);
+      expect(response.ok(), await response.text()).toBeTruthy();
+      return response.json() as Promise<ChatRunStatusResponse>;
+    };
+    const expectedStatus = outcome === 'repaired' ? 'succeeded' : 'blocked';
+    await expect.poll(async () => (await readStatus()).designGenerationTask?.status, { timeout: T.long }).toBe(expectedStatus);
+    const initial = await readStatus();
+    const task = initial.designGenerationTask!;
+    expect(task).toMatchObject({ projectId, conversationId, initialRunId: runId, attempt: 1, repairLimit: 1 });
+    expect(task.activeRunId).not.toBe(runId);
+    expect(initial.designGeneration).toMatchObject({ attempt: 0, mode: 'guided', decision: 'repair_required' });
+    expect(initial.designGeneration?.validation?.diagnostics).toContainEqual(expect.objectContaining({ code: 'ODDS2002' }));
+    const repairedResponse = await page.request.get(`/api/runs/${task.activeRunId}`);
+    expect(repairedResponse.ok(), await repairedResponse.text()).toBeTruthy();
+    const repaired = await repairedResponse.json() as ChatRunStatusResponse;
+    expect(repaired.designGeneration).toMatchObject({
+      executionId: task.executionId, attempt: 1, mode: 'guided',
+      decision: outcome === 'repaired' ? 'accepted' : 'blocked',
+      policyDigest: initial.designGeneration!.policyDigest,
+      inventory: { baselineDigest: initial.designGeneration!.inventory.baselineDigest },
+    });
+
+    const report = page.getByTestId('design-generation-report');
+    await expect(report).toHaveCount(1);
+    await expect(report).toHaveAttribute('data-execution-id', task.executionId);
+    await expect(report.getByTestId('design-generation-status')).toHaveAttribute('data-status', expectedStatus);
+    await expect(report.getByTestId('design-generation-attempt')).toHaveAttribute('data-attempt', '1');
+    await expect(page.getByTestId('chat-send')).toBeVisible();
+    await report.getByTestId('design-generation-expand').click();
+    await expect(report.getByTestId('design-generation-report-json')).toBeVisible();
+    if (outcome === 'blocked') await expect(report.getByTestId('design-generation-diagnostics')).toContainText('ODDS2002');
+    const contents = await readProjectFile(page, projectId, 'design-generation-canary.html');
+    expect(contents).toContain(outcome === 'repaired' ? 'Design repair complete' : 'Design repair remains blocked');
+    if (outcome === 'repaired') expect(contents).not.toContain('color:#123456');
+    else expect(contents).toContain('color:#123456');
+    const screenshot = testInfo.outputPath(`guided-generation-${outcome}.png`);
+    await report.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: screenshot, fullPage: true });
+    await testInfo.attach(`Guided generation ${outcome} final report`, { path: screenshot, contentType: 'image/png' });
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expectWorkspaceReady(page);
+    await expect(report).toHaveCount(1);
+    await expect(report.getByTestId('design-generation-status')).toHaveAttribute('data-status', expectedStatus);
+    await expect(report.getByTestId('design-generation-attempt')).toHaveAttribute('data-attempt', '1');
+    const listedResponse = await page.request.get(`/api/runs?projectId=${encodeURIComponent(projectId)}`);
+    expect(listedResponse.ok(), await listedResponse.text()).toBeTruthy();
+    const listed = await listedResponse.json() as { runs: ChatRunStatusResponse[] };
+    expect(listed.runs.filter((run) => run.designGenerationTask?.executionId === task.executionId)).toHaveLength(2);
+    const messages = await listConversationMessages(page, projectId, conversationId);
+    expect(messages.filter((message) => message.role === 'user')).toHaveLength(1);
+  });
+}
+
+test('[P1] Strict generation authors a semantic screen and renders its verified production component', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1600, height: 1100 });
+  await createProject(page, 'Strict semantic generation');
+  await expectWorkspaceReady(page);
+  const { projectId } = await currentProjectContext(page);
+  const prefix = `/api/projects/${projectId}/design-runtime`;
+  const source = await page.request.post(`/api/projects/${projectId}/files`, { data: {
+    name: 'StrictButton.tsx',
+    content: 'export function StrictButton({label}:{label:string}) { return <button>{label}</button>; }',
+  } });
+  expect(source.ok(), await source.text()).toBeTruthy();
+  const initialResponse = await page.request.get(prefix);
+  expect(initialResponse.ok(), await initialResponse.text()).toBeTruthy();
+  let state = (await initialResponse.json() as ProjectDesignRuntimeResponse).state;
+  const compiledResponse = await page.request.post(`${prefix}/compile`, { data: {
+    expectedRevision: state.revision, designSystemId: 'strict-canary', selections: [{
+      sourcePath: 'StrictButton.tsx', exportName: 'StrictButton', componentId: 'strictButton', codeComponentId: 'strict-ui/button',
+    }],
+  } });
+  expect(compiledResponse.ok(), await compiledResponse.text()).toBeTruthy();
+  state = (await compiledResponse.json() as ProjectDesignRuntimeResponse).state;
+  const publishedResponse = await page.request.post(`${prefix}/versions/publish-current`, { data: {
+    expectedRevision: state.revision, name: 'Strict canary', version: '1.0.0', sourcePaths: ['StrictButton.tsx'],
+    constraints: state.validationSettings.projectConstraints,
+  } });
+  expect(publishedResponse.ok(), await publishedResponse.text()).toBeTruthy();
+  state = (await publishedResponse.json() as ProjectDesignRuntimePublishVersionResponse).state;
+  const activatedResponse = await page.request.post(`${prefix}/dependency`, { data: {
+    expectedRevision: state.revision, designSystemId: 'strict-canary', version: '1.0.0', range: '1.0.0',
+  } });
+  expect(activatedResponse.ok(), await activatedResponse.text()).toBeTruthy();
+  state = (await activatedResponse.json() as ProjectDesignRuntimeResponse).state;
+  const settingsResponse = await page.request.put(`${prefix}/validation/settings`, { data: {
+    expectedRevision: state.revision, settings: { ...state.validationSettings, mode: 'strict' },
+  } });
+  expect(settingsResponse.ok(), await settingsResponse.text()).toBeTruthy();
+
+  const createdResponse = await sendPrompt(page, 'Create a Strict semantic generation canary using the retrieved component and validate before source generation');
+  const { runId } = await createdResponse.json() as { runId: string };
+  await expect.poll(async () => {
+    const response = await page.request.get(`/api/runs/${runId}`);
+    expect(response.ok(), await response.text()).toBeTruthy();
+    return (await response.json() as ChatRunStatusResponse).designGenerationTask?.status;
+  }, { timeout: T.long }).toBe('succeeded');
+  const statusResponse = await page.request.get(`/api/runs/${runId}`);
+  const status = await statusResponse.json() as ChatRunStatusResponse;
+  expect(status.designGeneration).toMatchObject({ mode: 'strict', decision: 'accepted', attempt: 0,
+    outputs: [{ sourcePath: 'StrictScreen.tsx', exportName: 'StrictScreen', screenId: 'strict-screen' }],
+    validation: { accepted: true, strictReady: true }, inventory: { complete: true, changed: ['StrictScreen.tsx'] },
+  });
+  expect(status.designGeneration?.diagnostics).toEqual([]);
+  await expect(page.getByTestId('design-generation-status')).toHaveAttribute('data-status', 'succeeded');
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expectWorkspaceReady(page);
+  await expect(page.getByTestId('design-generation-status')).toHaveAttribute('data-status', 'succeeded');
+  await page.getByTestId('design-runtime-entry').click();
+  await page.getByTestId('design-runtime-preview-tab').click();
+  await page.getByTestId('design-preview-kind').selectOption('production-handoff');
+  await page.getByTestId('design-preview-screen-strict-screen').check();
+  const previewResponse = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === `${prefix}/previews`);
+  await page.getByTestId('design-preview-build').click();
+  const preview = await previewResponse;
+  expect(preview.ok(), JSON.stringify({ request: preview.request().postDataJSON(), response: await preview.text() })).toBeTruthy();
+  await expect(page.getByTestId('design-preview-status-current-strict-screen')).toHaveAttribute('data-status', 'rendered', { timeout: T.medium });
+  const frame = page.frameLocator('[data-testid="design-preview-frame-current-strict-screen"]').frameLocator('iframe[data-preview-renderer]');
+  await expect(frame.getByRole('button', { name: 'Structured generation complete' })).toBeVisible();
+  await page.getByTestId('design-preview-frame-current-strict-screen').scrollIntoViewIfNeeded();
+  await frame.locator('body').evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  const screenshot = testInfo.outputPath('strict-generation-production-preview.png');
+  await page.screenshot({ path: screenshot, fullPage: true });
+  await testInfo.attach('Strict generation and real production component preview', { path: screenshot, contentType: 'image/png' });
 });
 
 test('[P0] local OD Next active canary follows one public task across physical runs', async ({ page }) => {

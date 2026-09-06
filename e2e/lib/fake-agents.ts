@@ -240,6 +240,15 @@ if (process.stdin.isTTY || agentId === 'deepseek') {
 async function emitRun(promptText) {
   if (emitted) return;
   emitted = true;
+  if (promptText.includes('Create a Strict semantic generation canary')) {
+    await emitStrictGenerationCanary(promptText);
+    return;
+  }
+  if (promptText.includes('Create a design generation repair canary')
+      || promptText.includes('open-design.design-repair-turn/v1') && promptText.includes('design_repair')) {
+    await emitDesignGenerationCanary(promptText);
+    return;
+  }
   if (promptText.includes('Hold the daemon run open until canceled')) {
     // Stay running (busy) without ever emitting a terminal result, so a test
     // can queue a follow-up turn and interrupt it via send-now. Keep the event
@@ -468,6 +477,73 @@ async function emitRun(promptText) {
     await new Promise((resolve) => setTimeout(resolve, 1200));
   }
   emitSuccess(assistantText, isChunked, isDelayed || isSlowReload);
+  process.exitCode = 0;
+  exitSoon(0);
+}
+
+async function emitStrictGenerationCanary(promptText) {
+  const projectId = process.env.OD_PROJECT_ID || projectIdFromPrompt(promptText);
+  const daemonUrl = process.env.OD_DAEMON_URL;
+  if (!projectId || !daemonUrl) throw new Error('Strict generation canary requires the daemon project context.');
+  const prefix = '/api/projects/' + encodeURIComponent(projectId) + '/design-runtime';
+  const request = async (suffix, method = 'GET', data) => {
+    const response = await fetch(new URL(prefix + suffix, daemonUrl), {
+      method, headers: { 'content-type': 'application/json' },
+      ...(data ? { body: JSON.stringify(data) } : {}),
+    });
+    if (!response.ok) throw new Error('Strict generation API ' + suffix + ' failed: ' + response.status + ' ' + await response.text());
+    return response.json();
+  };
+  const retrieved = await request('/components?query=StrictButton');
+  if (!retrieved.components.some(component => component.id === 'strictButton')) {
+    throw new Error('Strict generation could not retrieve the bound component.');
+  }
+  const current = await request('');
+  const document = { schemaVersion: 1, id: 'strict-generated-document', screens: [{
+    schemaVersion: 1, type: 'screen', id: 'strict-screen', name: 'Strict generated screen', children: [{
+      schemaVersion: 1, type: 'component', id: 'strict-action', ref: 'ds:strict-canary/strictButton',
+      props: { label: 'Structured generation complete' },
+    }],
+  }] };
+  const validation = await request('/document/validate', 'POST', { document });
+  if (validation.resolution.diagnostics.some(issue => issue.severity === 'error')) throw new Error('Strict semantic canary failed document validation.');
+  const saved = await request('/document', 'PUT', { expectedRevision: current.state.revision, document });
+  const targets = await request('/generation/targets', 'PUT', { expectedRevision: saved.state.revision,
+    targets: { schemaVersion: 1, outputs: [{ sourcePath: 'StrictScreen.tsx', exportName: 'StrictScreen', screenId: 'strict-screen' }] } });
+  await writeFileFs(join(projectDir(promptText), 'StrictScreen.tsx'),
+    'import { StrictButton } from "./StrictButton"; export function StrictScreen(){ return <StrictButton label="Structured generation complete" />; }', 'utf8');
+  const sourceValidation = await request('/validation/artifacts', 'POST', { expectedRevision: targets.state.revision,
+    sources: [{ sourcePath: 'StrictScreen.tsx', language: 'tsx' }],
+    outputs: [{ sourcePath: 'StrictScreen.tsx', exportName: 'StrictScreen', screenId: 'strict-screen' }] });
+  if (!sourceValidation.result.accepted || !sourceValidation.result.strictReady) throw new Error('Strict canary failed actual source validation.');
+  const preview = await request('/previews', 'POST', { expectedRevision: targets.state.revision, id: 'strict-generation-canary',
+    framework: 'react', kind: 'production-handoff', screenIds: ['strict-screen'] });
+  if (!preview.sides[0].screens[0].bundle) throw new Error('Strict canary failed verified runtime preview preparation.');
+  emitSuccess('Created StrictScreen.tsx using the validated semantic screen and exact bound component.', false, false);
+  process.exitCode = 0;
+  exitSoon(0);
+}
+
+async function emitDesignGenerationCanary(promptText) {
+  const isRepair = promptText.includes('open-design.design-repair-turn/v1') && promptText.includes('design_repair');
+  const file = join(projectDir(promptText), 'design-generation-canary.html');
+  const previous = isRepair ? readFileSync(file, 'utf8') : '';
+  if (isRepair && !previous.includes('data-design-generation-canary=')) {
+    throw new Error('Design repair canary did not retain its original project source.');
+  }
+  const exhausted = promptText.includes('keep the invalid color after repair')
+    || previous.includes('data-design-generation-canary="exhaust"');
+  const fixed = isRepair && !exhausted;
+  const heading = fixed ? 'Design repair complete' : isRepair ? 'Design repair remains blocked' : 'Design repair initial draft';
+  const html = '<!doctype html><html><body><main data-design-generation-canary="'
+    + (exhausted ? 'exhaust' : 'repair') + '"><h1' + (fixed ? '' : ' style="color:#123456"')
+    + '>' + heading + '</h1><p>One user request, one bounded design repair.</p></main></body></html>';
+  // This fixture performs real project writes. The running daemon, rather than
+  // the fake CLI, inventories the bytes and determines the policy result.
+  await writeFileFs(file, html, 'utf8');
+  if (isRepair) await new Promise((resolve) => setTimeout(resolve, 1200));
+  emitSuccess('<artifact identifier="design-generation-canary" type="text/html" title="Design repair canary">'
+    + html + '</artifact>', false, false);
   process.exitCode = 0;
   exitSoon(0);
 }
