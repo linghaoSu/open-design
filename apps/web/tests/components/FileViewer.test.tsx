@@ -12,6 +12,7 @@ import type {
 } from '@open-design/host';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ANNOTATION_EVENT } from '../../src/components/PreviewDrawOverlay';
+import { componentPreviewFixture } from '../helpers/react-component-preview-fixtures';
 
 const { saveTemplateMock } = vi.hoisted(() => ({
   saveTemplateMock: vi.fn(),
@@ -5246,7 +5247,7 @@ describe('FileViewer SVG artifacts', () => {
     });
   });
 
-  it('allows downloads in React component preview iframes', async () => {
+  it('loads real component preview controls while preserving iframe downloads', async () => {
     const file = baseFile({
       name: 'Card.jsx',
       path: 'Card.jsx',
@@ -5263,6 +5264,9 @@ describe('FileViewer SVG artifacts', () => {
     });
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
       const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+      if (url === '/api/projects/project-1/design-runtime/component-preview') {
+        return Response.json(componentPreviewFixture({ projectId: 'project-1', sourcePath: 'Card.jsx' }));
+      }
       if (url === '/api/projects/project-1/raw/Card.jsx') {
         return new Response('export default function Card() { return <button>Download</button>; }');
       }
@@ -5273,6 +5277,7 @@ describe('FileViewer SVG artifacts', () => {
 
     const frame = await screen.findByTestId('react-component-preview-frame');
     expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-downloads');
+    expect(await screen.findByLabelText('title')).toHaveValue('Sample title');
   });
 
   it('disables React component sharing controls for viewer-only shared projects', async () => {

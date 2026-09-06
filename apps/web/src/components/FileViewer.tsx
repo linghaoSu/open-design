@@ -180,7 +180,7 @@ import {
 } from '../runtime/exports';
 import { fetchAppVersionInfo } from '../providers/registry';
 import { copyToClipboard } from '../lib/copy-to-clipboard';
-import { buildReactComponentSrcdoc } from '../runtime/react-component';
+import { ReactComponentPreview } from './ReactComponentPreview';
 import { shouldConsumeSlideNav } from '../runtime/slide-nav';
 import { findHtmlEntriesReferencing } from '../runtime/jsx-module-refs';
 import {
@@ -6420,7 +6420,6 @@ function ReactComponentViewer({
   const { workspaceContext } = useProjectCollabContext();
   const [mode, setMode] = useState<'preview' | 'source'>('preview');
   const [source, setSource] = useState<string | null>(null);
-  const [srcDoc, setSrcDoc] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
   const [unifiedActionTab, setUnifiedActionTab] = useState<'share' | 'export'>('share');
@@ -6779,35 +6778,6 @@ function ReactComponentViewer({
   const exportTitle = file.name.replace(/\.(jsx|tsx)$/i, '') || file.name;
   const sourceExtension = file.name.toLowerCase().endsWith('.tsx') ? '.tsx' : '.jsx';
 
-  useEffect(() => {
-    if (source === null || moduleEntries === null || isModule) {
-      // No source yet, still checking module status, or this file is a module
-      // with no standalone preview — never build the React runtime srcdoc.
-      setSrcDoc('');
-      return;
-    }
-
-    let cancelled = false;
-    const buildSrcDoc = () => {
-      const nextSrcDoc = buildReactComponentSrcdoc(source, { title: exportTitle });
-      if (!cancelled) setSrcDoc(nextSrcDoc);
-    };
-
-    if (source.length > 100_000) {
-      setSrcDoc('');
-      const timeout = window.setTimeout(buildSrcDoc, 0);
-      return () => {
-        cancelled = true;
-        window.clearTimeout(timeout);
-      };
-    }
-
-    buildSrcDoc();
-    return () => {
-      cancelled = true;
-    };
-  }, [source, exportTitle, moduleEntries, isModule]);
-
   return (
     <div className="viewer react-component-viewer">
       {shareAccessConfirm ? (
@@ -7158,18 +7128,15 @@ function ReactComponentViewer({
             entries={moduleEntries ?? []}
             onOpenEntry={(htmlName) => onOpenFileReplacing?.(htmlName, file.name)}
           />
-        ) : source === null || (mode === 'preview' && !srcDoc) ? (
+        ) : source === null || (mode === 'preview' && moduleEntries === null) ? (
           <div className="viewer-empty">{t('fileViewer.loading')}</div>
         ) : mode === 'preview' ? (
-          <PreviewDrawOverlay>
-            <iframe
-              data-testid="react-component-preview-frame"
-              title={file.name}
-              sandbox="allow-scripts allow-downloads"
-              srcDoc={srcDoc}
-              style={{ width: '100%', height: '100%', border: 0 }}
-            />
-          </PreviewDrawOverlay>
+          <ReactComponentPreview
+            projectId={projectId}
+            sourcePath={file.name}
+            sourceIdentity={JSON.stringify([file.mtime, file.size, reloadKey])}
+            workspaceContext={workspaceContext}
+          />
         ) : (
           <CodeWithLines text={source} />
         )}

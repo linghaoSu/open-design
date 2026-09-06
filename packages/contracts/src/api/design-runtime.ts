@@ -437,3 +437,4 @@ export const ProjectDesignRuntimeApplyLegacyMigrationResponseSchema: z.ZodType<P
   if (!candidate || version.id !== candidate.package.id || version.name !== candidate.package.name || version.version !== candidate.package.version || version.digest !== candidate.digest || version.sourceDigest !== candidate.sourceDigest
     || locked?.designSystemId !== version.id || locked.version !== version.version || locked.digest !== version.digest || locked.source.digest !== version.sourceDigest) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['version'], message: 'Applied migration must install the exact reviewed immutable package and source.' });
 });
+export { ComponentPreviewRequestSchema, ComponentPreviewResponseSchema, type ComponentPreviewRequest, type ComponentPreviewResponse } from '../design-runtime/component-preview.js';

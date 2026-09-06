@@ -487,3 +487,42 @@ Acceptance completed:
 - Native visual inspection caught the global input-width rule stretching migration
   checkboxes. A scoped CSS reset corrected the file list; the running app was
   visually rechecked after the fix.
+
+## Standalone JSX and TSX props preview
+
+Implemented and accepted on 2026-09-06. File Preview now discovers component exports and infers
+preview controls from local TypeScript declarations, parameter/default props and
+recognizable JSX usage. Missing values receive deterministic mocks; source defaults
+are preserved. This preview analyzer is separate from the verified registry compiler
+and does not create registry entries, locks or project-runtime revisions.
+
+The shared read-only component-preview endpoint bundles real local source, styles
+and supported assets with the existing bounded project reader and bundled React.
+Authority and source evidence are rechecked before returning the bundle. Source
+analysis does not execute project code. Rendering and declarative callback mocks
+run inside the isolated preview sandbox. Unsupported dependencies, context providers
+and ambiguous types remain diagnostics or require user-provided mock data.
+
+The UI offers scalar/enum controls, JSON editing, export selection, individual/all
+prop resets and retry. Valid edits update the sandbox without rebuilding source.
+Invalid JSON preserves the last valid values; correcting a runtime error resets the
+render boundary. The matching `od design-runtime preview-component` command supports
+JSON output and file/stdin input through the same endpoint.
+
+Acceptance includes contract, analyzer, actual bundled rendering, route authority,
+UI/provider/frame and CLI regression tests. The CLI suite contains 82 cases,
+including a real-process 541 KB response that reproduced stdout truncation before
+the output-drain fix. Repository guard and full type checking pass.
+
+Native Electron operation verified a TSX component with required nested objects,
+arrays and a callback, plus local module, CSS and binary-image imports. Editing
+text, object, array, enum, number and boolean controls changed the rendered output;
+clicking the mocked callback updated component state. Invalid JSON retained the
+last valid render, an intentionally invalid array item produced a contained error,
+and resetting the prop recovered the component. Retry and Reset props also worked.
+Untyped JSX preserved defaults, provided a callable mock and switched between two
+named component exports while excluding metadata. CLI requests verified the same
+exports and explicit props; all five fixture source/asset hashes stayed unchanged.
+Native acceptance also corrected JSX classification under Scripts and removed the
+Required badge from props that have source defaults. Both fixes were rechecked in
+the restarted application, including the normal and expanded preview layouts.

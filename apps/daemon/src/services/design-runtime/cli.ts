@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
-import { parseArgs } from 'node:util';
+import { isDeepStrictEqual, parseArgs } from 'node:util';
 import {
+  ComponentPreviewRequestSchema, ComponentPreviewResponseSchema,
   ProjectDesignRuntimeReviewLegacyMigrationRequestSchema, ProjectDesignRuntimeReviewLegacyMigrationResponseSchema,
   ProjectDesignRuntimeApplyLegacyMigrationRequestSchema, ProjectDesignRuntimeApplyLegacyMigrationResponseSchema,
   ProjectDesignRuntimePreviewRequestSchema, ProjectDesignRuntimePreviewResponseSchema,
@@ -63,6 +64,7 @@ import {
 import { resolveDaemonUrl } from '../../daemon-url.js';
 
 export const DESIGN_RUNTIME_CLI_USAGE = `Usage:
+  od design-runtime preview-component <projectId> --prompt-file <path|->
   od design-runtime preview <projectId> --prompt-file <path|->
   od design-runtime patterns <projectId> [--query <text>]
   od design-runtime pattern <projectId> <patternId>
@@ -121,6 +123,14 @@ Common options:
   --workspace-member <id>     Exact caller membership for bound projects.
   --expected-revision <n>     Snapshot revision for mutations, reviews and handoffs.
   --prompt-file <path|->      Read a JSON request from a local file or stdin.
+
+Component preview JSON: {"sourcePath":"src/Card.tsx","exportName":"default","props":{"title":"Debug title"}}
+Preview-component reads a JSX/TSX project file without requiring a registry or lock.
+It discovers exports and props, supplies preview-only mock values for missing data,
+and bundles the selected component with local imports. Explicit props override mocks;
+omitted component defaults are preserved. Callbacks use sandbox-only no-op mocks.
+The response contains editable controls, effective props, a bundle and diagnostics.
+It never executes source in the daemon or changes project files or runtime state.
 
 Compile JSON: {"designSystemId":"acme","selections":[{"sourcePath":"src/Button.tsx","exportName":"Button","componentId":"button","codeComponentId":"acme/Button"}]}
 Vue + stories JSON: {"designSystemId":"acme","selections":[{"framework":"vue","sourcePath":"src/Button.vue","exportName":"default","componentId":"button","codeComponentId":"acme/Button","metadataExportName":"ButtonPolicy","storySources":[{"sourcePath":"src/Button.stories.ts","selections":[{"id":"primary-example","exportName":"Primary"}]}]}]}
@@ -205,6 +215,7 @@ interface CommandSpec {
 }
 
 const COMMANDS: Record<string, CommandSpec> = {
+  'preview-component': { input: ComponentPreviewRequestSchema },
   'patterns': { query: true },
   'pattern': { argument: 'patternId' },
   'instantiate-pattern': { argument: 'patternId', revisioned: true, input: ProjectDesignRuntimeInstantiatePatternRequestSchema },
@@ -448,6 +459,23 @@ export async function runDesignRuntimeCli(args: string[], deps: DesignRuntimeCli
     const output = (value: unknown) => process.stdout.write(`${JSON.stringify(value)}\n`);
     const encodedTarget = encodeURIComponent(targetId ?? '');
     const mutationBody = { ...input, expectedRevision };
+    if (command === 'preview-component') {
+      const data = await request('/component-preview', ComponentPreviewResponseSchema, 'POST', input);
+      if (data.projectId !== projectId || data.sourcePath !== input.sourcePath || data.requestedExport !== input.exportName
+        || !isDeepStrictEqual(data.requestedProps, input.props ?? {})) {
+        throw new CliFailure(1, createApiErrorResponse(createApiError('INTERNAL_ERROR', 'Returned component preview does not match the requested project, source, export or props.')));
+      }
+      if (json) output(data);
+      else {
+        process.stdout.write(`${data.sourcePath} · ${data.selectedExport ?? 'No component export'} · ${data.bundle ? 'Bundled' : 'Unavailable'}\n`);
+        process.stdout.write(`Preview props: ${JSON.stringify(data.effectiveProps, null, 2)}\n`);
+        for (const control of data.controls) process.stdout.write(`${control.name}: ${control.kind} · ${control.provenance}${control.hasDefault ? ' · component default' : ''}\n`);
+        printDiagnostics(data.diagnostics);
+      }
+      // The outer CLI dispatcher exits immediately; real bundles can exceed the stdout pipe buffer.
+      await new Promise<void>((resolve, reject) => process.stdout.write('', (error) => error ? reject(error) : resolve()));
+      return { exitCode: data.bundle ? diagnosticsExitCode(data.diagnostics) : 1 };
+    }
     if (command === 'patterns') {
       const data = await request(`/patterns?query=${encodeURIComponent(values.query ?? '')}`, ProjectDesignRuntimePatternsResponseSchema);
       if (json) output(data); else for (const pattern of data.patterns) process.stdout.write(`${pattern.id} ${pattern.name}\n`);

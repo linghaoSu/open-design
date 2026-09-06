@@ -13,6 +13,47 @@ registries and exact project locks.
 The [delivery plan](../specs/current/structured-design-runtime.md) records milestone
 acceptance and executable evidence.
 
+## Debug JSX and TSX component files
+
+Open a standalone `.jsx` or `.tsx` file and select **Preview**. The component
+playground discovers component exports and their props without requiring a
+structured registry or a design-system lock. Choose an export when the file has
+several components. Source constants and metadata are excluded from the component
+list.
+
+Preview uses the component's existing defaults and supplies temporary mock values
+for missing props. Supported TypeScript declarations describe strings, numbers,
+booleans, literal choices, objects, arrays, React nodes and callbacks. Untyped JSX
+can use parameter defaults and recognizable property usage. Controls identify
+whether values came from TypeScript, a source default, usage or an unknown type.
+These observations are preview data, not verified registry contracts.
+
+Edit scalar controls or JSON object/array values to debug the rendered component.
+Reset restores the initial preview values. Callback placeholders become inert
+functions inside the sandbox; they do not run external application actions.
+Changing props can recover a failed render without editing the source file. A
+source, export, project or workspace change starts a new preview context.
+
+The daemon bundles the real component and its local imports, styles and supported
+assets using the existing bounded project-source reader. It does not execute the
+component while inspecting or compiling it. Rendering uses the bundled React
+runtime in an isolated iframe. Unsupported dependencies, missing context providers
+and application-specific runtime failures remain actionable diagnostics; unknown
+types may need manual mock data. HTML-backed JSX modules retain their link to the
+HTML entry that runs the complete prototype.
+
+The same read-only preview is available to external agents:
+
+```bash
+od design-runtime preview-component <projectId> --json --prompt-file <request.json>
+```
+
+The request is `{"sourcePath":"src/Card.tsx","exportName":"default","props":{"title":"Debug title"}}`.
+Only `sourcePath` is required. The response includes export candidates, controls,
+mock/effective props, the compiled bundle and source diagnostics. Neither UI
+debugging nor the CLI writes props into the source or changes project runtime
+state. Existing source and artifact exports retain their original content.
+
 ## Migrate an existing design system
 
 Open **Design systems → Your systems → Edit with agent**, then **Design runtime →
@@ -154,6 +195,7 @@ All paths below are relative to `/api/projects/:id/design-runtime`:
 
 | Operation | HTTP | CLI |
 | --- | --- | --- |
+| Inspect and render a standalone JSX/TSX component with mock props | `POST /component-preview` | `preview-component <projectId> --prompt-file <path\|->` |
 | Read persisted snapshot | `GET /` | `get <projectId>` |
 | Compile project sources | `POST /compile` | `compile <projectId> --prompt-file <path\|->` |
 | Review migration from legacy project files | `POST /legacy-migration/review` | `review-legacy <projectId> --prompt-file <path\|->` |

@@ -1,7 +1,9 @@
+import { reactPreviewFallback } from '../react-preview-fallback';
 import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const id: Dict = {
+  ...reactPreviewFallback,
   ...designMigrationFallback,
 
   "designGenerationTargets.title": "Target pembuatan",

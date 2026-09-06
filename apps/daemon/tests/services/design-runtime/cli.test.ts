@@ -844,3 +844,52 @@ describe('real preview dispatcher', () => {
     expect(invalid.code).toBe(2); expect(requests).toHaveLength(1);
   });
 });
+
+describe('standalone component preview CLI', () => {
+  const input = { sourcePath: 'src/Card.tsx', exportName: 'default', props: { title: 'Debug title' } };
+  const fixture = () => ({ schemaVersion: 1, projectId: 'project', sourcePath: input.sourcePath,
+    requestedExport: 'default', requestedProps: input.props, sourceDigest: `sha256:${'a'.repeat(64)}`,
+    exports: ['default'], selectedExport: 'default', controls: [{ name: 'title', kind: 'string', required: true, provenance: 'typescript', hasDefault: false }],
+    mockProps: { title: 'Preview title' }, effectiveProps: input.props, callbacks: [],
+    bundle: { javascript: 'void 0;', css: '', digest: `sha256:${'b'.repeat(64)}` }, evidence: [], runtimePackages: [], diagnostics: [] });
+  it.each(['file', 'stdin'])('previews %s props through one read-only request without requiring a registry or revision', async (mode) => {
+    const response = fixture(); const { requests, url } = await startServer(() => ({ body: response }));
+    const path = mode === 'file' ? await inputFile(input) : '-';
+    const result = await runCli(['design-runtime', 'preview-component', 'project', '--daemon-url', url, '--workspace', 'team', '--workspace-member', 'member', '--json', '--prompt-file', path], mode === 'stdin' ? JSON.stringify(input) : '');
+    expect(result.code, result.stderr).toBe(0); expect(JSON.parse(result.stdout)).toEqual(response);
+    expect(requests).toHaveLength(1); expect(requests[0]).toMatchObject({ method: 'POST', url: '/api/projects/project/design-runtime/component-preview', body: input, headers: { 'x-od-workspace-id': 'team', 'x-od-workspace-member-id': 'member' } });
+  });
+  it('prints mock controls and diagnostics when a component cannot be bundled', async () => {
+    const response = { ...fixture(), bundle: null, diagnostics: [{ schemaVersion: 1, code: 'ODDS8002', severity: 'error', message: 'Missing local dependency.' }] };
+    const { url, requests } = await startServer(() => ({ body: response }));
+    const result = await runCli(['design-runtime', 'preview-component', 'project', '--daemon-url', url, '--prompt-file', '-'], JSON.stringify(input));
+    expect(result.code).toBe(1); expect(result.stdout).toContain('src/Card.tsx'); expect(result.stdout).toContain('Debug title'); expect(result.stdout).toContain('ODDS8002'); expect(requests).toHaveLength(1);
+  });
+  it('flushes a complete bundle larger than the stdout pipe buffer before the dispatcher exits', async () => {
+    const response = fixture(); response.bundle.javascript = '/* large real component bundle */'.repeat(16_384);
+    const { url } = await startServer(() => ({ body: response }));
+    const result = await runCli(['design-runtime', 'preview-component', 'project', '--daemon-url', url, '--json', '--prompt-file', '-'], JSON.stringify(input));
+    expect(result.code).toBe(0);
+    expect(result.stdout.length).toBe(JSON.stringify(response).length + 1);
+    expect(JSON.parse(result.stdout)).toEqual(response);
+  });
+  it('rejects wrong project or changed requested props in a response', async () => {
+    let wrongProject = true;
+    const { url } = await startServer(() => ({ body: wrongProject ? { ...fixture(), projectId: 'another' } : { ...fixture(), requestedProps: { title: 'Other request' } } }));
+    for (const wrong of [true, false]) {
+      wrongProject = wrong;
+      const result = await runCli(['design-runtime', 'preview-component', 'project', '--daemon-url', url, '--json', '--prompt-file', '-'], JSON.stringify(input));
+      expect(result.code).toBe(1); expect(result.stderr).toContain('INTERNAL_ERROR');
+    }
+  });
+  it('rejects unsafe input before HTTP and does not retry a source conflict', async () => {
+    const { requests, url } = await startServer(() => ({ status: 409, body: { error: { code: 'DESIGN_RUNTIME_PREVIEW_CONFLICT', message: 'Source changed' } } }));
+    for (const body of [{ ...input, sourcePath: '../outside.tsx' }, { ...input, projectRoot: '/private' }, { ...input, props: JSON.parse('{"__proto__":{"polluted":true}}') }]) {
+      const invalid = await runCli(['design-runtime', 'preview-component', 'project', '--daemon-url', url, '--json', '--prompt-file', '-'], JSON.stringify(body));
+      expect(invalid.code).toBe(2);
+    }
+    expect(requests).toHaveLength(0);
+    const conflict = await runCli(['design-runtime', 'preview-component', 'project', '--daemon-url', url, '--json', '--prompt-file', '-'], JSON.stringify(input));
+    expect(conflict.code).toBe(1); expect(requests).toHaveLength(1);
+  });
+});

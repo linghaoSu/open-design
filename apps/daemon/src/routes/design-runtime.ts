@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from 'express';
 import {
+  ComponentPreviewRequestSchema,
   ProjectDesignRuntimeReviewLegacyMigrationRequestSchema, ProjectDesignRuntimeApplyLegacyMigrationRequestSchema,
   ProjectDesignRuntimePreviewRequestSchema,
   ProjectDesignRuntimeInstantiatePatternRequestSchema,
@@ -147,6 +148,14 @@ export function registerDesignRuntimeRoutes(app: Express, deps: RegisterDesignRu
       } catch (error) { if (error !== denied) sendFailure(res, error); }
     });
   }
+  app.post(`${prefix}/component-preview`, async (req, res) => {
+    const denied = Symbol('component-preview-authorization-denied');
+    const authorize = async () => { if (!await deps.authorizeProjectRequest(req, res, String(req.params.id), { mode: 'read' })) throw denied; };
+    try {
+      await authorize();
+      res.json(await service.componentPreview(String(req.params.id), parseInput(ComponentPreviewRequestSchema, req.body), authorize));
+    } catch (error) { if (error !== denied) sendFailure(res, error); }
+  });
   app.post(`${prefix}/previews`, async (req, res) => {
     try {
       const id = String(req.params.id);

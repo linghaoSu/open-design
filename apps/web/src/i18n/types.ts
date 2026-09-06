@@ -31,6 +31,35 @@ export const LOCALE_LABEL: Record<Locale, string> = {
 // flat (not deeply nested) so missing-key TS errors point straight at the
 // offending string instead of a generic object mismatch.
 export interface Dict {
+  "reactPreview.type": string;
+  "reactPreview.provenance.typescript": string;
+  "reactPreview.provenance.default": string;
+  "reactPreview.provenance.usage": string;
+  "reactPreview.provenance.unknown": string;
+  "reactPreview.export": string;
+  "reactPreview.props": string;
+  "reactPreview.mockHint": string;
+  "reactPreview.reset": string;
+  "reactPreview.retry": string;
+  "reactPreview.building": string;
+  "reactPreview.loading": string;
+  "reactPreview.rendered": string;
+  "reactPreview.error": string;
+  "reactPreview.runtimeError": string;
+  "reactPreview.timeout": string;
+  "reactPreview.failed": string;
+  "reactPreview.diagnostics": string;
+  "reactPreview.noProps": string;
+  "reactPreview.required": string;
+  "reactPreview.sourceDefault": string;
+  "reactPreview.sample": string;
+  "reactPreview.edited": string;
+  "reactPreview.callback": string;
+  "reactPreview.unset": string;
+  "reactPreview.invalidValue": string;
+  "reactPreview.useDefault": string;
+  "reactPreview.resetProp": string;
+  "reactPreview.unavailable": string;
   "designMigration.title": string;
   "designMigration.description": string;
   "designMigration.sources": string;

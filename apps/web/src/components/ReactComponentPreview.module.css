@@ -1,0 +1,22 @@
+.panel{display:flex;flex-direction:column;width:100%;height:100%;min-height:0;overflow:hidden;gap:10px;padding:12px;box-sizing:border-box}
+.toolbar{display:flex;align-items:end;gap:8px;flex-wrap:wrap}
+.export{display:flex;flex-direction:column;gap:5px;min-width:140px;flex:1}
+.toolbar select{width:100%;max-width:320px}
+.hint,.status{font-size:12px;color:var(--text-muted);margin:0;line-height:1.5}
+.content{display:flex;flex:1;min-height:0;gap:12px;overflow:hidden}
+.props{flex:0 0 230px;overflow:auto;border-right:1px solid var(--border);padding-right:12px;min-width:0}
+.props h3{font-size:13px;margin:0 0 12px}
+.prop{display:flex;flex-direction:column;gap:5px;margin-bottom:16px;min-width:0}
+.prop label{display:flex;align-items:center;gap:6px;overflow-wrap:anywhere}
+.prop input,.prop select,.prop textarea{width:100%;min-width:0;box-sizing:border-box}
+.prop textarea{resize:vertical;font:12px/1.5 monospace}
+.badge{font-size:10px;color:var(--text-muted)}
+.error{color:var(--red, #b42318);font-size:12px;margin:0;overflow-wrap:anywhere;white-space:pre-wrap}
+.resetProp{font-size:11px;align-self:start;color:var(--text-muted);text-decoration:underline;padding:0;border:0;background:none;cursor:pointer}
+.runtime{display:flex;flex-direction:column;gap:6px;flex:1;min-width:0;min-height:0}
+.canvas{position:relative;flex:1;min-height:180px;overflow:hidden;background:white;border:1px solid var(--border);border-radius:6px}
+.frame{width:100%;height:100%;border:0;display:block}
+.diagnostics{font-size:12px;max-height:120px;overflow:auto}
+.diagnostics ul{padding-left:20px}
+.unavailable{font-size:13px;padding:12px;flex:1}
+@media(max-width:800px){.content{flex-direction:column;overflow:auto}.props{flex:none;max-height:230px;border-right:0;border-bottom:1px solid var(--border);padding:0 0 12px}.runtime{min-height:300px;flex:1}.panel{overflow:auto}}

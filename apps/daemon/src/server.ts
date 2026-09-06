@@ -8511,6 +8511,7 @@ export async function startServer({
   const designRuntime = createProjectDesignRuntimeService({
     store: designRuntimeStore,
     acquirePreviewAuthority: acquireDesignRuntimeSourceAuthority,
+    acquireComponentPreviewAuthority: acquireDesignRuntimeSourceAuthority,
     acquireMigrationAuthority: acquireDesignRuntimeSourceAuthority,
     observeTargetPackages: async (projectId, packageNames) => {
       const project = getProject(db, projectId);

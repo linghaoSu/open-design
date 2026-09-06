@@ -19,6 +19,22 @@ afterEach(async () => {
 });
 
 describe('listFiles', () => {
+  it('classifies JSX components with the other scripts, including nested and uppercase extensions', async () => {
+    const projectsRoot = await makeProjectsRoot();
+    const projectId = 'react-project';
+    const projectDir = path.join(projectsRoot, projectId);
+    await mkdir(path.join(projectDir, 'components'), { recursive: true });
+    const scripts = ['PlainCard.jsx', 'components/Upper.JSX', 'Orders.tsx', 'format.ts', 'helper.js'];
+    await Promise.all(scripts.map((name) => writeFile(path.join(projectDir, name), 'export default () => null;')));
+    await writeFile(path.join(projectDir, 'payload.bin'), new Uint8Array([0, 255]));
+
+    const files = await listFiles(projectsRoot, projectId);
+
+    expect(files.filter((file) => file.kind === 'code').map((file) => file.name).sort()).toEqual(scripts.sort());
+    expect(files.find((file) => file.name === 'payload.bin')?.kind).toBe('binary');
+    expect(files.find((file) => file.name === 'PlainCard.jsx')?.mime).toBe('text/javascript; charset=utf-8');
+  });
+
   it('includes the absolute local path for each visible project file', async () => {
     const projectsRoot = await makeProjectsRoot();
     const projectId = 'project-1';
