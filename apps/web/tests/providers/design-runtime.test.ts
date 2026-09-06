@@ -5,6 +5,7 @@ import {
   listProjectDesignRuntimeVersions, getProjectDesignRuntimeVersion,
   importProjectDesignRuntimeVersion, publishProjectDesignRuntimeVersion,
   activateProjectDesignRuntimeDependency, clearProjectDesignRuntimeDependency, resolveProjectDesignRuntimeDependency,
+  restoreProjectDesignRuntimeAuthoringBase,
   saveProjectDesignRuntimeDocument,
   validateProjectDesignRuntimeDocument,
   resolveProjectDesignRuntimeDocument,
@@ -38,6 +39,16 @@ import { workspaceContextFixture } from '../helpers/workspace-context';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('project design runtime provider', () => {
+  it('restores the exact authoring baseline with CAS and rejects a substituted successful response', async () => {
+    const state = designRuntimeState(8);
+    state.authoringBase = { designSystemId: state.registry!.id, version: '1.0.0', digest: `sha256:${'a'.repeat(64)}`, source: { type: 'bundle', digest: `sha256:${'b'.repeat(64)}` } };
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ state }), { status: 200 })); vi.stubGlobal('fetch', fetcher);
+    const scope: ProjectDesignRuntimeScope = { projectId: 'project', workspaceContext: workspaceContextFixture({ workspaceId: 'team-a', workspaceMemberId: 'member-a' }) };
+    const body = { expectedRevision: 7, designSystemId: state.registry!.id, version: '1.0.0' };
+    expect((await restoreProjectDesignRuntimeAuthoringBase(scope, body)).state.authoringBase).toEqual(state.authoringBase);
+    expect(fetcher).toHaveBeenCalledWith('/api/projects/project/design-runtime/authoring-base', expect.objectContaining({ method: 'PUT', body: JSON.stringify(body), headers: expect.objectContaining({ 'x-od-workspace-id': 'team-a', 'x-od-workspace-member-id': 'member-a' }) }));
+    await expect(restoreProjectDesignRuntimeAuthoringBase(scope, { ...body, version: '1.1.0' })).rejects.toThrow('different editing baseline');
+  });
   it('preserves JSON and workspace authority through the analytics fetch header wrapper', async () => {
     const { result } = previewUiFixture();
     const scope: ProjectDesignRuntimeScope = {

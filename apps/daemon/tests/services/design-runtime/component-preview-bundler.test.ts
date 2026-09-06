@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
 import { bundleComponentPreview } from '../../../src/services/design-runtime/preview-bundler.js';
+import { createComponentPreviewService } from '../../../src/services/design-runtime/component-preview.js';
 
 // The daemon's existing DOM test runtime ships without TypeScript declarations.
 const { JSDOM } = createRequire(import.meta.url)('jsdom');
@@ -15,6 +16,45 @@ const sources = new Map<string, Uint8Array>([
 const read = async (path: string) => { const value = sources.get(path); if (!value) throw new Error('Missing'); return value; };
 
 describe('standalone component preview bundle', () => {
+  it('reports missing Provider context and renders a real local wrapper with imported props and editable JSON overrides', async () => {
+    const files = new Map([
+      ['types.ts', `export type CardProps={items:{label:string}[];variant:'compact'|'wide'};`],
+      ['theme.ts', `import {createContext} from 'react';export const Theme=createContext<{color:string}|null>(null);`],
+      ['Card.tsx', `import React,{memo,useContext} from 'react';import {Theme} from './theme';import type {CardProps} from './types';
+export default memo(function Card(props:CardProps){const theme=useContext(Theme);if(!theme)throw new Error('Card requires ThemeProvider');return <p style={{color:theme.color}}>{props.items.map(item=>item.label).join(',')}:{props.variant}</p>});`],
+      ['CardPreview.tsx', `import React from 'react';import Card from './Card';import {Theme} from './theme';import type {CardProps} from './types';
+export default function CardPreview(props:CardProps){return <Theme.Provider value={{color:'red'}}><Card {...props}/></Theme.Provider>}`],
+    ]);
+    const service = createComponentPreviewService({ acquireAuthority: async () => ({
+      readSourceFile: async (path) => { const content = files.get(path); if (content === undefined) throw new Error('Missing'); return { path, encoding: 'utf8', content }; },
+      assertCurrent: async () => {}, assertCurrentSync: () => {},
+    }) });
+    const props = { items: [{ label: 'Actual item' }], variant: 'compact' };
+    const naked = await service.componentPreview('project', { sourcePath: 'Card.tsx', props });
+    const wrapped = await service.componentPreview('project', { sourcePath: 'CardPreview.tsx', props });
+    expect(naked.bundle).not.toBeNull(); expect(wrapped.bundle).not.toBeNull();
+    expect(wrapped.diagnostics.some((entry) => entry.message.includes('unresolved'))).toBe(true);
+    const dom = new JSDOM('<div id="od-preview-root"></div>', { runScripts: 'outside-only' });
+    const report = vi.fn(); dom.window.__OD_PREVIEW_REPORT__ = report;
+    const log = vi.spyOn(dom.window.console, 'error').mockImplementation(() => {});
+    try {
+      dom.window.eval(naked.bundle!.javascript);
+      await vi.waitFor(() => expect(report).toHaveBeenCalledWith('error', expect.stringContaining('ThemeProvider')));
+      expect(report.mock.calls.some(([status]) => status === 'rendered')).toBe(false);
+    } finally { log.mockRestore(); dom.window.close(); }
+    const preview = new JSDOM('<div id="od-preview-root"></div>', { runScripts: 'outside-only' });
+    const updates = vi.fn(); preview.window.__OD_PREVIEW_REPORT__ = updates;
+    const quiet = vi.spyOn(preview.window.console, 'error').mockImplementation(() => {});
+    try {
+      preview.window.eval(wrapped.bundle!.javascript);
+      await vi.waitFor(() => expect(preview.window.document.querySelector('p')?.textContent).toBe('Actual item:compact'));
+      preview.window.__OD_COMPONENT_PREVIEW_UPDATE_PROPS__({ items: [null], variant: 'wide' });
+      await vi.waitFor(() => expect(updates.mock.calls.some(([status]) => status === 'error')).toBe(true));
+      preview.window.__OD_COMPONENT_PREVIEW_UPDATE_PROPS__({ items: [{ label: 'Recovered' }], variant: 'wide' });
+      await vi.waitFor(() => expect(preview.window.document.querySelector('p')?.textContent).toBe('Recovered:wide'));
+      expect(updates.mock.calls.at(-1)?.[0]).toBe('rendered');
+    } finally { quiet.mockRestore(); preview.window.close(); }
+  });
   it('provides the legacy React global before project top-level hooks and classes initialize', async () => {
     const sourceText = `const {useState}=React; class Label extends React.Component { render(){return <strong>{this.props.label}</strong>} }
 export default function Card(){const [label]=useState('Global React');return <Label label={label}/>}`;

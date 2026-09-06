@@ -5,6 +5,7 @@ import {
 } from '@open-design/contracts';
 import { extractSourceCodeComponent } from './source-compiler.js';
 import { codeComponentContractSignature, reindexComponentBindings, revalidateComponentBinding, unbindComponent, upsertComponentBinding } from './code-component-index.js';
+import type { TypeScriptSourceFiles } from './typescript-source-graph.js';
 
 export interface LocalComponentBindingContext {
   registry: ComponentRegistry | null;
@@ -31,11 +32,11 @@ export function composeProjectCodeIndex(base: CodeComponentIndex, project: CodeC
 }
 
 /** Explicit source proof + local revision verification commit as one immutable result. */
-export function registerLocalComponentBinding(context: LocalComponentBindingContext, input: RegisterLocalComponentBindingRequest): RegisterLocalComponentBindingResult {
+export function registerLocalComponentBinding(context: LocalComponentBindingContext, input: RegisterLocalComponentBindingRequest, sourceFiles?: TypeScriptSourceFiles): RegisterLocalComponentBindingResult {
   const request = RegisterLocalComponentBindingRequestSchema.parse(input);
   try {
     const previousIndex = composeProjectCodeIndex(context.baseCodeIndex, context.projectCodeIndex);
-    const code = extractSourceCodeComponent(request.source);
+    const code = extractSourceCodeComponent(request.source, sourceFiles);
     const projectCodeIndex = CodeComponentIndexSchema.parse({ ...context.projectCodeIndex,
       components: [...context.projectCodeIndex.components.filter((component) => component.id !== code.id), code].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0) });
     const codeIndex = composeProjectCodeIndex(context.baseCodeIndex, projectCodeIndex);
@@ -69,19 +70,20 @@ export function synchronizeLocalComponentBindings(context: LocalComponentBinding
 /** Checks supplied current source, never infers freshness from a previously registered index. */
 export function verifyProjectCodeSources(index: CodeComponentIndex, evidence: readonly ProjectCodeSourceEvidence[]): ValidationDiagnostic[] {
   const diagnostics: ValidationDiagnostic[] = [];
-  const sources = new Map<string, string>();
+  const sources = new Map<string, ProjectCodeSourceEvidence>();
   for (const entry of evidence) {
     if (sources.has(entry.codeComponentId) || !index.components.some((code) => code.id === entry.codeComponentId)) {
       diagnostics.push(diagnostic(`Project source evidence must identify each registered code component uniquely: ${entry.codeComponentId}.`, 'ODDS7004'));
     }
-    sources.set(entry.codeComponentId, entry.sourceText);
+    sources.set(entry.codeComponentId, entry);
   }
   for (const code of [...index.components].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0)) {
-    const sourceText = sources.get(code.id);
-    if (sourceText === undefined) { diagnostics.push(diagnostic(`Current source evidence is missing for project code ${code.id} at ${code.sourcePath}.`, 'ODDS7004')); continue; }
+    const evidence = sources.get(code.id);
+    if (evidence === undefined) { diagnostics.push(diagnostic(`Current source evidence is missing for project code ${code.id} at ${code.sourcePath}.`, 'ODDS7004')); continue; }
     try {
-      const extracted = extractSourceCodeComponent({ framework: code.framework, sourceText, sourcePath: code.sourcePath, exportName: code.exportName, codeComponentId: code.id,
-        ...(code.packageName === undefined ? {} : { packageName: code.packageName }) });
+      if (new Set(evidence.sourceFiles?.map((file) => file.sourcePath)).size !== (evidence.sourceFiles?.length ?? 0) || evidence.sourceFiles?.some((file) => file.sourcePath === code.sourcePath)) throw new Error('Source dependency evidence repeats a source identity.');
+      const extracted = extractSourceCodeComponent({ framework: code.framework, sourceText: evidence.sourceText, sourcePath: code.sourcePath, exportName: code.exportName, codeComponentId: code.id,
+        ...(code.packageName === undefined ? {} : { packageName: code.packageName }) }, new Map(evidence.sourceFiles?.map((file) => [file.sourcePath, file.sourceText])));
       if (codeComponentContractSignature(extracted) !== codeComponentContractSignature(code)) diagnostics.push(diagnostic(`Project code ${code.id} no longer matches its registered public source contract. Reindex and revalidate its bindings.`, 'ODDS7004'));
     } catch (error) { diagnostics.push(diagnostic(`Project code ${code.id} source cannot be verified: ${error instanceof Error ? error.message : String(error)}`, 'ODDS7004')); }
   }

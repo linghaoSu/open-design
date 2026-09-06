@@ -2,6 +2,9 @@ import type { Dict } from './types';
 
 /** English fallback for the design workspace until each locale translates it. */
 export const designWorkspaceFallback: Pick<Dict, Extract<keyof Dict, `designWorkspace.${string}`>> = {
+  "designWorkspace.legacyHtmlTitle": "Legacy HTML component inventory found",
+  "designWorkspace.legacyHtmlHint": "Review these files to preserve design references and migrate supported tokens. This does not convert HTML into React or Vue components; add code components separately.",
+  "designWorkspace.previewFile": "Preview file: {file}",
   "designWorkspace.noMatches": "No components match your search.",
   "designWorkspace.noComponents": "No components yet. Choose component files above to add your first.",
   "designWorkspace.backToComponents": "All components",
@@ -36,7 +39,7 @@ export const designWorkspaceFallback: Pick<Dict, Extract<keyof Dict, `designWork
   "designWorkspace.importHint": "Already have an exported package? Import and select its version.",
   "designWorkspace.legacyDetected": "Design system files found in this project",
   "designWorkspace.noSourceFiles": "Add React or Vue component files to your project to get started.",
-  "designWorkspace.exportHint": "For React, use a named export such as Button. Vue components use default.",
+  "designWorkspace.exportHint": "Choose the exported React component, for example Button or default. Vue components use default.",
   "designWorkspace.migrationFiles": "Choose what to keep",
   "designWorkspace.migrationDetails": "Name your design system",
   "designWorkspace.migrationReview": "Review and use",

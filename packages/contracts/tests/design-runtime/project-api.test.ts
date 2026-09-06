@@ -5,6 +5,7 @@ import {
   ProjectDesignRuntimeVersionsResponseSchema, ProjectDesignRuntimeVersionResponseSchema,
   ProjectDesignRuntimeImportVersionRequestSchema, ProjectDesignRuntimePublishVersionResponseSchema,
   ProjectDesignRuntimePublishCurrentRequestSchema, ProjectDesignRuntimeActivateDependencyRequestSchema,
+  ProjectDesignRuntimeRestoreAuthoringBaseRequestSchema,
   ProjectDesignRuntimeDependencyResponseSchema,
   ProjectDesignRuntimeSaveDocumentRequestSchema,
   ProjectDesignRuntimeValidateDocumentRequestSchema,
@@ -77,6 +78,15 @@ const resolution = { schemaVersion: 1, document, origins: [], diagnostics: [] };
 const impact = { schemaVersion: 1, componentRef: 'local:Local', baseRevision: 0, proposedRevision: 1, usages: references, current: resolution, proposed: resolution, diagnostics: [] };
 
 describe('project design runtime API contracts', () => {
+  it('round-trips an exact authoring baseline and rejects unrelated identities or implicit latest recovery', () => {
+    const authoringBase = { designSystemId: 'test', version: '1.0.0', digest: `sha256:${'a'.repeat(64)}`, source: { type: 'bundle', digest: `sha256:${'b'.repeat(64)}` } };
+    expect(ProjectDesignRuntimeStateSchema.parse({ ...state, authoringBase })).toEqual({ ...state, authoringBase });
+    expect(ProjectDesignRuntimeStateSchema.safeParse({ ...state, authoringBase: { ...authoringBase, designSystemId: 'other' } }).success).toBe(false);
+    expect(ProjectDesignRuntimeRestoreAuthoringBaseRequestSchema.parse({ expectedRevision: 1, designSystemId: 'test', version: '1.0.0' })).toEqual({ expectedRevision: 1, designSystemId: 'test', version: '1.0.0' });
+    expect(ProjectDesignRuntimeRestoreAuthoringBaseRequestSchema.safeParse({ expectedRevision: 1, designSystemId: 'test', version: 'latest' }).success).toBe(false);
+    expect(ProjectDesignRuntimeRestoreAuthoringBaseRequestSchema.safeParse({ expectedRevision: 1, designSystemId: 'test', version: '1.0.0', package: {} }).success).toBe(false);
+    expect(ProjectDesignRuntimePublishCurrentRequestSchema.parse({ expectedRevision: 1, name: 'Test', version: '1.1.0', sourcePaths: [] }).sourcePaths).toEqual([]);
+  });
   it.each([
     { name: 'save document', schema: ProjectDesignRuntimeSaveDocumentRequestSchema, value: { expectedRevision: 1, document } },
     { name: 'validate document', schema: ProjectDesignRuntimeValidateDocumentRequestSchema, value: { document } },
@@ -175,7 +185,7 @@ describe('project exact-version API contracts', () => {
   it('rejects implicit versions, unsafe or duplicate selected paths, and source bytes in the summary', () => {
     for (const value of ['latest', '*', '^1.0.0']) expect(ProjectDesignRuntimeActivateDependencyRequestSchema.safeParse({ ...activate, version: value }).success).toBe(false);
     expect(ProjectDesignRuntimeActivateDependencyRequestSchema.safeParse({ ...activate, range: 'latest' }).success).toBe(false);
-    for (const sourcePaths of [[], ['../Button.tsx'], ['/Button.tsx'], ['src/Button.tsx', 'SRC/button.tsx'], ['src', 'src/Button.tsx']]) expect(ProjectDesignRuntimePublishCurrentRequestSchema.safeParse({ ...publish, sourcePaths }).success).toBe(false);
+    for (const sourcePaths of [['../Button.tsx'], ['/Button.tsx'], ['src/Button.tsx', 'SRC/button.tsx'], ['src', 'src/Button.tsx']]) expect(ProjectDesignRuntimePublishCurrentRequestSchema.safeParse({ ...publish, sourcePaths }).success).toBe(false);
     expect(ProjectDesignRuntimeVersionsResponseSchema.safeParse({ revision: 1, versions: [{ ...summary, package: pkg }] }).success).toBe(false);
     expect(ProjectDesignRuntimeImportVersionRequestSchema.safeParse({ expectedRevision: -1, package: pkg }).success).toBe(false);
   });

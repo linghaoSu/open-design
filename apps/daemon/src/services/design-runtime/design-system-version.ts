@@ -194,7 +194,7 @@ export function validateDesignSystemPackage(input: DesignSystemPackage): Validat
           try {
             const text = bytes.toString('utf8');
             if (!Buffer.from(text, 'utf8').equals(bytes)) throw new DesignSystemVersionError([error('ODDS5005', `Code source ${code.sourcePath} is not UTF-8 text.`)]);
-            const extracted = extractSourceCodeComponent({ framework: code.framework, sourceText: text, sourcePath: code.sourcePath, exportName: code.exportName, codeComponentId: code.id, ...(code.packageName === undefined ? {} : { packageName: code.packageName }) });
+            const extracted = extractSourceCodeComponent({ framework: code.framework, sourceText: text, sourcePath: code.sourcePath, exportName: code.exportName, codeComponentId: code.id, ...(code.packageName === undefined ? {} : { packageName: code.packageName }) }, new Map([...files].filter(([path]) => /\.[jt]sx?$/.test(path)).map(([path, bytes]) => [path, bytes.toString('utf8')])));
             const propFacts = (props: typeof code.props) => Object.fromEntries(Object.entries(props).map(([name, { source: _source, ...definition }]) => [name, definition]));
             const slotFacts = (slots: typeof code.slots) => Object.fromEntries(Object.entries(slots ?? {}).map(([name, { source: _source, ...definition }]) => [name, definition]));
             if (canonicalDesignSystemJson(propFacts(extracted.props)) !== canonicalDesignSystemJson(propFacts(code.props))) diagnostics.push(error('ODDS5007', `Verified code metadata ${code.id} contradicts its frozen source props.`, ['codeIndex', code.id, 'props']));

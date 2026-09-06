@@ -102,11 +102,12 @@ import {
   workspaceAnalyticsDimensions,
 } from '../analytics/workspace';
 import { WorkbenchCampaignBadge } from './WorkbenchCampaignBadge';
+import { DESIGN_LOOM_PRODUCT } from '@open-design/contracts';
 import { workspaceChromeAccountActionsHost } from './workspaceChromeActions';
 
-const REPO_URL = 'https://github.com/nexu-io/open-design';
+const REPO_URL = DESIGN_LOOM_PRODUCT.repositoryUrl;
 const GITHUB_HELP_URL = `${REPO_URL}/issues/new`;
-const GITHUB_FEATURE_URL = `${REPO_URL}/pulls`;
+const GITHUB_FEATURE_URL = `${REPO_URL}/issues/new`;
 const DISCORD_URL = 'https://discord.gg/mHAjSMV6gz';
 const X_URL = 'https://x.com/OpenDesignHQ';
 const CONTACT_EMAIL_URL = 'mailto:support@open-design.ai';

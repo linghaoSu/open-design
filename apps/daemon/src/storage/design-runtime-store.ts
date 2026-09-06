@@ -100,6 +100,7 @@ export function createDesignRuntimeStore(db: Database.Database): DesignRuntimeSt
       revision: 0,
       validationSettings: defaultProjectDesignValidationSettings(),
       registry: null,
+      authoringBase: null,
       codeIndex: { schemaVersion: 1, id: projectId, components: [] },
       projectCodeIndex: { schemaVersion: 1, id: projectId, components: [] },
       bindings: { schemaVersion: 1, id: projectId, bindings: [] },
@@ -118,7 +119,9 @@ export function createDesignRuntimeStore(db: Database.Database): DesignRuntimeSt
     const legacyValidation = withProjectCode !== null && typeof withProjectCode === 'object' && !Array.isArray(withProjectCode) && !Object.hasOwn(withProjectCode, 'validationSettings');
     const withValidation = legacyValidation ? { ...withProjectCode, validationSettings: defaultProjectDesignValidationSettings() } : withProjectCode;
     const legacyTargets = withValidation !== null && typeof withValidation === 'object' && !Array.isArray(withValidation) && !Object.hasOwn(withValidation, 'generationTargets');
-    const state = ProjectDesignRuntimeStateSchema.parse(legacyTargets ? { ...withValidation, generationTargets: defaultDesignGenerationTargets() } : withValidation);
+    const withTargets = legacyTargets ? { ...withValidation, generationTargets: defaultDesignGenerationTargets() } : withValidation;
+    const legacyAuthoring = withTargets !== null && typeof withTargets === 'object' && !Array.isArray(withTargets) && !Object.hasOwn(withTargets, 'authoringBase');
+    const state = ProjectDesignRuntimeStateSchema.parse(legacyAuthoring ? { ...withTargets, authoringBase: null } : withTargets);
     if (state.codeIndex.id !== projectId || state.projectCodeIndex.id !== projectId || state.bindings.id !== projectId || state.projectComponents.id !== projectId || state.sharedChanges.id !== projectId || state.dependencies.id !== projectId || state.lock.id !== projectId || (row && state.revision !== row.revision)) {
       throw new Error('Persisted design runtime identity or revision is inconsistent.');
     }

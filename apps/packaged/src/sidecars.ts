@@ -658,6 +658,7 @@ export function buildPackagedDaemonSpawnEnv(
 ): NodeJS.ProcessEnv {
   return {
     [SIDECAR_ENV.DAEMON_PORT]: "0",
+    OPEN_DESIGN_VELA_TELEMETRY: "0",
     ...(options.daemonCliEntry == null ? {} : { [SIDECAR_ENV.DAEMON_CLI_PATH]: options.daemonCliEntry }),
     // PR #974 round-4 P1 + round-5 P2: pinned ON when a desktop is
     // being started, OFF for headless. The daemon-side flag refuses
@@ -935,7 +936,7 @@ export async function startPackagedSidecars(
         amrProfile: options.amrProfile,
         daemonCliEntry: options.daemonCliEntry,
         desktopHandoffEnv: process.env,
-        legacyDataDir: process.env.OD_LEGACY_DATA_DIR ?? null,
+        legacyDataDir: null,
         mcpBootstrapArgs: options.mcpBootstrapArgs,
         mcpBootstrapCommand: options.mcpBootstrapCommand,
         nodeCommand: options.nodeCommand,

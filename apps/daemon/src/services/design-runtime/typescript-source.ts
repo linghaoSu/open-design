@@ -4,10 +4,13 @@ export type TypeDeclaration = t.TSInterfaceDeclaration | t.TSTypeAliasDeclaratio
 type Scalar = string | number | boolean | null;
 export interface TypeScriptSourceContext {
   types: Map<string, TypeDeclaration[]>;
+  sourcePath?: string;
+  unresolvedTypes?: Map<string, string>;
+  contextFor?(declaration: TypeDeclaration): TypeScriptSourceContext;
   fail(message: string, node?: t.Node): never;
 }
 
-/** Shared syntax-only scalar vocabulary; never loads imported type declarations. */
+/** Shared syntax-only scalar vocabulary; imports require explicitly supplied local source scopes. */
 export function propertyName(node: t.Node, ctx: TypeScriptSourceContext): string {
   if (node.type === 'Identifier') return node.name;
   if (node.type === 'StringLiteral') return node.value;
@@ -19,13 +22,14 @@ export function resolveReference(node: t.TSTypeReference, ctx: TypeScriptSourceC
     ctx.fail('Qualified and generic type references are unsupported', node);
   }
   const name = node.typeName.name;
-  if (seen.has(name)) ctx.fail(`Cyclic type reference: ${name}`, node);
-  seen.add(name);
+  const identity = `${ctx.sourcePath ?? ''}:${name}`;
+  if (seen.has(identity)) ctx.fail(`Cyclic type reference: ${name}`, node);
+  seen.add(identity);
   const declarations = ctx.types.get(name);
-  if (!declarations?.length) ctx.fail(`Type ${name} must be declared in the same source; imported types are unsupported`, node);
+  if (!declarations?.length) ctx.fail(`Type ${name} must be declared in the same source or the supplied local type files. ${ctx.unresolvedTypes?.get(name) ?? 'Include its defining project file; external or unresolved types need an explicit local props adapter'}`, node);
   if (declarations.length !== 1) ctx.fail(`Merged or ambiguous type declarations are unsupported: ${name}`, node);
   const declaration = declarations[0]!;
-  if (declaration.typeParameters) ctx.fail(`Generic type declaration is unsupported: ${name}`, declaration);
+  if (declaration.typeParameters) (ctx.contextFor?.(declaration) ?? ctx).fail(`Generic type declaration is unsupported: ${name}`, declaration);
   return declaration;
 }
 
@@ -34,8 +38,8 @@ export function resolveMembers(node: t.TSType, ctx: TypeScriptSourceContext, see
   if (node.type === 'TSTypeLiteral') return node.members;
   if (node.type === 'TSTypeReference') {
     const declaration = resolveReference(node, ctx, seen);
-    if (declaration.type === 'TSTypeAliasDeclaration') return resolveMembers(declaration.typeAnnotation, ctx, seen);
-    if (declaration.extends?.length) ctx.fail('Interface inheritance is unsupported', declaration);
+    if (declaration.type === 'TSTypeAliasDeclaration') return resolveMembers(declaration.typeAnnotation, ctx.contextFor?.(declaration) ?? ctx, seen);
+    if (declaration.extends?.length) (ctx.contextFor?.(declaration) ?? ctx).fail('Interface inheritance is unsupported', declaration);
     return declaration.body.body;
   }
   ctx.fail(`Unsupported props type ${node.type}; expected a local interface or type literal`, node);
@@ -56,7 +60,7 @@ export function compilePropType(node: t.TSType, ctx: TypeScriptSourceContext, se
     case 'TSTypeReference': {
       const declaration = resolveReference(node, ctx, seen);
       if (declaration.type !== 'TSTypeAliasDeclaration') ctx.fail('Object props are unsupported', node);
-      return compilePropType(declaration.typeAnnotation, ctx, seen);
+      return compilePropType(declaration.typeAnnotation, ctx.contextFor?.(declaration) ?? ctx, seen);
     }
     case 'TSUnionType': {
       const values: Scalar[] = [];

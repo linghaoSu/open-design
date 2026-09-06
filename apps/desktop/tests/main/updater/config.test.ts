@@ -12,6 +12,19 @@ function makeRoot(): string {
 }
 
 describe("desktop updater config", () => {
+  it('never enables an upstream updater for the Design Loom distribution, even with ambient overrides', () => {
+    const config = resolveDesktopUpdaterConfig({
+      source: SIDECAR_SOURCES.PACKAGED,
+      namespace: 'design-loom',
+      currentVersion: '0.1.0-beta.1',
+      env: {
+        OD_UPDATE_ENABLED: '1', OD_UPDATE_AUTO_CHECK: '1', OD_UPDATE_AUTO_DOWNLOAD: '1', OD_UPDATE_AUTO_OPEN: '1',
+        OD_UPDATE_METADATA_URL: 'https://releases.open-design.ai/beta/latest/metadata.json',
+      },
+    });
+    expect(config).toMatchObject({ enabled: false, autoCheck: false, autoDownload: false, autoOpen: false });
+    expect(config.metadataUrl).toBe('https://updates.invalid/design-loom');
+  });
   it("defaults counted beta internal builds to the beta update channel", () => {
     const root = makeRoot();
     try {

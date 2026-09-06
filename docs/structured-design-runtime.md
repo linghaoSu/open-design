@@ -239,6 +239,7 @@ All paths below are relative to `/api/projects/:id/design-runtime`:
 | Activate an exact version and declared range | `POST /dependency` | `activate-dependency <projectId> --prompt-file <path\|->` |
 | Resolve the exact lock | `GET /dependency/resolve` | `resolve-dependency <projectId>` |
 | Clear the active dependency explicitly | `DELETE /dependency` | `clear-dependency <projectId>` |
+| Restore an exact editing baseline for an unlocked project | `PUT /authoring-base` | `restore-authoring-base <projectId> --prompt-file <path\|->` |
 | Review an exact-version migration | `POST /upgrades/review` | `review-upgrade <projectId> --prompt-file <path\|->` |
 | Apply the reviewed migration | `POST /upgrades/apply` | `apply-upgrade <projectId> --prompt-file <path\|->` |
 | List exact-package migration recipes | `GET /versions/:designSystemId/:version/migrations` | `migration-recipes <projectId> <designSystemId> <exactVersion>` |
@@ -351,13 +352,16 @@ source digest covers exact path/byte pairs. Publication and the project revision
 advance together in one transaction. Republishing an exact version with different
 content fails and leaves both records intact. Catalogs are scoped to the project.
 
-`publish-version` reads only explicitly selected project source paths. Those files
-must be valid UTF-8; the daemon preserves the BOM and line endings. Supply explicit
-constraints for the initial publication. Subsequent publication from a locked
-version preserves its tokens, patterns, constraints and compatibility declarations
-unless the request provides typed replacements. `import-version` accepts a full
-package and supports base64 entries for binary assets. The list and project
-snapshot omit frozen source bytes; exact version export includes the full package.
+`publish-version` reads explicitly selected project source paths as updates to the
+exact editing baseline. Unselected frozen files stay in the package. Text retains
+its BOM and line endings; binary assets use base64 without changing their bytes.
+Supply constraints and source files for the initial publication. Later publication
+inherits tokens, patterns, constraints, compatibility declarations, origin and
+migrations unless the request provides typed replacements. An empty `sourcePaths`
+list preserves all baseline files. The daemon rechecks selected source bytes,
+project authority and revision before committing. `import-version` accepts a full
+package. The list and project snapshot omit frozen source bytes; exact version
+export includes the full package.
 
 Publishing a version does not activate it. Activation selects an exact version
 and a declared range such as `^1.0.0`, then validates the current project against
@@ -377,7 +381,21 @@ A missing or tampered locked version returns structured diagnostics. The depende
 resolution endpoint remains readable and returns the current revision for recovery.
 Explicitly clearing the dependency retains the stored working registry and document;
 it preserves the saved validation mode and copies verified locked constraints into
-the project policy. An unavailable Guided/Strict lock requires explicitly saving
+the project policy. It also saves `authoringBase`, an exact immutable package
+reference, so metadata and source assets remain available after reopening and
+recompiling. An unlocked successful publication advances this editing baseline;
+publication with an active lock and ordinary package import do not switch it.
+
+Older projects that already cleared their lock may have no recorded baseline.
+In **Versions**, select the intended catalog version and click **Use selected
+version as editing baseline**. The equivalent CLI is
+`restore-authoring-base --prompt-file` with `{designSystemId,version}` and the usual
+revision. This explicitly restores metadata/source inheritance without replacing
+current components, bindings or documents, and without activating a lock. The
+daemon never guesses the latest version. To intentionally remove retained files,
+import a complete replacement package and use the reviewed upgrade flow.
+
+An unavailable Guided/Strict lock requires explicitly saving
 Explore before clearing; recovery does not claim the missing package was verified.
 There is no latest-version
 fallback or automatic upgrade.

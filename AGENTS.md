@@ -1,5 +1,18 @@
 # Directory guide
 
+## Independent fork identity
+
+This repository is **Design Loom**, an independently maintained OpenDesign fork.
+The canonical product identity is `DESIGN_LOOM_PRODUCT` in `packages/release`.
+User-facing branding, packaged application identity, protocols and updater policy
+must consume that identity. Existing `@open-design/*` package names and internal
+wire identifiers remain compatibility boundaries, not public product branding.
+The fork must coexist with installed OpenDesign: never overwrite its application,
+claim its protocol or CLI shim, adopt its data, or consume its updater feed.
+The fork's own identity supersedes the upstream release display-name examples below.
+Keep upstream attribution and license notices. Work targets the user's `origin`
+fork; do not open or merge an upstream pull request or push to `upstream`.
+
 This file is the single source of truth for agents entering this repository. Read this file first; after entering `apps/`, `packages/`, `tools/`, or `e2e/`, read that layer's `AGENTS.md` for module-level details. Do not copy module details back into the root file; root stays focused on cross-repository boundaries, workflow, and commands.
 
 ## Core documentation index

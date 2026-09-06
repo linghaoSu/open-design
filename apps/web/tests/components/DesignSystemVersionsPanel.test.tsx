@@ -16,6 +16,7 @@ vi.mock('../../src/providers/design-runtime', async () => ({
   getProjectDesignRuntime: vi.fn(), listProjectDesignRuntimeVersions: vi.fn(), getProjectDesignRuntimeVersion: vi.fn(),
   resolveProjectDesignRuntimeDependency: vi.fn(), publishProjectDesignRuntimeVersion: vi.fn(),
   activateProjectDesignRuntimeDependency: vi.fn(), clearProjectDesignRuntimeDependency: vi.fn(), importProjectDesignRuntimeVersion: vi.fn(),
+  restoreProjectDesignRuntimeAuthoringBase: vi.fn(),
 }));
 const scope = { projectId: 'project-a', workspaceContext: workspaceContextFixture({ workspaceId: 'workspace-a', workspaceMemberId: 'member-a' }) };
 const files = [{ name: 'src/Button.tsx' }, { name: 'DESIGN.md' }];
@@ -43,7 +44,7 @@ function server(initial = designRuntimeState(), existing: DesignSystemVersion[] 
   vi.mocked(provider.resolveProjectDesignRuntimeDependency).mockImplementation(async () => ({ revision: state.revision, resolution: { schemaVersion: 1, ok: true, diagnostics: [], versions: versions.filter((entry) => state.lock.dependencies.some((lock) => lock.version === entry.package.version)) } }));
   vi.mocked(provider.publishProjectDesignRuntimeVersion).mockImplementation(async (_scope, input) => {
     const value = versionFixture(input.version); value.package.name = input.name;
-    const constraints = input.constraints ?? versions.find((entry) => state.lock.dependencies.some((lock) => lock.version === entry.package.version))?.package.constraints;
+    const constraints = input.constraints ?? versions.find((entry) => state.lock.dependencies.some((lock) => lock.version === entry.package.version) || state.authoringBase?.version === entry.package.version)?.package.constraints;
     if (!constraints) throw new Error('Initial publication requires constraints');
     value.package.constraints = constraints;
     versions.push(value); state = { ...state, revision: state.revision + 1 };
@@ -56,7 +57,12 @@ function server(initial = designRuntimeState(), existing: DesignSystemVersion[] 
     return { state: structuredClone(state) };
   });
   vi.mocked(provider.clearProjectDesignRuntimeDependency).mockImplementation(async () => {
-    state = { ...state, revision: state.revision + 1, dependencies: { ...state.dependencies, dependencies: [] }, lock: { ...state.lock, dependencies: [] } };
+    state = { ...state, authoringBase: state.lock.dependencies[0] ?? null, revision: state.revision + 1, dependencies: { ...state.dependencies, dependencies: [] }, lock: { ...state.lock, dependencies: [] } };
+    return { state: structuredClone(state) };
+  });
+  vi.mocked(provider.restoreProjectDesignRuntimeAuthoringBase).mockImplementation(async (_scope, input) => {
+    const selected = versions.find((entry) => entry.package.id === input.designSystemId && entry.package.version === input.version)!;
+    state = { ...state, revision: state.revision + 1, authoringBase: { designSystemId: input.designSystemId, version: input.version, digest: selected.digest, source: { type: 'bundle', digest: selected.sourceDigest } } };
     return { state: structuredClone(state) };
   });
   return { get state() { return state; }, versions, replace(value: ProjectDesignRuntimeState) { state = value; } };
@@ -76,10 +82,83 @@ beforeEach(() => vi.resetAllMocks());
 afterEach(() => { cleanup(); resetWorkspaceAccountGeneration(); });
 
 describe('DesignSystemVersionsPanel', () => {
+  it('preselects only compiled roots and explicit type provenance for a first publication, preserving user exclusions across refresh', async () => {
+    const initial = designRuntimeState();
+    const code = initial.codeIndex.components[0]!;
+    code.props.variant!.source = { kind: 'typescript', sourcePath: 'src/types/Props.ts', exportName: 'Button', line: 3 };
+    const available = [...files, { name: 'src/types/Props.ts' }, { name: 'src/unrelated.ts' }];
+    server(initial);
+    const props = { scope, state: initial, files: available, viewerOnly: false, onState: vi.fn() };
+    const view = render(<DesignSystemVersionsPanel {...props} />); await ready();
+    expect(input('versions-source-src/Button.tsx').checked).toBe(true);
+    expect(input('versions-source-src/types/Props.ts').checked).toBe(true);
+    expect(input('versions-source-src/unrelated.ts').checked).toBe(false);
+    expect(input('versions-source-DESIGN.md').checked).toBe(false);
+    fireEvent.click(input('versions-source-src/types/Props.ts'));
+    view.rerender(<DesignSystemVersionsPanel {...props} state={structuredClone(initial)} />);
+    fireEvent.click(input('versions-refresh')); await ready();
+    expect(input('versions-source-src/types/Props.ts').checked).toBe(false);
+    fireEvent.click(input('versions-publish')); await ready();
+    expect(vi.mocked(provider.publishProjectDesignRuntimeVersion).mock.calls[0]![1].sourcePaths).toEqual(['src/Button.tsx']);
+    view.unmount();
+    const existing = { ...initial, authoringBase: lockedState().lock.dependencies[0]! };
+    server(existing, [versionFixture()]);
+    render(<DesignSystemVersionsPanel {...props} state={existing} />); await ready();
+    expect(input('versions-source-src/Button.tsx').checked).toBe(false);
+    expect(input('versions-source-src/types/Props.ts').checked).toBe(false);
+  });
+
+  it('restores an exact baseline without replacing edits, survives remount and publishes without overwriting inherited policy', async () => {
+    const pkg = versionFixture(); pkg.package.constraints.guided.rawCss.colors = 'warning';
+    const initial = designRuntimeState(); initial.registry!.components[0]!.name = 'Edited component';
+    const stored = server(initial, [pkg, versionFixture('1.1.0')]);
+    const first = render(<Harness initial={initial} />); await ready();
+    expect(provider.restoreProjectDesignRuntimeAuthoringBase).not.toHaveBeenCalled();
+    fireEvent.click(input('versions-restore-authoring-base')); await ready();
+    expect(vi.mocked(provider.restoreProjectDesignRuntimeAuthoringBase).mock.calls[0]).toEqual([expect.objectContaining(scope), { expectedRevision: initial.revision, designSystemId: 'test', version: '1.0.0' }]);
+    expect(stored.state.registry).toEqual(initial.registry);
+    expect(stored.state.lock.dependencies).toEqual([]);
+    first.unmount(); render(<Harness initial={stored.state} />); await ready();
+    expect(screen.getByTestId('versions-authoring-base').textContent).toContain('test@1.0.0');
+    expect(input('versions-policy-guided-rawColors').value).toBe('warning');
+    expect(input('versions-publish').disabled).toBe(false);
+    fireEvent.change(input('versions-version'), { target: { value: '1.2.0' } });
+    fireEvent.click(input('versions-publish')); await ready();
+    const request = vi.mocked(provider.publishProjectDesignRuntimeVersion).mock.calls[0]![1];
+    expect(request.sourcePaths).toEqual([]);
+    expect(request.constraints).toBeUndefined();
+    expect(stored.versions.find((entry) => entry.package.version === '1.2.0')!.package.constraints.guided.rawCss.colors).toBe('warning');
+  });
+
+  it('keeps restoration read-only for viewers and never retries a conflicted baseline selection', async () => {
+    const initial = designRuntimeState(); const pkg = versionFixture(); server(initial, [pkg]);
+    const view = render(<Harness initial={initial} viewerOnly />); await ready();
+    expect(input('versions-restore-authoring-base').disabled).toBe(true);
+    view.unmount(); render(<Harness initial={initial} />); await ready();
+    vi.mocked(provider.restoreProjectDesignRuntimeAuthoringBase).mockRejectedValueOnce(new provider.ProjectDesignRuntimeError(409, { code: 'DESIGN_RUNTIME_REVISION_CONFLICT', message: 'Changed', details: { expectedRevision: initial.revision, currentRevision: initial.revision + 1 } }));
+    fireEvent.click(input('versions-restore-authoring-base')); await ready();
+    expect(provider.restoreProjectDesignRuntimeAuthoringBase).toHaveBeenCalledOnce();
+    expect(provider.publishProjectDesignRuntimeVersion).not.toHaveBeenCalled();
+  });
+
+  it('keeps the catalog available when a previous authoring baseline is missing', async () => {
+    const initial = designRuntimeState();
+    initial.authoringBase = lockedState().lock.dependencies[0]!;
+    const replacement = versionFixture('1.1.0'); server(initial, [replacement]);
+    vi.mocked(provider.getProjectDesignRuntimeVersion).mockImplementation(async (_scope, _id, version) => {
+      if (version === '1.0.0') throw new Error('Editing baseline is unavailable');
+      return { revision: initial.revision, version: replacement };
+    });
+    render(<Harness initial={initial} />); await ready();
+    expect(screen.getByRole('alert').textContent).toContain('Editing baseline is unavailable');
+    expect(input('versions-restore-authoring-base').disabled).toBe(false);
+    expect((input('versions-select') as unknown as HTMLSelectElement).value).toBe(key('1.1.0'));
+  });
+
   it('publishes selected source and policies, activates explicitly, and leaves the exact lock unchanged on another publication', async () => {
     const stored = server(); const accepted = vi.fn();
     render(<StrictMode><Harness accepted={accepted} /></StrictMode>); await ready();
-    expect(input('versions-publish').disabled).toBe(true);
+    expect(input('versions-publish').disabled).toBe(false);
     fillPublish(); fireEvent.change(input('versions-policy-explore-rawColors'), { target: { value: 'off' } });
     fireEvent.click(input('versions-publish')); await ready();
     expect(provider.publishProjectDesignRuntimeVersion).toHaveBeenCalledOnce();

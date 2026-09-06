@@ -58,6 +58,21 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('DesignRuntimePanel', () => {
+  it('offers the existing migration flow for a verified legacy HTML inventory without treating ordinary HTML as a design system', async () => {
+    vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state: emptyDesignRuntimeState() });
+    const view = render(<DesignRuntimePanel {...panelProps} files={[{ name: 'index.html' }, { name: 'pages/components.html' }]} />);
+    await openCode();
+    expect(screen.queryByTestId('design-runtime-legacy-html')).toBeNull();
+    view.rerender(<DesignRuntimePanel {...panelProps} files={[{ name: 'components.html' }, { name: 'tokens.css' }, { name: 'DESIGN.md' }]} />);
+    const notice = screen.getByTestId('design-runtime-legacy-html');
+    expect(notice).toBeVisible(); expect(notice).toHaveTextContent('does not convert HTML into React');
+    fireEvent.click(screen.getByTestId('design-runtime-migrate-html'));
+    expect(screen.getByTestId('legacy-step-name')).toBeVisible();
+    fireEvent.click(screen.getByTestId('legacy-continue'));
+    expect(screen.getByTestId('legacy-source-components.html')).toBeChecked();
+    expect(provider.compileProjectDesignRuntime).not.toHaveBeenCalled();
+  });
+
   it('starts on the overview with setup choices and keeps advanced tools out of the initial view', async () => {
     vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state: emptyDesignRuntimeState() });
     render(<DesignRuntimePanel {...panelProps} />);
@@ -132,6 +147,17 @@ describe('DesignRuntimePanel', () => {
     await openCode();
     fireEvent.click(screen.getByTestId('design-runtime-preview-source'));
     expect(onOpenSource).toHaveBeenCalledWith('src/Button.tsx', 'Button');
+  });
+
+  it('opens an unregistered source selection in the real file preview without requiring compilation', async () => {
+    const onOpenSource = vi.fn();
+    vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state: emptyDesignRuntimeState() });
+    render(<DesignRuntimePanel {...panelProps} onOpenSource={onOpenSource} />);
+    await openCode();
+    fireEvent.change(control('design-runtime-export-name-0'), { target: { value: 'default' } });
+    fireEvent.click(screen.getByTestId('design-runtime-preview-selection-0'));
+    expect(onOpenSource).toHaveBeenCalledWith('src/Button.tsx', 'default');
+    expect(provider.compileProjectDesignRuntime).not.toHaveBeenCalled();
   });
 
   it('renders the actual source preview inline with current scope and keeps it mounted across navigation', async () => {

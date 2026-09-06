@@ -23,12 +23,37 @@ function setup(readSource = vi.fn(async (_projectId: string, _sourcePath: string
 }
 
 describe('project design runtime service', () => {
-  it('reads grouped story files once through project authority and persists mixed compilation atomically', async () => {
+  it('pins the bounded source authority across recursive reads and rejects final root or permission changes atomically', async () => {
+    const { store, readSource } = setup();
+    const files = new Map([['src/ui.tsx', "import type {Props} from './types';export function Button(props:Props){return null}"], ['src/types.ts', "export interface Props{variant?:'primary'|'secondary'}"]]);
+    let changed = false;
+    const events: string[] = [];
+    const acquireCompilationAuthority = vi.fn(async () => ({
+      identity: 'captured-project-root',
+      readSourceFile: async (path: string) => { events.push(path); const content = files.get(path); if (content === undefined) throw new Error('Missing source'); return { path, encoding: 'utf8' as const, content }; },
+      assertCurrent: async () => { events.push('authority'); if (changed) throw new Error('Project root changed'); },
+      assertCurrentSync: () => { events.push('final-authority'); if (changed) throw new Error('Project root changed'); },
+    }));
+    const service = createProjectDesignRuntimeService({ store, readSource, acquireCompilationAuthority });
+    const reauthorize = vi.fn(async () => { events.push('permission'); });
+    const first = await service.compile('project', request, reauthorize);
+    expect(acquireCompilationAuthority).toHaveBeenCalledTimes(1);
+    expect(readSource).not.toHaveBeenCalled();
+    expect(events).toEqual(['src/ui.tsx', 'src/types.ts', 'src/ui.tsx', 'src/types.ts', 'authority', 'permission', 'final-authority']);
+    await expect(service.compile('project', { ...request, expectedRevision: first.revision }, async () => { changed = true; })).rejects.toThrow('Project root changed');
+    expect(store.read('project')).toEqual(first);
+    changed = false;
+    await expect(service.compile('project', { ...request, expectedRevision: first.revision }, async () => { throw new Error('Permission revoked'); })).rejects.toThrow('Permission revoked');
+    expect(store.read('project')).toEqual(first);
+  });
+
+  it('reads grouped story files through project authority, rechecks their bytes, and persists mixed compilation atomically', async () => {
     const { request, sources } = mixedProjectCompilerRequest();
     const read = vi.fn(async (_project: string, path: string) => { const text = sources.get(path); if (text === undefined) throw new Error('Missing source'); return text; });
     const { service } = setup(read);
     const state = await service.compile('project', request);
-    expect(read.mock.calls).toEqual([...sources.keys()].map((path) => ['project', path]));
+    for (const path of sources.keys()) expect(read.mock.calls.filter((call) => call[1] === path)).toHaveLength(2);
+    expect(new Set(read.mock.calls.map((call) => call[1]))).toEqual(new Set([...sources.keys(), 'src/SlotCard.ts']));
     expect(state.registry!.components.map((component) => component.stories?.length)).toEqual([2, 1]);
     expect(JSON.stringify(state)).not.toContain('sourceText');
     sources.set('src/VueButton.stories.ts', 'export default { component: Unknown }; export const Primary = {};');
@@ -38,10 +63,10 @@ describe('project design runtime service', () => {
     await expect(service.compile('project', { ...request, expectedRevision: state.revision })).rejects.toMatchObject({ code: 'DESIGN_RUNTIME_SOURCE_UNAVAILABLE' });
     expect(service.get('project')).toEqual(state);
   });
-  it('compiles shared source once, retains deterministic metadata, and never persists source text', async () => {
+  it('reads shared source once per proof pass, retains deterministic metadata, and never persists source text', async () => {
     const { service, readSource } = setup();
     const state = await service.compile('project', { ...request, selections: [selection, { ...selection, exportName: 'Card', componentId: 'card', codeComponentId: 'ui/Card' }] });
-    expect(readSource).toHaveBeenCalledExactlyOnceWith('project', 'src/ui.tsx');
+    expect(readSource.mock.calls).toEqual([['project', 'src/ui.tsx'], ['project', 'src/ui.tsx']]);
     expect(state.revision).toBe(1);
     expect(state.codeIndex.id).toBe('project');
     expect(state.bindings.id).toBe('project');
@@ -52,6 +77,18 @@ describe('project design runtime service', () => {
     expect(service.components('project', 'BUTTON').components.map((entry) => entry.id)).toEqual(['button']);
     expect(service.codeComponents('project', 'src/ui card').components.map((entry) => entry.id)).toEqual(['ui/Card']);
     expect(service.validate('project', { component: 'ds:test/button', props: { variant: 'filled' } }).diagnostics[0]?.code).toBe('ODDS1003');
+  });
+
+  it('compiles local imported props atomically and rejects changed type bytes before persisting', async () => {
+    const files = new Map([['src/ui.tsx', "import type {Props} from './types';import {memo} from 'react';export const Button=memo((props:Props)=><button/>);"], ['src/types.ts', "export interface Props{variant?:'primary'|'secondary'}"]]);
+    const read = vi.fn(async (_project: string, path: string) => { const text = files.get(path); if (text === undefined) throw new Error('Missing'); return text; });
+    const { service, store } = setup(read);
+    const state = await service.compile('project', request);
+    expect(state.codeIndex.components[0]!.props.variant).toMatchObject({ type: 'enum', values: ['primary', 'secondary'] });
+    let typeReads = 0;
+    read.mockImplementation(async (_project, path) => { const text = files.get(path); if (text === undefined) throw new Error('Missing'); return path === 'src/types.ts' && ++typeReads === 2 ? "export interface Props{variant:number}" : text; });
+    await expect(service.compile('project', { ...request, expectedRevision: state.revision })).rejects.toMatchObject({ status: 409 });
+    expect(store.read('project')).toEqual(state);
   });
 
   it('keeps the entire previous state on failed compilation or a registry identity change', async () => {
@@ -101,6 +138,7 @@ describe('project design runtime service', () => {
     let finish!: (value: string) => void;
     readSource.mockImplementationOnce(() => new Promise<string>((resolve) => { finish = resolve; }));
     const compiling = service.compile('project', { ...request, expectedRevision: 1 });
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
     const unbound = service.unbind('project', binding.id, { expectedRevision: 1 });
     finish(source);
     await expect(compiling).rejects.toMatchObject({ expectedRevision: 1, currentRevision: 2 });

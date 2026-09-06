@@ -75,7 +75,7 @@ async function findPackage(name: string, directory: string): Promise<PackageRoot
     if (record.name !== name || !version.success) return unsupported(`Installed package ${name} lacks exact identity/version evidence.`);
     return { name, root, version: version.data, manifest };
   }
-  return unsupported(`Package ${name} is not installed in the authorized project lookup path.`);
+  return unsupported(`Package ${name} is not installed in the authorized project lookup path. Install it with this project's package manager, then retry the preview.`);
 }
 
 /** Reject unresolved runtime imports explicitly; never leave them for a network-capable browser loader. */
@@ -172,7 +172,7 @@ async function bundlePreview(file: PreviewEntry, policy: PreviewSourcePolicy, au
       if (parent.origin === 'frozen-design-system' || parent.origin === 'generated' && !generatedProject) continue;
       try { return await project(candidate); } catch (error) { if (error instanceof UnsupportedPreviewSource) throw error; }
     }
-    return unsupported(`Source import ${specifier} from ${parent.path} is unavailable.`);
+    return unsupported(`Source import ${specifier} from ${parent.path} is unavailable. Check the relative path and restore the missing project file, then retry.`);
   }
   const resolvedModule = async (module: Module, kind: string) => {
     if (kind !== 'url-token') return { namespace: 'od-preview', path: add(module) };
@@ -195,7 +195,8 @@ async function bundlePreview(file: PreviewEntry, policy: PreviewSourcePolicy, au
         if (args.path === 'od-preview:screen' && args.importer === bootstrapKey) return { namespace: 'od-preview', path: screenKey };
         if (args.path === 'od-preview:react-global' && args.importer === bootstrapKey && reactGlobalKey) return { namespace: 'od-preview', path: reactGlobalKey };
         if (modules.has(args.path) && args.path.startsWith('[')) return { namespace: 'od-preview', path: args.path };
-        if (/^(?:https?:|data:|node:|file:|\/|\\|#)/.test(args.path) || args.path.includes('\\') || args.path.includes('?') || args.path.includes('#')) return unsupported(`Unsupported preview import ${args.path}.`);
+        if (/^(?:@\/|~\/)/.test(args.path)) return unsupported(`Preview cannot resolve the path alias ${args.path}. Use a project-relative import in the component or a local preview copy.`);
+        if (/^(?:https?:|data:|node:|file:|\/|\\|#)/.test(args.path) || args.path.includes('\\') || args.path.includes('?') || args.path.includes('#')) return unsupported(`Unsupported preview import ${args.path}. Use browser-compatible code with local project imports; network and server-only modules are unavailable.`);
         if (args.path.startsWith('.')) {
           if (!parent.package) return resolvedModule(await virtualRelative(parent, args.path), args.kind);
           const resolved = await build.resolve(args.path, { resolveDir: dirname(join(parent.package.root, parent.path)), kind: args.kind, pluginData: { defaultResolution: true } });

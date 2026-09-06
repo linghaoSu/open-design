@@ -39,8 +39,8 @@ export const resourcesRoot = join(toolsPackRoot, "resources");
 export const macResources = {
   entitlements: join(resourcesRoot, "mac", "entitlements.mac.plist"),
   entitlementsInherit: join(resourcesRoot, "mac", "entitlements.mac.inherit.plist"),
-  icon: join(resourcesRoot, "mac", "icon.icns"),
-  iconPng: join(resourcesRoot, "mac", "icon.png"),
+  icon: join(resourcesRoot, "design-loom", "icon.icns"),
+  iconPng: join(resourcesRoot, "design-loom", "icon.png"),
   notarizeHook: join(resourcesRoot, "mac", "notarize.cjs"),
   webStandaloneAfterPackHook: join(resourcesRoot, "web-standalone-after-pack.cjs"),
 } as const;

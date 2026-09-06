@@ -6,13 +6,13 @@
 // the renderer.
 
 import { useEffect, useState } from 'react';
-import type { OpenDesignGithubRepoResponse } from '@open-design/contracts';
+import { DESIGN_LOOM_PRODUCT, type OpenDesignGithubRepoResponse } from '@open-design/contracts';
 
 const API = '/api/github/open-design';
-const REPO = 'https://github.com/nexu-io/open-design';
-const LS_KEY = 'open-design:gh-stars';
-const FAILURE_LS_KEY = 'open-design:gh-stars:last-failure';
-export const GITHUB_STARS_FALLBACK_LABEL = '40K+';
+const REPO = DESIGN_LOOM_PRODUCT.repositoryUrl;
+const LS_KEY = `${DESIGN_LOOM_PRODUCT.id}:gh-stars`;
+const FAILURE_LS_KEY = `${DESIGN_LOOM_PRODUCT.id}:gh-stars:last-failure`;
+export const GITHUB_STARS_FALLBACK_LABEL = '—';
 
 // One-hour soft cache — long enough to dodge GitHub's 60/hr
 // unauthenticated quota when the same user reopens the app several

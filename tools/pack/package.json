@@ -10,7 +10,8 @@
     "build": "node ./esbuild.config.mjs && tsc -p tsconfig.json --emitDeclarationOnly && node --experimental-strip-types ../../packages/metatool/src/cli.ts write .",
     "dev": "tsx ./src/index.ts",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit",
+    "icons:design-loom": "tsx ./src/resources/product-icons.ts"
   },
   "dependencies": {
     "@electron/notarize": "3.1.1",
@@ -32,7 +33,8 @@
     "esbuild": "0.28.0",
     "tsx": "4.22.3",
     "typescript": "6.0.3",
-    "vitest": "4.1.6"
+    "vitest": "4.1.6",
+    "sharp": "0.35.3"
   },
   "engines": {
     "node": "~24"

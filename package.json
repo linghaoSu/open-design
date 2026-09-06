@@ -1,12 +1,13 @@
 {
-  "name": "open-design",
+  "name": "design-loom",
   "version": "0.21.1",
   "private": true,
   "packageManager": "pnpm@10.33.2",
   "type": "module",
-  "description": "Local-first design product: detects your installed code-agent CLI, runs design skills + design systems, streams artifacts into a sandboxed preview.",
+  "description": "Design Loom: an independent local design workspace with reusable components, versioned design systems, and live code previews, derived from OpenDesign.",
   "license": "Apache-2.0",
   "bin": {
+    "designloom": "./apps/daemon/bin/od.mjs",
     "od": "./apps/daemon/bin/od.mjs"
   },
   "scripts": {

@@ -27,6 +27,117 @@ const activation = (expectedRevision: number, version = '1.0.0') => ({ expectedR
 const document: UIIRDocument = { schemaVersion: 1, id: 'design', screens: [{ schemaVersion: 1, type: 'screen', id: 'Applications', children: [{ schemaVersion: 1, type: 'component', id: 'save', ref: 'ds:acme/Button', props: { label: 'Save' } }] }] };
 
 describe('project immutable versions and exact dependency service', () => {
+  it('preserves complete published metadata and unselected asset bytes after unlock, reopen, and publication', async () => {
+    const { service, store, pkg, readSource } = setup();
+    pkg.origin = { type: 'git', repository: 'https://example.com/acme.git', commit: 'a'.repeat(40) };
+    pkg.migrations = [{ schemaVersion: 1, id: 'previous', name: 'Previous release', from: { version: '0.9.0', digest: `sha256:${'b'.repeat(64)}` }, rules: [], packageBindingDecisions: [] }];
+    pkg.source.files.push({ path: 'brand.txt', encoding: 'utf8', content: '\ufeffBrand\r\n' });
+    service.importVersion('project', { expectedRevision: 0, package: pkg });
+    const locked = service.activateDependency('project', activation(1));
+    const original = JSON.stringify(store.readVersion('project', 'acme', '1.0.0'));
+    const editable = service.clearDependency('project', { expectedRevision: locked.revision });
+    const reopened = createProjectDesignRuntimeService({ store: createDesignRuntimeStore(db), readSource });
+    await reopened.publishCurrent('project', { expectedRevision: editable.revision, name: 'Acme UI', version: '1.1.0', sourcePaths: ['src/Button.tsx'], constraints: pkg.constraints });
+    const next = store.readVersion('project', 'acme', '1.1.0')!.package;
+    for (const key of ['tokens', 'patterns', 'constraints', 'codeCompatibility', 'origin', 'migrations'] as const) expect(next[key], key).toEqual(pkg[key]);
+    expect(next.source).toEqual(createDesignSystemVersion(pkg).package.source);
+    expect(JSON.stringify(store.readVersion('project', 'acme', '1.0.0'))).toBe(original);
+  });
+
+  it('restores an explicitly selected legacy baseline without replacing current component edits or guessing latest', async () => {
+    const { service, store, pkg, readSource } = setup();
+    service.importVersion('project', { expectedRevision: 0, package: pkg });
+    let state = service.activateDependency('project', activation(1));
+    state = service.clearDependency('project', { expectedRevision: state.revision });
+    const edited = structuredClone(state); edited.registry!.components[0]!.name = 'Edited label';
+    state = store.write('project', state.revision, edited);
+    const { authoringBase: _base, ...legacy } = state;
+    const bytes = JSON.stringify(legacy);
+    db.prepare('UPDATE project_design_runtime SET state_json = ?').run(bytes);
+    const newer = packageFixture('1.1.0'); newer.tokens.tokens = [];
+    state = service.importVersion('project', { expectedRevision: state.revision, package: newer }).state;
+    expect(state.authoringBase).toBeNull();
+    await expect(service.publishCurrent('project', { expectedRevision: state.revision, name: pkg.name, version: '1.2.0', sourcePaths: [], constraints: pkg.constraints })).rejects.toThrow('Select an exact authoring baseline');
+    expect(readSource).not.toHaveBeenCalled();
+    expect(() => service.restoreAuthoringBase('project', { expectedRevision: state.revision - 1, designSystemId: 'acme', version: '1.0.0' })).toThrow('changed');
+    expect(() => service.restoreAuthoringBase('project', { expectedRevision: state.revision, designSystemId: 'other', version: '1.0.0' })).toThrow('working design system');
+    const restored = service.restoreAuthoringBase('project', { expectedRevision: state.revision, designSystemId: 'acme', version: '1.0.0' });
+    expect(restored.registry).toEqual(edited.registry);
+    expect(restored.bindings).toEqual(state.bindings);
+    expect(restored.lock.dependencies).toEqual([]);
+    expect(restored.authoringBase?.version).toBe('1.0.0');
+    const published = await service.publishCurrent('project', { expectedRevision: restored.revision, name: pkg.name, version: '1.2.0', sourcePaths: [] });
+    expect(store.readVersion('project', 'acme', '1.2.0')!.package.tokens).toEqual(pkg.tokens);
+    expect(published.state.authoringBase?.version).toBe('1.2.0');
+    expect(readSource).not.toHaveBeenCalled();
+  });
+
+  it('retains the editing baseline through a real source recompile', async () => {
+    const { service, store, pkg, readSource } = setup();
+    pkg.registry.components = pkg.registry.components.filter((component) => component.id === 'Button');
+    pkg.patterns.patterns = [{ schemaVersion: 1, id: 'ButtonPattern', name: 'Button pattern', props: {}, propMappings: [], slots: {}, slotMappings: [], template: { schemaVersion: 1, type: 'component', id: 'button', ref: 'ds:acme/Button' } }];
+    service.importVersion('project', { expectedRevision: 0, package: pkg });
+    let state = service.activateDependency('project', activation(1));
+    state = service.clearDependency('project', { expectedRevision: state.revision });
+    const changed = pkg.source.files[0]!.content.replace('return null', 'return <button>Updated</button>');
+    readSource.mockResolvedValue(changed);
+    state = await service.compile('project', { expectedRevision: state.revision, designSystemId: 'acme', selections: [{ sourcePath: 'src/Button.tsx', exportName: 'Button', componentId: 'Button', codeComponentId: 'ui/Button', packageName: '@acme/ui' }] });
+    expect(state.authoringBase?.version).toBe('1.0.0');
+    await service.publishCurrent('project', { expectedRevision: state.revision, name: pkg.name, version: '1.1.0', sourcePaths: ['src/Button.tsx'] });
+    const next = store.readVersion('project', 'acme', '1.1.0')!.package;
+    expect(next.patterns).toEqual(pkg.patterns);
+    expect(next.tokens).toEqual(pkg.tokens);
+    expect(next.source.files.find((file) => file.path === 'src/Button.tsx')!.content).toBe(changed);
+    expect(store.readVersion('project', 'acme', '1.0.0')!.package.source).toEqual(createDesignSystemVersion(pkg).package.source);
+  });
+
+  it('advances an unlocked baseline so consecutive publications retain the latest metadata and newly selected files', async () => {
+    const { service, store, pkg, readSource } = setup();
+    service.importVersion('project', { expectedRevision: 0, package: pkg });
+    let state = service.activateDependency('project', activation(1));
+    state = service.clearDependency('project', { expectedRevision: state.revision });
+    const tokens = structuredClone(pkg.tokens);
+    tokens.tokens.push({ schemaVersion: 1, id: 'color.new', name: 'New color', cssVariable: '--color-new', type: 'color', value: '#123456' });
+    readSource.mockImplementation(async (_project, path) => path === 'notes.txt' ? '\ufeffNew file\r\n' : 'Updated design notes\r\n');
+    const second = await service.publishCurrent('project', { expectedRevision: state.revision, name: pkg.name, version: '1.1.0', sourcePaths: ['DESIGN.md', 'notes.txt'], tokens });
+    expect(second.state.authoringBase?.version).toBe('1.1.0');
+    readSource.mockClear();
+    const reopened = createProjectDesignRuntimeService({ store: createDesignRuntimeStore(db), readSource });
+    const third = await reopened.publishCurrent('project', { expectedRevision: second.state.revision, name: pkg.name, version: '1.2.0', sourcePaths: [] });
+    const secondPackage = store.readVersion('project', 'acme', '1.1.0')!.package;
+    expect(store.readVersion('project', 'acme', '1.2.0')!.package).toEqual({ ...secondPackage, version: '1.2.0' });
+    expect(third.state.authoringBase?.version).toBe('1.2.0');
+    expect(readSource).not.toHaveBeenCalled();
+    const imported = reopened.importVersion('project', { expectedRevision: third.state.revision, package: packageFixture('2.0.0') });
+    expect(imported.state.authoringBase).toEqual(third.state.authoringBase);
+  });
+
+  it('publishes selected binary bytes with final source and authority fences, rejecting drift atomically', async () => {
+    const { service, store, pkg, readSource } = setup();
+    service.importVersion('project', { expectedRevision: 0, package: pkg });
+    const state = service.activateDependency('project', activation(1));
+    const readSourceFile = vi.fn(async (path: string) => ({ path, encoding: 'base64' as const, content: 'AP/+gA==' }));
+    const assertCurrent = vi.fn(async () => {}); const assertCurrentSync = vi.fn(); const reauthorize = vi.fn(async () => {});
+    const publication = createProjectDesignRuntimeService({ store, readSource, acquirePublicationAuthority: async () => ({ identity: 'authority', readSourceFile, assertCurrent, assertCurrentSync }) });
+    const request = { expectedRevision: state.revision, name: pkg.name, version: '1.1.0', sourcePaths: ['assets/pixel.bin'] };
+    const published = await publication.publishCurrent('project', request, reauthorize);
+    expect(store.readVersion('project', 'acme', '1.1.0')!.package.source.files.find((file) => file.path === 'assets/pixel.bin')).toEqual({ path: 'assets/pixel.bin', encoding: 'base64', content: 'AP/+gA==' });
+    expect(readSource).not.toHaveBeenCalled();
+    expect(reauthorize.mock.invocationCallOrder[0]).toBeGreaterThan(assertCurrent.mock.invocationCallOrder[0]!);
+    expect(assertCurrentSync.mock.invocationCallOrder[0]).toBeGreaterThan(reauthorize.mock.invocationCallOrder[0]!);
+    readSourceFile.mockResolvedValueOnce({ path: 'assets/pixel.bin', encoding: 'base64', content: 'AA==' });
+    await expect(publication.publishCurrent('project', { ...request, expectedRevision: published.state.revision, version: '1.2.0' })).rejects.toThrow('source changed');
+    expect(store.readVersion('project', 'acme', '1.2.0')).toBeNull();
+    expect(store.read('project')).toEqual(published.state);
+    await expect(publication.publishCurrent('project', { ...request, expectedRevision: published.state.revision, version: '1.2.0' }, async () => { throw new Error('Permission revoked'); })).rejects.toThrow('Permission revoked');
+    expect(store.readVersion('project', 'acme', '1.2.0')).toBeNull();
+    expect(store.read('project')).toEqual(published.state);
+    assertCurrentSync.mockImplementationOnce(() => { throw new Error('Authority changed'); });
+    await expect(publication.publishCurrent('project', { ...request, expectedRevision: published.state.revision, version: '1.2.0' })).rejects.toThrow('Authority changed');
+    expect(store.readVersion('project', 'acme', '1.2.0')).toBeNull();
+    expect(store.read('project')).toEqual(published.state);
+  });
+
   it('publishes source bytes outside aggregate, pins explicitly, preserves overrides and blocks direct upgrades', async () => {
     const { service, store, pkg, readSource } = setup();
     const imported = service.importVersion('project', { expectedRevision: 0, package: pkg });
@@ -113,12 +224,12 @@ describe('project immutable versions and exact dependency service', () => {
     const state = service.activateDependency('project', activation(1));
     const request = { expectedRevision: state.revision, name: 'Acme UI', version: '1.1.0', sourcePaths: ['src/Button.tsx'] };
     const published = await service.publishCurrent('project', request);
-    expect(readSource).toHaveBeenCalledExactlyOnceWith('project', 'src/Button.tsx');
+    expect(readSource.mock.calls).toEqual([['project', 'src/Button.tsx'], ['project', 'src/Button.tsx']]);
     const version = service.version('project', 'acme', '1.1.0').version;
     expect(version.package.tokens).toEqual(pkg.tokens);
     expect(version.package.patterns).toEqual(pkg.patterns);
     expect(version.package.constraints).toEqual(pkg.constraints);
-    expect(version.package.source.files).toHaveLength(1);
+    expect(version.package.source).toEqual(createDesignSystemVersion(pkg).package.source);
     expect(published.state.lock.dependencies[0]?.version).toBe('1.0.0');
     readSource.mockClear();
     await expect(service.publishCurrent('project', { ...request, expectedRevision: published.state.revision, sourcePaths: ['src/Button.tsx', 'src/Button.tsx'] })).rejects.toThrow();

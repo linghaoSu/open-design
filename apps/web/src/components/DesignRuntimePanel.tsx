@@ -29,7 +29,7 @@ import { ProjectStructurePanel } from './ProjectStructurePanel';
 import { DesignRuntimeValidationPanel } from './DesignRuntimeValidationPanel';
 import { DesignSystemVersionsPanel } from './DesignSystemVersionsPanel';
 import { DesignRuntimeSourceSelections } from './DesignRuntimeSourceSelections';
-import { DesignRuntimeLegacyMigration, isLegacyDesignSource } from './DesignRuntimeLegacyMigration';
+import { DesignRuntimeLegacyMigration, isLegacyDesignSource, legacyHtmlDesignSources } from './DesignRuntimeLegacyMigration';
 import { DesignHandoffPanel } from './DesignHandoffPanel';
 import { DesignPreviewPanel, type DesignPreviewSelection } from './DesignPreviewPanel';
 import { Icon } from './Icon';
@@ -43,6 +43,7 @@ interface Props {
   viewerOnly: boolean;
   onClose(): void;
   onOpenSource?(sourcePath: string, exportName?: string): void;
+  initialTab?: 'migration';
 }
 
 type SourceSelection = ProjectDesignRuntimeCompileRequest['selections'][number];
@@ -108,7 +109,7 @@ export function DesignRuntimePanel(props: Props) {
   return <DesignRuntimePanelContent key={scopeKey} {...props} />;
 }
 
-function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerOnly, onClose, onOpenSource }: Props) {
+function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerOnly, onClose, onOpenSource, initialTab }: Props) {
   const t = useT();
   const inputId = useId();
   const sourceFiles = files.map(({ name }) => name).filter((name) => /\.(tsx|ts|vue)$/.test(name) && !name.endsWith('.d.ts')).sort();
@@ -125,13 +126,13 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(true);
   const [structureBusy, setStructureBusy] = useState(false);
-  const [tab, setTab] = useState<RuntimeTab>('overview');
+  const [tab, setTab] = useState<RuntimeTab>(initialTab ?? 'overview');
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [componentView, setComponentView] = useState<'list' | 'detail'>('list');
   const detailHeading = useRef<HTMLHeadingElement>(null);
   const componentList = useRef<HTMLDivElement>(null);
   const moreMenu = useRef<HTMLDetailsElement>(null);
-  const [migrationOpened, setMigrationOpened] = useState(false);
+  const [migrationOpened, setMigrationOpened] = useState(initialTab === 'migration');
   const [previewOpened, setPreviewOpened] = useState(false);
   const [previewSelection, setPreviewSelection] = useState<DesignPreviewSelection>();
   const openPreview = (selection: DesignPreviewSelection) => { setPreviewSelection(selection); setPreviewOpened(true); setTab('preview'); };
@@ -165,6 +166,8 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
   const visibleComponents = state?.registry?.components.filter((component) =>
     `${component.name} ${component.source?.exportName ?? ''} ${component.id}`.toLowerCase().includes(searchQuery)) ?? [];
   const registryLocked = !!state?.lock.dependencies.length;
+  const legacyHtmlSources = legacyHtmlDesignSources(files, state?.registry?.components.flatMap((component) => component.source?.sourcePath ? [component.source.sourcePath] : []) ?? []);
+  const hasLegacyFiles = legacyHtmlSources.length > 0 || files.some((file) => file.type !== 'dir' && !/\.html?$/i.test(file.name) && isLegacyDesignSource(file.name));
   const previewSource = selectedComponent?.source?.exportName && /\.[jt]sx$/.test(selectedComponent.source.sourcePath ?? '')
     && files.some((file) => file.type !== 'dir' && file.name === selectedComponent.source?.sourcePath)
     ? selectedComponent.source : undefined;
@@ -197,7 +200,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
   function adoptState(nextState: ProjectDesignRuntimeState, initialize = false) {
     setState(nextState);
     if (initialize) {
-      setTab(nextState.registry ? 'code' : 'overview');
+      setTab(initialTab ?? (nextState.registry ? 'code' : 'overview'));
       if (nextState.registry) setDesignSystemId(nextState.registry.id);
       const nextSelections = sourceSelections(nextState);
       if (nextSelections.length) setSelections(nextSelections);
@@ -356,6 +359,10 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
       {busy ? <p role="status">{t('common.loading')}</p> : null}
       {error ? <p className={styles.error} role="alert">{error}</p> : null}
       {message ? <p className={styles.notice} role="status">{message}</p> : null}
+      {state && !registryLocked && legacyHtmlSources.length > 0 && (tab === 'overview' || tab === 'code') ? <div className={styles.repair} data-testid="design-runtime-legacy-html">
+        <Icon name="folder-transfer" size={18} /><div><strong>{t('designWorkspace.legacyHtmlTitle')}</strong><p>{t('designWorkspace.legacyHtmlHint')}</p><p><code>{legacyHtmlSources.join(', ')}</code></p></div>
+        <Button disabled={busy || structureBusy} data-testid="design-runtime-migrate-html" onClick={() => navigate('migration')}>{t('designWorkspace.openMigration')}</Button>
+      </div> : null}
       {diagnostics?.length ? <ul className={styles.diagnostics} aria-label={t('designRuntime.diagnostics')}>
         {diagnostics.map((diagnostic, index) => <li key={`${diagnostic.code}-${index}`}>
           <strong>{diagnostic.code}</strong> <span>{diagnostic.message}</span>
@@ -364,7 +371,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
         </li>)}
       </ul> : null}
       <div id={`${inputId}-overview`} role="tabpanel" aria-labelledby={`${inputId}-overview-tab`} hidden={tab !== 'overview'}>
-        {state ? <DesignSystemOverview state={state} hasLegacyFiles={files.some((file) => isLegacyDesignSource(file.name))} hasSourceFiles={sourceFiles.length > 0} disabled={busy || structureBusy} onNavigate={navigate} onRepair={(id, target) => { selectComponent(id, state, target); setComponentView('detail'); setConnectionsOpen(true); navigate('code'); }} /> : null}
+        {state ? <DesignSystemOverview state={state} hasLegacyFiles={hasLegacyFiles} hasSourceFiles={sourceFiles.length > 0} disabled={busy || structureBusy} onNavigate={navigate} onRepair={(id, target) => { selectComponent(id, state, target); setComponentView('detail'); setConnectionsOpen(true); navigate('code'); }} /> : null}
       </div>
       <div id={`${inputId}-code`} role="tabpanel" aria-labelledby={`${inputId}-code-tab`} hidden={tab !== 'code'}>
       {!state?.registry ? <p className={styles.sectionIntro}>{t('designWorkspace.componentsHint')}</p> : null}
@@ -388,6 +395,8 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
               <Button data-testid="design-runtime-compile" type="submit" variant="primary" disabled={!sourceFiles.length}>{t('designRuntime.compile')}</Button>
             </div>
           </fieldset>
+          {onOpenSource ? <div className={styles.actions}>{selections.map((selection, index) => /\.[jt]sx$/i.test(selection.sourcePath) && files.some((file) => file.type !== 'dir' && file.name === selection.sourcePath)
+            ? <Button key={index} variant="ghost" disabled={busy || structureBusy} data-testid={`design-runtime-preview-selection-${index}`} onClick={() => onOpenSource(selection.sourcePath, selection.exportName || undefined)}><Icon name="external-link" size={14} />{t('designWorkspace.previewFile', { file: selection.sourcePath })}</Button> : null)}</div> : null}
         </form>
         </details>
         <div className={styles.catalog} data-view={componentView} data-empty={!state?.registry?.components.length} data-testid="design-runtime-catalog">

@@ -6,6 +6,7 @@ import { workspaceAccountScopedCacheKey } from '../collab/workspace-identity';
 import { activateProjectDesignRuntimeDependency, clearProjectDesignRuntimeDependency, getProjectDesignRuntime,
   getProjectDesignRuntimeVersion, importProjectDesignRuntimeVersion, listProjectDesignRuntimeVersions,
   ProjectDesignRuntimeError, publishProjectDesignRuntimeVersion, resolveProjectDesignRuntimeDependency,
+  restoreProjectDesignRuntimeAuthoringBase,
   type ProjectDesignRuntimeScope } from '../providers/design-runtime';
 import { useT } from '../i18n';
 import { StructureDiagnostics } from './ProjectStructureReview';
@@ -38,6 +39,7 @@ function VersionsContent({ scope, state, files, viewerOnly, externalBusy = false
   const [name, setName] = useState(state?.registry?.id ?? '');
   const [version, setVersion] = useState('1.0.0');
   const [sourcePaths, setSourcePaths] = useState<string[]>([]);
+  const sourceSelectionDirty = useRef(false);
   const [constraints, setConstraints] = useState(initialVersionConstraints);
   const constraintsDirty = useRef(false);
   const [catalog, setCatalog] = useState<ProjectDesignRuntimeVersionSummary[]>([]);
@@ -65,6 +67,18 @@ function VersionsContent({ scope, state, files, viewerOnly, externalBusy = false
   const target = catalog.find((entry) => versionKey(entry) === selected);
   const requiresUpgrade = !!active && !!target && (active.designSystemId !== target.id || active.version !== target.version);
   const paths = [...new Set([...files.map((file) => file.name), ...sourcePaths])].sort();
+
+  useEffect(() => {
+    if (sourceSelectionDirty.current || snapshotRevision === null) return;
+    // Only first publication gets source suggestions. Existing baselines retain
+    // frozen bytes until the user explicitly selects files to update.
+    const suggested = state && !state.lock.dependencies.length && !state.authoringBase && !catalog.length
+      ? state.codeIndex.components.flatMap((code) => [code.sourcePath,
+        ...Object.values(code.props).flatMap((prop) => prop.source ? [prop.source.sourcePath] : []),
+        ...Object.values(code.slots ?? {}).flatMap((slot) => slot.source ? [slot.source.sourcePath] : []),
+      ]) : [];
+    setSourcePaths([...new Set(suggested)].sort());
+  }, [state, snapshotRevision, catalog]);
 
   function acceptState(next: ProjectDesignRuntimeState) { stateRef.current = next; onState(next); }
   function report(cause: unknown) {
@@ -101,6 +115,20 @@ function VersionsContent({ scope, state, files, viewerOnly, externalBusy = false
       } catch (cause) { if (current()) report(cause); return; }
     }
     if (!current()) return;
+    const baseline = stateRef.current?.authoringBase;
+    if (baseline && !stateRef.current?.lock.dependencies.length && !constraintsDirty.current) {
+      try {
+        const result = await getProjectDesignRuntimeVersion(authority, baseline.designSystemId, baseline.version);
+        if (!current()) return;
+        if (result.revision !== revision) { setDetail(null); setMessage(t('designVersions.staleRead')); return; }
+        if (result.version.digest !== baseline.digest || result.version.sourceDigest !== baseline.source.digest) setMessage(t('designVersions.staleRead'));
+        else setConstraints(result.version.package.constraints);
+      } catch (cause) {
+        if (!current()) return;
+        // A lost baseline must not hide the catalog needed for explicit recovery.
+        report(cause);
+      }
+    }
     setCatalog(versions.value.versions); setSnapshotRevision(revision);
     const next = versions.value.versions.find((entry) => versionKey(entry) === (choose ?? selectedRef.current)) ?? versions.value.versions[0];
     selectIdentity(next); setDetail(null);
@@ -148,7 +176,7 @@ function VersionsContent({ scope, state, files, viewerOnly, externalBusy = false
     void perform(async (authority, current) => {
       const currentState = stateRef.current!;
       const result = await publishProjectDesignRuntimeVersion(authority, { expectedRevision: currentState.revision, name, version, sourcePaths,
-        ...(!currentState.lock.dependencies.length || constraintsDirty.current ? { constraints } : {}),
+        ...((!currentState.lock.dependencies.length && !currentState.authoringBase) || constraintsDirty.current ? { constraints } : {}),
       });
       if (!current()) return;
       acceptState(result.state); setMessage(t('designVersions.published'));
@@ -221,13 +249,14 @@ function VersionsContent({ scope, state, files, viewerOnly, externalBusy = false
     <div className={styles.columns}>
       <form className={styles.card} onSubmit={(event) => { event.preventDefault(); publish(); }}>
         <h3>{t('designVersions.publishCurrent')}</h3><p className={styles.muted}>{t('designVersions.publishHint')}</p>
+        {state?.authoringBase ? <p data-testid="versions-authoring-base" className={styles.notice}>{t('designVersions.authoringBase')}: <code>{state.authoringBase.designSystemId}@{state.authoringBase.version}</code><br />{t('designVersions.authoringHint')}</p> : null}
         <fieldset disabled={disabled || !state?.registry || integrityFailed}>
           <label className={styles.field}>{t('designVersions.name')}<input data-testid="versions-name" value={name} required onChange={(event) => setName(event.target.value)} /></label>
           <label className={styles.field}>{t('designVersions.version')}<input data-testid="versions-version" value={version} required onChange={(event) => setVersion(event.target.value)} /></label>
-          <h4>{t('designVersions.sourceFiles')}</h4><p className={styles.muted}>{t('designVersions.sourceHint')}</p>
-          <div className={styles.sources}>{paths.map((path) => <label key={path}><input data-testid={`versions-source-${path}`} type="checkbox" checked={sourcePaths.includes(path)} onChange={(event) => setSourcePaths((previous) => event.target.checked ? [...previous, path] : previous.filter((entry) => entry !== path))} /><code>{path}</code></label>)}</div>
+          <h4>{t('designVersions.sourceFiles')}</h4><p className={styles.muted}>{t('designVersions.sourceUpdateHint')}</p>
+          <div className={styles.sources}>{paths.map((path) => <label key={path}><input data-testid={`versions-source-${path}`} type="checkbox" checked={sourcePaths.includes(path)} onChange={(event) => { sourceSelectionDirty.current = true; setSourcePaths((previous) => event.target.checked ? [...previous, path] : previous.filter((entry) => entry !== path)); }} /><code>{path}</code></label>)}</div>
           <details><summary>{t('designVersions.constraints')}</summary><p className={styles.muted}>{t('designVersions.constraintHint')}</p><VersionConstraintFields value={constraints} onChange={(value) => { constraintsDirty.current = true; setConstraints(value); }} /></details>
-          <Button type="submit" variant="primary" data-testid="versions-publish" disabled={!sourcePaths.length}>{t('designVersions.publishCurrent')}</Button>
+          <Button type="submit" variant="primary" data-testid="versions-publish" disabled={!sourcePaths.length && !state?.authoringBase && !active}>{t('designVersions.publishCurrent')}</Button>
         </fieldset>
       </form>
       <div className={styles.stack}>
@@ -241,6 +270,14 @@ function VersionsContent({ scope, state, files, viewerOnly, externalBusy = false
             } });
           }}><option value="">{t('designVersions.chooseVersion')}</option>{catalog.map((entry) => <option key={versionKey(entry)} value={versionKey(entry)}>{entry.name} · {entry.id}@{entry.version}</option>)}</select></label>
           {target ? <><p>{t('designVersions.packageDigest')}: <code>{target.digest}</code></p><p>{t('designVersions.sourceDigest')}: <code>{target.sourceDigest}</code></p>
+            {!active && state?.registry?.id === target.id ? <Button data-testid="versions-restore-authoring-base" disabled={disabled || !detail || snapshotRevision !== state.revision} onClick={() => {
+              if (disabled || !target || !stateRef.current) return;
+              void perform(async (authority, current) => {
+                const result = await restoreProjectDesignRuntimeAuthoringBase(authority, { expectedRevision: stateRef.current!.revision, designSystemId: target.id, version: target.version });
+                if (!current()) return;
+                acceptState(result.state); await loadSnapshots(authority, current);
+              });
+            }}>{t('designVersions.restoreAuthoringBase')}</Button> : null}
             <form onSubmit={(event) => { event.preventDefault(); activate(); }}><label className={styles.field}>{t('designVersions.range')}<input data-testid="versions-range" value={range} disabled={disabled || requiresUpgrade || integrityFailed} required onChange={(event) => setRange(event.target.value)} /></label>
               <p className={styles.muted}>{t('designVersions.activateHint')}</p>
               {requiresUpgrade ? <p className={styles.notice}>{t('designVersions.upgradeRequired')}</p> : null}

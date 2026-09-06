@@ -121,7 +121,7 @@ describe("claimPackagedSingleInstanceLock", () => {
   it("queues a deeplink from the lock fallback while desktop IPC is unavailable", async () => {
     const root = mkdtempSync(join(tmpdir(), "od-packaged-lock-deeplink-"));
     const listeners = new Map<string, (event: unknown, argv: string[]) => void>();
-    const deeplinkUrl = "opendesign://workspace/invite/continue?nonce=cold-race";
+    const deeplinkUrl = "designloom://workspace/invite/continue?nonce=cold-race";
     const handoff = createPackagedSecondInstanceHandoff();
     const app = {
       on: vi.fn((event: string, listener: (event: unknown, argv: string[]) => void) => {

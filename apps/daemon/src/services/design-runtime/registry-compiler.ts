@@ -7,6 +7,7 @@ import {
 import { CompilerError } from './react-compiler.js';
 import { compileSourceComponent } from './source-compiler.js';
 import { compileStorybookMetadata } from './storybook-compiler.js';
+import type { TypeScriptSourceFiles } from './typescript-source-graph.js';
 
 type Selection = CompileComponentRegistryRequest['selections'][number];
 
@@ -16,13 +17,13 @@ type Selection = CompileComponentRegistryRequest['selections'][number];
  * escapes until every selection and the combined contract have been validated.
  * Source and Storybook support remain conservative, syntax-only compiler subsets.
  */
-export function compileComponentRegistry(input: CompileComponentRegistryRequest): CompileComponentRegistryResult {
+export function compileComponentRegistry(input: CompileComponentRegistryRequest, sourceFiles?: TypeScriptSourceFiles): CompileComponentRegistryResult {
   const request = CompileComponentRegistryRequestSchema.parse(input);
   const selections = request.selections.sort((left, right) => compareIds(left.componentId, right.componentId));
   validateSourceSnapshots(selections);
 
   const compiled = selections.map(({ storySources, framework, ...selection }) => {
-    let result = compileSourceComponent({ ...selection, framework: framework ?? 'react', designSystemId: request.designSystemId });
+    let result = compileSourceComponent({ ...selection, framework: framework ?? 'react', designSystemId: request.designSystemId }, sourceFiles);
     for (const source of (storySources ?? []).slice().sort((a, b) => compareIds(a.sourcePath, b.sourcePath))) {
       result = compileStorybookMetadata({ ...source, compiled: result });
     }

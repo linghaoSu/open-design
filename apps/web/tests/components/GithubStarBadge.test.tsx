@@ -22,7 +22,8 @@ describe('GithubStarBadge', () => {
     render(<GithubStarBadge />);
 
     expect(screen.getByText('Star')).toBeTruthy();
-    expect(screen.getByText('40K+')).toBeTruthy();
+    expect(screen.getByRole('link').getAttribute('href')).toBe('https://github.com/linghaoSu/open-design');
+    expect(screen.getByText('—')).toBeTruthy();
     await waitFor(() =>
       expect(globalThis.fetch).toHaveBeenCalledWith(
         '/api/github/open-design',
@@ -42,7 +43,7 @@ describe('GithubStarBadge', () => {
 
     render(<GithubStarBadge />);
 
-    expect(screen.getByText('40K+')).toBeTruthy();
+    expect(screen.getByText('—')).toBeTruthy();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
@@ -58,7 +59,7 @@ describe('GithubStarBadge', () => {
 
     render(<GithubStarBadge />);
 
-    expect(screen.getByText('40K+')).toBeTruthy();
+    expect(screen.getByText('—')).toBeTruthy();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
@@ -100,7 +101,7 @@ describe('GithubStarBadge', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
-        repo: 'nexu-io/open-design',
+        repo: 'linghaoSu/open-design',
         stargazers_count: 42137,
         fetchedAt: Date.parse('2026-05-22T00:00:00.000Z'),
         stale: false,

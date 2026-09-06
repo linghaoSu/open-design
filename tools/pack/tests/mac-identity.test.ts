@@ -44,63 +44,20 @@ function makeConfig(root: string, namespace: string): ToolPackConfig {
 }
 
 describe("resolveMacInstallIdentity", () => {
-  it("keeps stable builds on the canonical mac identity", () => {
-    expect(resolveMacInstallIdentity(makeConfig("/work", "release-stable"))).toMatchObject({
-      appId: "io.open-design.desktop",
-      installerTitle: "Open Design",
-      productName: "Open Design",
-      publicAppBundleName: "Open Design.app",
-      systemAppBundleName: "Open Design.app",
-    });
-  });
-
-  it("uses first-class beta app identity for beta release namespaces", () => {
-    const config = makeConfig("/work", "release-beta");
-
+  it.each([undefined, "0.1.0-beta.1", "0.1.0"])("keeps the fork app identity independent of version %s", (appVersion) => {
+    const config = { ...makeConfig("/work", "design-loom"), ...(appVersion ? { appVersion } : {}) };
     expect(resolveMacInstallIdentity(config)).toEqual({
-      appId: "io.open-design.desktop.beta",
-      executableName: "Open Design Beta",
-      installerTitle: "Open Design Beta",
-      productName: "Open Design Beta",
-      publicAppBundleName: "Open Design Beta.app",
-      systemAppBundleName: "Open Design Beta.app",
+      appId: "io.github.linghaosu.designloom", executableName: "Design Loom",
+      installerTitle: "Design Loom", productName: "Design Loom",
+      publicAppBundleName: "Design Loom.app", systemAppBundleName: "Design Loom.app",
     });
-    expect(resolveMacPaths(config).appPath).toMatch(/Open Design Beta\.app$/);
+    const paths = resolveMacPaths(config);
+    expect(paths.installedAppPath).toBe("/work/.tmp/tools-pack/out/mac/namespaces/design-loom/install/Applications/Design Loom.app");
+    expect(paths.appPath).toMatch(/Design Loom\.app$/);
+    expect(paths.systemApplicationsAppPath).not.toContain("Open Design");
+    expect(paths.dmgPath).toBe("/work/.tmp/tools-pack/out/mac/namespaces/design-loom/dmg/Design Loom-design-loom.dmg");
   });
-
-  it("uses first-class preview app identity for preview release namespaces", () => {
-    const config = makeConfig("/work", "release-preview");
-
-    expect(resolveMacInstallIdentity(config)).toEqual({
-      appId: "io.open-design.desktop.preview",
-      executableName: "Open Design Preview",
-      installerTitle: "Open Design Preview",
-      productName: "Open Design Preview",
-      publicAppBundleName: "Open Design Preview.app",
-      systemAppBundleName: "Open Design Preview.app",
-    });
-    expect(resolveMacPaths(config).appPath).toMatch(/Open Design Preview\.app$/);
-  });
-
-  it("uses first-class prerelease app identity for prerelease release versions and namespaces", () => {
-    const prereleaseVersionConfig = {
-      ...makeConfig("/work", "release-stable"),
-      appVersion: "0.8.0-prerelease.2",
-    };
-    const prereleaseNamespaceConfig = makeConfig("/work", "release-prerelease");
-
-    expect(resolveMacInstallIdentity(prereleaseVersionConfig)).toEqual({
-      appId: "io.open-design.desktop.prerelease",
-      executableName: "Open Design Prerelease",
-      installerTitle: "Open Design Prerelease",
-      productName: "Open Design Prerelease",
-      publicAppBundleName: "Open Design Prerelease.app",
-      systemAppBundleName: "Open Design Prerelease.app",
-    });
-    expect(resolveMacPaths(prereleaseVersionConfig).appPath).toMatch(/Open Design Prerelease\.app$/);
-    expect(resolveMacInstallIdentity(prereleaseNamespaceConfig)).toMatchObject({
-      productName: "Open Design Prerelease",
-      publicAppBundleName: "Open Design Prerelease.app",
-    });
+  it.each(["default", "open-design", "release-stable", "release-beta"])("refuses to construct upstream install identity %s", (namespace) => {
+    expect(() => resolveMacInstallIdentity(makeConfig("/work", namespace))).toThrow(/Design Loom requires/);
   });
 });

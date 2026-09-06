@@ -9,7 +9,7 @@ export const ExtractSourceCodeComponentRequestSchema = z.object({
   framework: ComponentFrameworkSchema,
   sourceText: z.string(),
   sourcePath: SourcePathSchema,
-  /** React selects a direct named export; the supported Vue script-setup SFC selects "default" explicitly. */
+  /** React selects a proved local named/default export; Vue script-setup SFC selects "default" explicitly. */
   exportName: z.string().min(1),
   codeComponentId: CodeIdentitySchema,
   packageName: z.string().min(1).optional(),

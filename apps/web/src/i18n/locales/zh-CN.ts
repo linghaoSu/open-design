@@ -1,6 +1,14 @@
 import type { Dict } from "../types";
 
 export const zhCN: Dict = {
+  "designWorkspace.legacyHtmlTitle": "发现旧版 HTML 组件目录",
+  "designWorkspace.legacyHtmlHint": "审查这些文件可保留设计参考，并迁移受支持的设计变量。此操作不会将 HTML 转换为 React 或 Vue 组件；代码组件需单独添加。",
+  "designWorkspace.previewFile": "预览文件：{file}",
+  "reactPreview.jsonProps": "全部预览属性（JSON）",
+  "reactPreview.jsonHint": "替换完整的属性对象，也可填写未能推断的字段。省略字段会使用源码默认值；只接受 JSON 数据。",
+  "reactPreview.editJson": "编辑 JSON 属性",
+  "reactPreview.recoveryHint": "检查下方示例属性。若组件需要路由、主题或数据 Provider，请创建提供这些上下文的本地预览包装组件，再从「文件」打开它。预览不提供网络或仅服务端可用的 API。",
+  "reactPreview.invalidJson": "请输入包含安全 JSON 数据的对象。预览仍使用上一次有效属性。",
   "designWorkspace.noMatches": "没有匹配的组件。",
   "designWorkspace.noComponents": "还没有组件。展开上方「管理组件文件」即可添加。",
   "designWorkspace.backToComponents": "全部组件",
@@ -35,7 +43,7 @@ export const zhCN: Dict = {
   "designWorkspace.importHint": "已有导出的设计系统包？导入后选择其版本。",
   "designWorkspace.legacyDetected": "此项目中发现了设计系统文件",
   "designWorkspace.noSourceFiles": "先向项目添加 React 或 Vue 组件文件。",
-  "designWorkspace.exportHint": "React 请填写具名导出，例如 Button；Vue 组件使用 default。",
+  "designWorkspace.exportHint": "填写 React 组件的导出名，例如 Button 或 default；Vue 组件使用 default。",
   "designWorkspace.migrationFiles": "选择要保留的内容",
   "designWorkspace.migrationDetails": "为设计系统命名",
   "designWorkspace.migrationReview": "审查并使用",
@@ -155,6 +163,10 @@ export const zhCN: Dict = {
   "designVersions.name": "设计系统名称",
   "designVersions.version": "精确版本",
   "designVersions.sourceFiles": "源文件",
+  "designVersions.authoringBase": "编辑基线",
+  "designVersions.authoringHint": "沿用此精确版本的元数据和未选中更新的文件。",
+  "designVersions.restoreAuthoringBase": "将所选版本用作编辑基线",
+  "designVersions.sourceUpdateHint": "选择要更新的文件。未选中的文件和二进制资源保留原始字节。",
   "designVersions.sourceHint": "选择此版本所需的所有源码和元数据文件。所选文件将按 UTF-8 文本读取。",
   "designVersions.constraints": "约束策略",
   "designVersions.constraintHint": "探索模式默认使用警告；引导和严格模式默认使用错误。严格策略要求所有约束均设为错误。",
@@ -567,22 +579,22 @@ export const zhCN: Dict = {
   "plugins.actions.openSource": "打开源码",
   "plugins.actions.openHomepage": "打开项目主页",
   "plugins.actions.openMarketplace": "在插件市场打开",
-  "app.brand": "OpenDesign",
+  "app.brand": "Design Loom",
   "app.brandPill": "研究预览版",
-  "app.brandSubtitle": "由 Nexu Labs 出品",
+  "app.brandSubtitle": "源自 OpenDesign 的独立设计工作区",
   "app.welcomeLoading": "正在加载工作区…",
   "settings.welcomeKicker": "",
-  "settings.welcomeTitle": "欢迎使用 OpenDesign",
+  "settings.welcomeTitle": "欢迎使用 Design Loom",
   "settings.welcomeSubtitle": "",
   "settings.onboardingCreateTitle": "从一句需求开始",
   "settings.onboardingCreateBody":
-    "描述你想做的网站、应用、Deck、图片或视频，OpenDesign 会创建项目，并保留可继续编辑的产物。",
+    "描述你想做的网站、应用、Deck、图片或视频，Design Loom 会创建项目，并保留可继续编辑的产物。",
   "settings.onboardingMemoryTitle": "保存工作上下文",
   "settings.onboardingMemoryBody":
     "把偏好、项目事实和长期规则写入 Memory，后续对话会自动带上正确背景。",
   "settings.onboardingMemoryCalloutTitle": "已保存到你的记忆",
   "settings.onboardingMemoryCalloutBody":
-    "这些回答会构成你的记忆画像。OpenDesign 会在每个任务中复用它，并在你工作时持续学习。",
+    "这些回答会构成你的记忆画像。Design Loom 会在每个任务中复用它，并在你工作时持续学习。",
   "settings.onboardingMemoryBenefitIntent": "从一句简短需求就能理解你的意图",
   "settings.onboardingMemoryBenefitFewerQuestions": "跳过重复的设置提问",
   "settings.onboardingMemoryBenefitPersonalized":
@@ -764,11 +776,11 @@ export const zhCN: Dict = {
   "settings.agentInstall.install": "安装",
   "settings.agentInstall.docs": "查看文档",
   "settings.agentInstall.pathHint":
-    "如果你通过 npm 或 Homebrew 安装了 CLI，但仍显示为未安装，请确认该工具的 bin 目录已加入 OpenDesign daemon 继承的 PATH（在 macOS 上，Terminal 与 GUI 应用的 PATH 可能不同）。请参阅 QUICKSTART.md（“Local agent CLI and PATH” 章节）。",
+    "如果你通过 npm 或 Homebrew 安装了 CLI，但仍显示为未安装，请确认该工具的 bin 目录已加入 Design Loom daemon 继承的 PATH（在 macOS 上，Terminal 与 GUI 应用的 PATH 可能不同）。请参阅 QUICKSTART.md（“Local agent CLI and PATH” 章节）。",
   "settings.agentInstall.stepOpenLinks":
     "在目标代理卡片上打开“安装”或“文档”链接。",
   "settings.agentInstall.stepAuth":
-    "返回 OpenDesign 之前，请先在对应 CLI 中完成认证（登录或添加 API 凭据）。",
+    "返回 Design Loom 之前，请先在对应 CLI 中完成认证（登录或添加 API 凭据）。",
   "settings.agentInstall.stepRescan": "在此区域点击“重新扫描”。",
   "settings.agentInstall.stepSelect": "当代理显示为已安装后，选择该代理卡片。",
   "settings.noAgentsDetected":
@@ -922,7 +934,7 @@ export const zhCN: Dict = {
   "settings.modelCustomPlaceholder": "例如 anthropic/claude-sonnet-4-6",
   "settings.mediaProviders": "媒体生成提供商",
   "settings.mediaProvidersHint": "连接图片、视频、音频和搜索提供商。",
-  "settings.mcpServerTitle": "OpenDesign MCP",
+  "settings.mcpServerTitle": "Design Loom MCP",
   "settings.mcpServerHint":
     "将 OpenDesign 作为 MCP 服务器暴露给你的编码代理。",
   "settings.externalMcpTitle": "外部 MCP",
@@ -979,10 +991,10 @@ export const zhCN: Dict = {
   "settings.allowSilentUpdatesDesc": "有可应用的应用内更新时，下次启动将自动安装。不会立刻升级当前版本。安装器更新仍会先询问。",
   "settings.installLatest": "安装最新版本",
   "settings.alreadyLatest": "当前为最新版本",
-  "settings.mcpTitle": "将 OpenDesign 连接到编程助手",
+  "settings.mcpTitle": "将 Design Loom 连接到编程助手",
   "settings.mcpHint": "通过 MCP，让支持的助手访问你的项目和设计上下文。",
   "settings.mcpDaemonError":
-    "无法连接到本地守护进程以解析安装路径（{error}）。请确保 OpenDesign 正在运行，然后重新打开此面板。",
+    "无法连接到本地守护进程以解析安装路径（{error}）。请确保 Design Loom 正在运行，然后重新打开此面板。",
   "settings.mcpBuildDaemon": "请先构建守护进程。",
   "settings.mcpNodeMissing": "Node 二进制文件缺失。",
   "settings.mcpBuildHint":
@@ -1028,8 +1040,8 @@ export const zhCN: Dict = {
   "settings.mcpCapabilityRead": "读取或搜索项目中的任意文件。",
   "settings.mcpCapabilityPull": "将设计文件、样式、组件和字体作为上下文。",
   "settings.mcpCapabilityDefault":
-    "将当前在 OpenDesign 中打开的项目和文件作为上下文。",
-  "settings.mcpRunningNote": "请保持 OpenDesign 运行。设置完成后，重启编程助手。",
+    "将当前在 Design Loom 中打开的项目和文件作为上下文。",
+  "settings.mcpRunningNote": "请保持 Design Loom 运行。设置完成后，重启编程助手。",
   "entry.tabDesigns": "我的设计",
   "entry.tabTemplates": "模板",
   "entry.tabDesignSystems": "设计体系",
@@ -2398,10 +2410,10 @@ export const zhCN: Dict = {
   "avatar.reasoningLabel": "推理",
   "avatar.serviceTierLabel": "服务层级",
   "avatar.customSuffix": "（自定义）",
-  "socialShare.openDesignSection": "分享 OpenDesign",
-  "socialShare.openDesignTitle": "GitHub 上的 OpenDesign",
+  "socialShare.openDesignSection": "分享 Design Loom",
+  "socialShare.openDesignTitle": "GitHub 上的 Design Loom",
   "socialShare.openDesignText":
-    "OpenDesign 是源码可用的设计智能工作区，可以生成、编辑、部署并交付设计产物。",
+    "Design Loom 是源码可用的设计智能工作区，可以生成、编辑、部署并交付设计产物。",
   "socialShare.openDesignCopyText": "{text}\n{url}",
   "socialShare.projectSection": "社媒分享",
   "socialShare.publishPageTitle": "发布分享页",
@@ -4631,7 +4643,7 @@ export const zhCN: Dict = {
   'settings.updateRetry': '重试',
   'settings.updateViewReleases': '查看发布记录',
   'settings.updateActionFailed': '无法完成更新操作。',
-  'settings.updateQuitFailed': '安装程序已打开，但 OpenDesign 未能自动退出。',
+  'settings.updateQuitFailed': '安装程序已打开，但 Design Loom 未能自动退出。',
   'settings.updateStatusNotChecked': '未检查更新',
   'settings.updateStatusDevelopment': '开发环境不支持应用内更新。',
   'settings.updateStatusUnsupported': '当前环境不支持应用内更新。',

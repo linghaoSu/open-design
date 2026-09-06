@@ -1,7 +1,7 @@
 import { cac } from "cac";
 import type { CAC } from "cac";
 
-import { resolveToolPackConfig, type ToolPackCliOptions, type ToolPackPlatform } from "./config/index.js";
+import { assertDesignLoomPackagedPlatform, resolveToolPackConfig, type ToolPackCliOptions, type ToolPackPlatform } from "./config/index.js";
 import {
   cleanupPackedMacNamespace,
   installPackedMacDmg,
@@ -159,6 +159,7 @@ addWinLifecycleOptions(
     "win",
   ),
 ).action(async (action: string, options: CliOptions) => {
+  assertDesignLoomPackagedPlatform("win");
   const config = resolveToolPackConfig("win", options);
   switch (action) {
     case "build":
@@ -218,6 +219,7 @@ addBuildOptions(addSharedOptions(cli.command("linux <action>", "Linux packaging 
   .option("--containerized", "build inside electronuserland/builder Docker for wider glibc compatibility")
   .option("--headless", "install/start/stop/uninstall/cleanup the headless entry; inspect returns status only")
   .action(async (action: string, options: CliOptions) => {
+    assertDesignLoomPackagedPlatform("linux");
     const config = resolveToolPackConfig("linux", options);
     switch (action) {
       case "build":

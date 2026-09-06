@@ -1,4 +1,5 @@
 import type { Express } from 'express';
+import { DESIGN_LOOM_PRODUCT } from '@open-design/contracts';
 import type {
   OpenDesignDiscordPresenceResponse,
   OpenDesignGithubLatestReleaseResponse,
@@ -28,7 +29,7 @@ export function registerOpenDesignPublicMetadataRoutes(
     try {
       const stats = await openDesignPublicMetadata.readGithubRepoStats();
       const payload: OpenDesignGithubRepoResponse = {
-        repo: 'nexu-io/open-design',
+        repo: new URL(DESIGN_LOOM_PRODUCT.repositoryUrl).pathname.slice(1),
         stargazers_count: stats.stargazersCount,
         fetchedAt: stats.fetchedAt,
         stale: stats.stale,
@@ -43,7 +44,7 @@ export function registerOpenDesignPublicMetadataRoutes(
     try {
       const release = await openDesignPublicMetadata.readLatestReleaseInfo();
       const payload: OpenDesignGithubLatestReleaseResponse = {
-        repo: 'nexu-io/open-design',
+        repo: new URL(DESIGN_LOOM_PRODUCT.repositoryUrl).pathname.slice(1),
         tag_name: release.tagName,
         html_url: release.htmlUrl,
         fetchedAt: release.fetchedAt,

@@ -97,7 +97,7 @@ export function createProjectLegacyMigrationService({ store, acquireAuthority }:
         compiled = compileComponentRegistry({ designSystemId: plan.designSystemId,
           selections: plan.selections.map(({ storySources, ...selection }) => ({ ...selection, sourceText: text(selection.sourcePath),
             ...(storySources ? { storySources: storySources.map((story) => ({ ...story, sourceText: text(story.sourcePath) })) } : {}) })),
-        });
+        }, new Map(files.filter((file) => file.encoding === 'utf8').map((file) => [file.path, file.content])));
       } catch (error) {
         if (error instanceof CompilerError) diagnostics.push({ ...issue('ODDS6002', error.message), location: { sourcePath: error.sourcePath, line: error.line ?? 1, column: Math.max(1, error.column ?? 1) } });
         else throw error;

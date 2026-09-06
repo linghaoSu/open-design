@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
+import { DESIGN_LOOM_PRODUCT } from '@open-design/contracts';
 import { I18nProvider } from '../src/i18n';
 import { AnalyticsProvider } from '../src/analytics/provider';
 import '@excalidraw/excalidraw/index.css';
@@ -7,10 +8,11 @@ import '../src/index.css';
 import '../src/styles/home/index.css';
 
 export const metadata: Metadata = {
-  title: 'OpenDesign',
+  title: DESIGN_LOOM_PRODUCT.name,
+  description: 'A local design workspace with reusable components, versioned design systems, and live code previews.',
   icons: {
-    icon: '/app-icon.png',
-    apple: '/app-icon.png',
+    icon: '/design-loom.svg',
+    apple: '/design-loom.svg',
   },
 };
 

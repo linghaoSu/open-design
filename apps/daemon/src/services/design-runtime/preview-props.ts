@@ -188,6 +188,19 @@ export function analyzeComponentPreviewSource(input: AnalyzeComponentPreviewSour
     }
     if (node.type === 'TSTypeReference') {
       const name = node.typeName.type === 'Identifier' ? node.typeName.name : node.typeName.right.name;
+      if (node.typeName.type === 'Identifier' && !topNames.has(name) && ['Partial', 'Required', 'Pick', 'Omit'].includes(name)) {
+        const args = node.typeParameters?.params ?? [];
+        if (args.length === (name === 'Partial' || name === 'Required' ? 1 : 2)) {
+          const base = again(args[0]!);
+          const selected = args[1] ? again(args[1]) : undefined;
+          const fields = base.fields;
+          if (base.kind === 'object' && fields && (!selected || selected.kind === 'enum' && selected.options?.every((value) => typeof value === 'string' && (name === 'Omit' || fields.has(value))))) {
+            const keys = new Set(selected?.options ?? []);
+            return { ...model('object', 'typescript'), fields: new Map([...fields].filter(([field]) => !selected || (name === 'Pick' ? keys.has(field) : !keys.has(field))).map(([field, value]) => [field, { ...value, ...(name === 'Partial' || name === 'Required' ? { required: name === 'Required' } : {}) }])) };
+          }
+        }
+        warn(`Utility type ${name} has an unresolved source shape or key selection; enter explicit JSON props.`, node); return unknown();
+      }
       if (node.typeName.type === 'Identifier' && types.has(name) && !duplicateTypes.has(name) && !seen.has(name)) {
         const declaration = types.get(name)!;
         if (!declaration.typeParameters && !node.typeParameters) {

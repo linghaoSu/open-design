@@ -2,6 +2,11 @@ import type { Dict } from './types';
 
 /** English fallback for component preview controls until each locale translates them. */
 export const reactPreviewFallback: Pick<Dict, Extract<keyof Dict, `reactPreview.${string}`>> = {
+  "reactPreview.jsonProps": "All preview props (JSON)",
+  "reactPreview.jsonHint": "Replace the complete props object, including fields that could not be inferred. Omit a field to use its source default. Only JSON values are accepted.",
+  "reactPreview.editJson": "Edit JSON props",
+  "reactPreview.recoveryHint": "Check the sample props below. If this component needs a router, theme or data provider, create a local preview wrapper that supplies that context and open the wrapper in Files. Network and server-only APIs are unavailable in the preview.",
+  "reactPreview.invalidJson": "Enter a JSON object with safe JSON values. The last valid props are still previewed.",
   "reactPreview.type": "Type: {kind}",
   "reactPreview.provenance.typescript": "TypeScript",
   "reactPreview.provenance.default": "Source default",

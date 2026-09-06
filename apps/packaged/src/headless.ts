@@ -1,15 +1,15 @@
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
   APP_KEYS,
   OPEN_DESIGN_SIDECAR_CONTRACT,
-  SIDECAR_DEFAULTS,
   SIDECAR_SOURCES,
 } from "@open-design/sidecar-proto";
 import { bootstrapSidecarProcess, readCurrentSidecarStamp } from "@open-design/sidecar";
-import { releaseChannelFromNamespace } from "@open-design/release";
+import { DESIGN_LOOM_PRODUCT, assertDesignLoomNamespace, releaseChannelFromNamespace } from "@open-design/release";
+import { isolateDesignLoomEnvironment, resolveDesignLoomLaunchNamespace } from './product-isolation.js';
 
 import {
   PACKAGED_NAMESPACE_ENV,
@@ -25,16 +25,12 @@ import { resolvePackagedNamespacePaths } from "./paths.js";
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
 function resolveHeadlessNamespaceBaseRoot(): string {
-  const odDataDir = process.env.OD_DATA_DIR;
-  if (odDataDir != null && odDataDir.length > 0) {
-    return join(resolve(odDataDir.replace(/^~/, homedir())), "namespaces");
-  }
   const xdgDataHome = process.env.XDG_DATA_HOME;
   const dataBase =
     xdgDataHome != null && xdgDataHome.length > 0
       ? xdgDataHome
       : join(homedir(), ".local", "share");
-  return join(dataBase, "open-design", "namespaces");
+  return join(dataBase, DESIGN_LOOM_PRODUCT.id, "namespaces");
 }
 
 function resolveHeadlessAmrProfile(): PackagedConfig["amrProfile"] {
@@ -42,9 +38,11 @@ function resolveHeadlessAmrProfile(): PackagedConfig["amrProfile"] {
 }
 
 function resolveHeadlessConfig(): PackagedConfig {
+  isolateDesignLoomEnvironment(process.env);
   const namespace = OPEN_DESIGN_SIDECAR_CONTRACT.normalizeNamespace(
-    process.env[PACKAGED_NAMESPACE_ENV] ?? SIDECAR_DEFAULTS.namespace,
+    process.env[PACKAGED_NAMESPACE_ENV] ?? DESIGN_LOOM_PRODUCT.namespace,
   );
+  assertDesignLoomNamespace(namespace);
   const namespaceBaseRoot = resolveHeadlessNamespaceBaseRoot();
 
   // OD_RESOURCE_ROOT may be set by a launcher script; otherwise default to a
@@ -88,11 +86,13 @@ const headlessRequest = parsePackagedHeadlessRequest([
 ]);
 
 async function main(): Promise<void> {
-  const config = resolveHeadlessConfig();
-  const paths = resolvePackagedNamespacePaths(config, config.namespace, process.env);
+  const initialConfig = resolveHeadlessConfig();
   const currentStamp = (() => {
     try { return readCurrentSidecarStamp(); } catch { return null; }
   })();
+  const namespace = resolveDesignLoomLaunchNamespace(initialConfig.namespace, currentStamp?.namespace);
+  const config = { ...initialConfig, namespace };
+  const paths = resolvePackagedNamespacePaths(config, namespace, process.env);
   const stamp = currentStamp ?? {
     app: APP_KEYS.DESKTOP,
     channel: releaseChannelFromNamespace(config.namespace, "default") ?? "stable",

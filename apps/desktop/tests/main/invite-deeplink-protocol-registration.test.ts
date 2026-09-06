@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Regression for OPEND-2352: a source/dev run used to claim the `opendesign://`
+// Regression for OPEND-2352: a source/dev run used to claim the `designloom://`
 // scheme for whatever Electron binary happened to host it. On macOS that binds
 // the scheme to `com.github.electron` in LaunchServices, so the cloud
-// authorization page's `opendesign://workspace/open` hand-off later launched a
+// authorization page's `designloom://workspace/open` hand-off later launched a
 // bare Electron welcome window from a throwaway checkout instead of focusing
 // the installed app. Only the packaged app — which owns a channel-distinct
 // bundle id and declares the scheme in its Info.plist — may register it.
@@ -73,13 +73,13 @@ describe("registerInviteDeeplink protocol-client registration", () => {
 
   it("claims the scheme for a packaged macOS app", async () => {
     await registerOn("darwin", true);
-    expect(electron.setAsDefaultProtocolClient).toHaveBeenCalledWith("opendesign");
+    expect(electron.setAsDefaultProtocolClient).toHaveBeenCalledWith("designloom");
   });
 
   it("claims the scheme for a packaged Windows app via the stable launcher path", async () => {
     const launcher = "C:\\Users\\qa\\AppData\\Local\\OpenDesign\\OpenDesign.exe";
     await registerOn("win32", true, launcher);
-    expect(electron.setAsDefaultProtocolClient).toHaveBeenCalledWith("opendesign", launcher);
+    expect(electron.setAsDefaultProtocolClient).toHaveBeenCalledWith("designloom", launcher);
   });
 
   it("still wires the deeplink dispatcher on a source/dev run", async () => {

@@ -1363,6 +1363,29 @@ describe('FileWorkspace upload input', () => {
 });
 
 describe('FileWorkspace launcher tab creation', () => {
+  it('offers migration while viewing a legacy design inventory and preserves the actual HTML frame', async () => {
+    const html = workspaceFile('components.html');
+    mockedFetchProjectFileText.mockResolvedValue('<html><body>Original component inventory</body></html>');
+    vi.spyOn(designRuntimeProvider, 'getProjectDesignRuntime').mockResolvedValue({ state: emptyDesignRuntimeState() });
+    function Harness() {
+      const [tabsState, setTabsState] = useState<OpenTabsState>({ tabs: [html.name], active: html.name });
+      return <IframeKeepAliveProvider><FileWorkspace projectId="project-1" projectKind="prototype" files={[html, workspaceFile('tokens.css'), workspaceFile('DESIGN.md')]} liveArtifacts={[]}
+        onRefreshFiles={vi.fn()} isDeck={false} tabsState={tabsState} onTabsStateChange={setTabsState} /></IframeKeepAliveProvider>;
+    }
+    render(<Harness />);
+    const frame = await screen.findByTestId('artifact-preview-frame');
+    const notice = screen.getByTestId('file-legacy-design-migration');
+    expect(notice).toBeVisible(); expect(notice).toHaveTextContent('does not convert HTML into React');
+    fireEvent.click(within(notice).getByRole('button', { name: 'Review existing files' }));
+    const panel = await screen.findByTestId('design-runtime-panel');
+    await waitFor(() => expect(screen.getByTestId('legacy-step-name')).toBeVisible());
+    expect(screen.getByTestId('design-runtime-migration-tab')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+    fireEvent.click(within(panel).getByRole('button', { name: 'Close' }));
+    expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+    expect(notice).toBeVisible();
+  });
+
   it('opens the component source and exact export from Design system, including a repeated request from Source mode', async () => {
     const sourceFile: ProjectFile = { ...workspaceFile('src/Button.tsx'), kind: 'code', mime: 'text/tsx' };
     mockedFetchProjectFileText.mockResolvedValue('export function Button({ title }: { title: string }) { return <button>{title}</button>; }');
@@ -1412,6 +1435,7 @@ describe('FileWorkspace launcher tab creation', () => {
     const { container } = render(<Harness />);
     await waitFor(() => expect(mockedFetchProjectFileText).toHaveBeenCalledTimes(1));
     const frame = screen.getByTestId('artifact-preview-frame');
+    expect(screen.queryByTestId('file-legacy-design-migration')).toBeNull();
     const viewer = screen.getByTestId('retained-file-viewer');
     const body = container.querySelector<HTMLElement>('.ws-body')!;
     const actions = container.querySelector<HTMLElement>('[data-app-chrome-file-actions="true"]')!;

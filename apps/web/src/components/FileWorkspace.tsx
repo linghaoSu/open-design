@@ -121,6 +121,7 @@ import { createTerminal, killTerminal, listPlugins, moveWorkspaceProject } from 
 import { MoveToTeamConfirmDialog, moveConfirmSkipped } from './MoveToTeamConfirmDialog';
 import { DesignFilesPanel, type DesignFilesNavState } from './DesignFilesPanel';
 import { DesignRuntimePanel } from './DesignRuntimePanel';
+import { legacyHtmlDesignSources } from './DesignRuntimeLegacyMigration';
 import {
   DesignBrowserPanel,
   labelFromUrl,
@@ -1382,6 +1383,7 @@ export function FileWorkspace({
   const { locale, t } = useI18n();
   const { workspaceContext } = useProjectCollabContext();
   const [designRuntimeOpen, setDesignRuntimeOpen] = useState(false);
+  const [migrationEntryScope, setMigrationEntryScope] = useState<string | null>(null);
   const iframeKeepAlivePool = useIframeKeepAlivePool();
   const analytics = useAnalytics();
   // P1 page_view page_name=file_manager — once per project the user lands
@@ -1514,6 +1516,7 @@ export function FileWorkspace({
   const browserTabSequenceRef = useRef(0);
   const openFileRef = useRef<(name: string) => void>(() => {});
   const componentPreviewScope = JSON.stringify([projectId, workspaceAccountScopedCacheKey(workspaceContext)]);
+  const legacyHtmlSources = useMemo(() => legacyHtmlDesignSources(files), [files]);
   const componentPreviewSequence = useRef(0);
   const [componentPreviewRequest, setComponentPreviewRequest] = useState<{
     scope: string; name: string; request: { exportName?: string; nonce: number };
@@ -3359,6 +3362,11 @@ export function FileWorkspace({
   );
   const stableOpenFileReplacing = useStableHandler(openFileReplacing);
   const renderFileViewer = (file: ProjectFile, workspaceActive: boolean) => (
+    <>
+    {workspaceActive && legacyHtmlSources.includes(file.name) ? <aside data-testid="file-legacy-design-migration" style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+      <span style={{ flex: '1 1 240px', fontSize: 12, color: 'var(--text-muted)' }}>{t('designWorkspace.legacyHtmlHint')}</span>
+      <Button onClick={() => { setMigrationEntryScope(componentPreviewScope); setDesignRuntimeOpen(true); }}>{t('designWorkspace.openMigration')}</Button>
+    </aside> : null}
     <FileViewer
       projectId={projectId}
       projectKind={projectKind}
@@ -3415,6 +3423,7 @@ export function FileWorkspace({
         protectedHtmlViewerFileNames.size === 0 || protectedHtmlViewerFileNames.has(file.name)
       }
     />
+    </>
   );
 
   const activeWorkspaceContext = useMemo<WorkspaceContextItem | null>(() => {
@@ -4123,7 +4132,7 @@ export function FileWorkspace({
             variant={designRuntimeOpen ? 'subtle' : 'ghost'}
             aria-expanded={designRuntimeOpen}
             aria-controls="design-runtime-panel"
-            onClick={() => setDesignRuntimeOpen((open) => !open)}
+            onClick={() => { setMigrationEntryScope(null); setDesignRuntimeOpen((open) => !open); }}
           >{t('designRuntime.title')}</Button> : null}
           {!initialMaterializationPending && fileActionsBefore ? (
             <div className="ws-tabs-file-actions-before" style={designRuntimeOpen ? { display: 'none' } : undefined}>{fileActionsBefore}</div>
@@ -4150,8 +4159,9 @@ export function FileWorkspace({
         workspaceContext={workspaceContext}
         files={files}
         viewerOnly={viewerOnly}
-        onClose={() => setDesignRuntimeOpen(false)}
+        onClose={() => { setDesignRuntimeOpen(false); setMigrationEntryScope(null); }}
         onOpenSource={openComponentSource}
+        initialTab={migrationEntryScope === componentPreviewScope ? 'migration' : undefined}
       /> : null}
       {!initialMaterializationPending && launcherOpen ? (
         <TabLauncherMenu

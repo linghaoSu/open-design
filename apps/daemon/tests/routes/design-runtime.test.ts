@@ -85,6 +85,76 @@ async function withRoute<T>(run: (fixture: {
 }
 
 describe('project design runtime HTTP routes', () => {
+  it('reports an imported type syntax error with its actual source location and leaves the registry unchanged', async () => {
+    await withRoute(async ({ request, readSource }) => {
+      readSource.mockImplementation(async (_project, path) => {
+        if (path === 'src/Button.tsx') return "import type {Props} from './types'; export function Button(props:Props) {}";
+        if (path === 'src/types.ts') return '\nexport interface Props { value: }';
+        throw new Error('Missing project source');
+      });
+      const response = await request('POST', '/compile', compileRequest);
+      expect(response.status).toBe(400);
+      expect(response.json.error).toMatchObject({ code: 'DESIGN_RUNTIME_COMPILATION_FAILED', details: { sourcePath: 'src/types.ts', line: 2 } });
+      expect((await request('GET')).json.state.revision).toBe(0);
+    });
+  });
+
+  it.each(['compile', 'register-binding', 'refresh'] as const)('reauthorizes %s after source proof and preserves state when write permission is revoked', async (operation) => {
+    await withRoute(async ({ request, authorize, readSource }) => {
+      let before = (await request('GET')).json.state;
+      const binding = { schemaVersion: 1, id: 'local-binding', componentRef: 'local:LocalButton', framework: 'react',
+        status: 'bound', verified: true, codeComponentId: 'project/LocalButton', definitionRevision: 1,
+        propMappings: [{ designProp: 'variant', codeProp: 'variant' }] };
+      const source = { sourcePath: 'src/LocalButton.tsx', framework: 'react', exportName: 'Button', codeComponentId: 'project/LocalButton' };
+      if (operation !== 'compile') {
+        before = (await request('POST', '/compile', compileRequest)).json.state;
+        const staged = await request('POST', '/component-changes', { expectedRevision: before.revision, draftId: 'local-draft', expectedDefinitionRevision: 0, definition: localDefinition });
+        expect(staged.status).toBe(200);
+        const published = await request('POST', '/component-changes/local-draft/publish', { expectedRevision: staged.json.state.revision, expectedDefinitionRevision: 0 });
+        expect(published.status).toBe(200); before = published.json.state;
+        if (operation === 'refresh') {
+          const registered = await request('POST', '/project-code-components/register-binding', { expectedRevision: before.revision, source, binding });
+          expect(registered.status).toBe(200); before = registered.json.state;
+        }
+      }
+      authorize.mockClear(); readSource.mockClear();
+      authorize.mockResolvedValueOnce(true).mockImplementationOnce(async (_req, res) => {
+        res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Permission revoked after source proof' } }); return false;
+      });
+      const suffix = operation === 'compile' ? '/compile' : operation === 'register-binding' ? '/project-code-components/register-binding' : '/project-code-components/project%2FLocalButton/refresh';
+      const payload = operation === 'compile' ? compileRequest : operation === 'register-binding' ? { expectedRevision: before.revision, source, binding } : { expectedRevision: before.revision };
+      const denied = await request('POST', suffix, payload);
+      expect(denied.status).toBe(403);
+      expect(denied.json.error.code).toBe('FORBIDDEN');
+      expect(authorize).toHaveBeenCalledTimes(2);
+      expect(authorize.mock.calls.every((call) => call[3]?.mode === 'write' && call[3].capability === 'writeFiles')).toBe(true);
+      expect(readSource.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect((await request('GET')).json.state).toEqual(before);
+    });
+  });
+
+  it('restores an exact metadata baseline through authorized CAS and reauthorizes publication after source reads', async () => {
+    await withRoute(async ({ request, readSource, authorize }) => {
+      const pkg = packageFixture();
+      await request('POST', '/versions', { expectedRevision: 0, package: pkg });
+      await request('POST', '/dependency', { expectedRevision: 1, designSystemId: 'acme', version: '1.0.0', range: '^1.0.0' });
+      const clear = await request('DELETE', '/dependency', { expectedRevision: 2 });
+      expect(clear.json.state.authoringBase.version).toBe('1.0.0');
+      const before = clear.json.state;
+      const restored = await request('PUT', '/authoring-base', { expectedRevision: 3, designSystemId: 'acme', version: '1.0.0' });
+      expect(restored.status).toBe(200);
+      expect(restored.json.state).toEqual({ ...before, revision: 4 });
+      expect(authorize.mock.lastCall?.[3]).toEqual({ mode: 'write', capability: 'writeFiles' });
+      expect((await request('PUT', '/authoring-base', { expectedRevision: 3, designSystemId: 'acme', version: '1.0.0' })).status).toBe(409);
+      readSource.mockResolvedValue(pkg.source.files[0]!.content);
+      authorize.mockResolvedValueOnce(true).mockImplementationOnce(async (_req, res) => { res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Permission revoked' } }); return false; });
+      const denied = await request('POST', '/versions/publish-current', { expectedRevision: 4, name: pkg.name, version: '1.1.0', sourcePaths: ['src/Button.tsx'] });
+      expect(denied.status).toBe(403);
+      expect((await request('GET')).json.state.revision).toBe(4);
+      expect((await request('GET', '/versions/acme/1.1.0')).status).toBe(404);
+    });
+  });
+
   it('dispatches immutable publication, exact export and dependency lifecycle using canonical responses', async () => {
     await withRoute(async ({ request, readSource, authorize }) => {
       const pkg = packageFixture();
@@ -104,7 +174,7 @@ describe('project design runtime HTTP routes', () => {
       expect(next.status).toBe(200);
       state = ProjectDesignRuntimePublishVersionResponseSchema.parse(next.json).state;
       expect(state.lock.dependencies[0]?.version).toBe('1.0.0');
-      expect(readSource).toHaveBeenCalledExactlyOnceWith('project', 'src/Button.tsx');
+      expect(readSource.mock.calls).toEqual([['project', 'src/Button.tsx'], ['project', 'src/Button.tsx']]);
       const blocked = await request('POST', '/dependency', { expectedRevision: state.revision, designSystemId: 'acme', version: '1.1.0', range: '^1.0.0' });
       expect(blocked.status).toBe(409);
       const immutable = await request('POST', '/versions', { expectedRevision: state.revision, package: { ...pkg, name: 'Overwritten' } });
@@ -131,7 +201,7 @@ describe('project design runtime HTTP routes', () => {
       let state = ProjectDesignRuntimeResponseSchema.parse(compiled.json).state;
       const binding = state.bindings.bindings[0]!;
       const bindingPath = `/bindings/${encodeURIComponent(binding.id)}`;
-      expect(readSource).toHaveBeenCalledExactlyOnceWith('project', 'src/Button.tsx');
+      expect(readSource.mock.calls).toEqual([['project', 'src/Button.tsx'], ['project', 'src/Button.tsx']]);
       expect(ProjectDesignRuntimeComponentsResponseSchema.parse((await request('GET', '/components?query=button')).json).components).toHaveLength(1);
       expect(ProjectDesignRuntimeCodeComponentsResponseSchema.parse((await request('GET', '/code-components?query=src%2FButton')).json).components).toHaveLength(1);
       expect(ProjectDesignRuntimeResolveResponseSchema.parse((await request('GET', `${bindingPath}/resolve`)).json).resolution.ok).toBe(true);
@@ -229,7 +299,7 @@ describe('project design runtime HTTP routes', () => {
       const state = ProjectDesignRuntimeResponseSchema.parse(response.json).state;
       expect(state.codeIndex.components.map((code) => code.framework)).toEqual(['react', 'vue']);
       expect(state.registry?.components.map((component) => component.stories?.length)).toEqual([2, 1]);
-      expect(readSource.mock.calls.map((call) => call[1])).toEqual([...mixed.sources.keys()]);
+      expect(readSource.mock.calls.map((call) => call[1])).toEqual([...mixed.sources.keys(), 'src/SlotCard.ts', ...mixed.sources.keys(), 'src/SlotCard.ts']);
     });
   });
 

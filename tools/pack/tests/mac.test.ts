@@ -35,7 +35,7 @@ function makeConfig(root: string, overrides: Partial<ToolPackConfig> = {}): Tool
     electronDistPath: "/x/electron/dist",
     electronVersion: "41.3.0",
     macCompression: "normal",
-    namespace: "local-test",
+    namespace: "design-loom-local-test",
     platform: "mac",
     portable: false,
     removeData: false,
@@ -45,14 +45,14 @@ function makeConfig(root: string, overrides: Partial<ToolPackConfig> = {}): Tool
     requireVelaCli: false,
     roots: {
       output: {
-        appBuilderRoot: join(root, ".tmp", "tools-pack", "out", "mac", "namespaces", "local-test", "builder"),
-        namespaceRoot: join(root, ".tmp", "tools-pack", "out", "mac", "namespaces", "local-test"),
+        appBuilderRoot: join(root, ".tmp", "tools-pack", "out", "mac", "namespaces", "design-loom-local-test", "builder"),
+        namespaceRoot: join(root, ".tmp", "tools-pack", "out", "mac", "namespaces", "design-loom-local-test"),
         platformRoot: join(root, ".tmp", "tools-pack", "out", "mac"),
         root: join(root, ".tmp", "tools-pack", "out"),
       },
       runtime: {
         namespaceBaseRoot: join(root, ".tmp", "tools-pack", "runtime", "mac", "namespaces"),
-        namespaceRoot: join(root, ".tmp", "tools-pack", "runtime", "mac", "namespaces", "local-test"),
+        namespaceRoot: join(root, ".tmp", "tools-pack", "runtime", "mac", "namespaces", "design-loom-local-test"),
       },
       cacheRoot: join(root, ".tmp", "tools-pack", "cache"),
       toolPackRoot: join(root, ".tmp", "tools-pack"),
@@ -99,14 +99,14 @@ describe("mac prebundle entrypoints", () => {
 describe("resolveSeededAppConfigPaths", () => {
   it("declares the Workspace invite URL scheme in the packaged app metadata", () => {
     expect(macBuilderSource).toContain("protocols: [");
-    expect(macBuilderSource).toContain('schemes: ["opendesign"]');
+    expect(macBuilderSource).toContain('schemes: [DESIGN_LOOM_PRODUCT.protocol]');
   });
 
   it("uses workspace .od by default", () => {
     const config = makeConfig("/work");
     expect(resolveSeededAppConfigPaths(config)).toEqual({
       sourcePath: join("/work", ".od", "app-config.json"),
-      targetPath: join("/work", ".tmp", "tools-pack", "runtime", "mac", "namespaces", "local-test", "data", "app-config.json"),
+      targetPath: join("/work", ".tmp", "tools-pack", "runtime", "mac", "namespaces", "design-loom-local-test", "data", "app-config.json"),
     });
   });
 
@@ -115,7 +115,7 @@ describe("resolveSeededAppConfigPaths", () => {
     const config = makeConfig("/work");
     expect(resolveSeededAppConfigPaths(config)).toEqual({
       sourcePath: join("/custom/data", "app-config.json"),
-      targetPath: join("/work", ".tmp", "tools-pack", "runtime", "mac", "namespaces", "local-test", "data", "app-config.json"),
+      targetPath: join("/work", ".tmp", "tools-pack", "runtime", "mac", "namespaces", "design-loom-local-test", "data", "app-config.json"),
     });
   });
 
@@ -124,7 +124,7 @@ describe("resolveSeededAppConfigPaths", () => {
     const config = makeConfig("/work");
     expect(resolveSeededAppConfigPaths(config)).toEqual({
       sourcePath: resolve("/work", "e2e", "ui", ".od-data", "app-config.json"),
-      targetPath: join("/work", ".tmp", "tools-pack", "runtime", "mac", "namespaces", "local-test", "data", "app-config.json"),
+      targetPath: join("/work", ".tmp", "tools-pack", "runtime", "mac", "namespaces", "design-loom-local-test", "data", "app-config.json"),
     });
   });
 
@@ -133,13 +133,13 @@ describe("resolveSeededAppConfigPaths", () => {
     const config = makeConfig("/work");
     expect(resolveSeededAppConfigPaths(config)).toEqual({
       sourcePath: join(os.homedir(), ".open-design", "app-config.json"),
-      targetPath: join("/work", ".tmp", "tools-pack", "runtime", "mac", "namespaces", "local-test", "data", "app-config.json"),
+      targetPath: join("/work", ".tmp", "tools-pack", "runtime", "mac", "namespaces", "design-loom-local-test", "data", "app-config.json"),
     });
   });
 });
 
 describe("seedPackagedAppConfig", () => {
-  it("copies the current app-config into the packaged runtime namespace", async () => {
+  it("never seeds the fork from an existing project app-config, even with portable false", async () => {
     const root = await mkdtemp(join(tmpdir(), "open-design-tools-pack-mac-"));
     try {
       const config = makeConfig(root);
@@ -155,7 +155,7 @@ describe("seedPackagedAppConfig", () => {
 
       await expect(
         readFile(join(config.roots.runtime.namespaceRoot, "data", "app-config.json"), "utf8"),
-      ).resolves.toContain('"agentId": "codex"');
+      ).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await rm(root, { force: true, recursive: true });
     }
@@ -290,12 +290,14 @@ describe("renderMacPackagedConfig", () => {
         }),
       ) as Record<string, unknown>;
       expect(packagedConfig).not.toHaveProperty("nodeCommandRelative");
+      expect(packagedConfig).not.toHaveProperty("namespaceBaseRoot");
+      expect(packagedConfig.productId).toBe("design-loom");
     } finally {
       await rm(root, { force: true, recursive: true });
     }
   });
 
-  it("bakes the configured updater metadata URL for mac beta validation", async () => {
+  it("does not bake an updater feed into the fork", async () => {
     const root = await mkdtemp(join(tmpdir(), "open-design-tools-pack-mac-"));
     try {
       const config = makeConfig(root, {
@@ -310,7 +312,9 @@ describe("renderMacPackagedConfig", () => {
         }),
       ) as Record<string, unknown>;
 
-      expect(packagedConfig.updateMetadataUrl).toBe("http://127.0.0.1:4567/beta/latest/metadata.json");
+      expect(packagedConfig.updateMetadataUrl).toBeUndefined();
+      expect(packagedConfig.updatesEnabled).toBe(false);
+      expect(packagedConfig.productId).toBe("design-loom");
     } finally {
       await rm(root, { force: true, recursive: true });
     }
@@ -495,8 +499,8 @@ describe("writeLaunchPackagedConfig", () => {
   it("injects the tools-pack runtime namespace root without mutating the packaged app config", async () => {
     const root = await mkdtemp(join(tmpdir(), "open-design-tools-pack-mac-"));
     try {
-      const config = makeConfig(root, { namespace: "release-beta", portable: true });
-      const appPath = join(root, "Open Design.app");
+      const config = makeConfig(root, { namespace: "design-loom-release-beta", portable: true });
+      const appPath = join(root, "Design Loom.app");
       const embeddedConfigPath = join(appPath, "Contents", "Resources", "open-design-config.json");
       await mkdir(dirname(embeddedConfigPath), { recursive: true });
       await writeFile(
@@ -521,7 +525,7 @@ describe("writeLaunchPackagedConfig", () => {
       expect(launchConfigPath).toBe(join(config.roots.runtime.namespaceRoot, "runtime", "open-design-config.json"));
       expect(launchConfig).toMatchObject({
         appVersion: "0.5.1-beta.2",
-        namespace: "release-beta",
+        namespace: "design-loom-release-beta",
         namespaceBaseRoot: config.roots.runtime.namespaceBaseRoot,
         nodeCommandRelative: "open-design/bin/node",
         webOutputMode: "standalone",

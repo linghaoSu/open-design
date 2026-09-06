@@ -19,6 +19,29 @@ function report(status: string, revision = 1, overrides: Partial<MessageEventIni
 }
 
 describe('standalone React component preview', () => {
+  it('edits complete JSON props for unresolved or forwarded shapes while retaining the last valid frame', async () => {
+    vi.mocked(provider.createReactComponentPreview).mockResolvedValue(componentPreviewFixture({ controls: [], effectiveProps: {}, mockProps: {}, callbacks: [] }));
+    render(<ReactComponentPreview {...props} layout="component" />);
+    await screen.findByTestId('react-component-preview-frame');
+    await act(async () => {});
+    const originalFrame = frame(); const post = vi.spyOn(originalFrame.contentWindow!, 'postMessage'); fireEvent.load(originalFrame);
+    report('error', post.mock.calls.at(-1)![0].revision as number);
+    expect(screen.getByText(/local preview wrapper/i)).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit JSON props' }));
+    const editor = screen.getByLabelText('All preview props (JSON)');
+    expect(editor).toBeVisible(); expect(editor).toHaveFocus();
+    fireEvent.change(editor, { target: { value: '{"user":{"name":"Ada"},"items":[{"label":"Real value"}]}' } });
+    expect(post.mock.calls.at(-1)![0].props).toEqual({ user: { name: 'Ada' }, items: [{ label: 'Real value' }] });
+    const last = post.mock.calls.at(-1)![0];
+    for (const value of ['{', '{"__proto__":{"polluted":true}}', '[]']) {
+      fireEvent.change(editor, { target: { value } });
+      expect(editor).toHaveAttribute('aria-invalid', 'true');
+      expect(post.mock.calls.at(-1)![0]).toBe(last);
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Reset props' }));
+    expect(editor).toHaveValue('{}'); expect(editor).not.toHaveAttribute('aria-invalid');
+    expect(frame()).toBe(originalFrame); expect(provider.createReactComponentPreview).toHaveBeenCalledOnce();
+  });
   it('embeds real preview and props with a collapsed export selector without restarting the frame when layout changes', async () => {
     const request = { exportName: 'CompactCard', nonce: 0 };
     vi.mocked(provider.createReactComponentPreview).mockResolvedValue(componentPreviewFixture({ requestedExport: 'CompactCard', selectedExport: 'CompactCard' }));

@@ -64,6 +64,9 @@ export interface Dict {
   "designWorkspace.importVersion": string;
   "designWorkspace.importHint": string;
   "designWorkspace.legacyDetected": string;
+  "designWorkspace.legacyHtmlTitle": string;
+  "designWorkspace.legacyHtmlHint": string;
+  "designWorkspace.previewFile": string;
   "designWorkspace.noSourceFiles": string;
   "designWorkspace.exportHint": string;
   "designWorkspace.migrationFiles": string;
@@ -73,6 +76,11 @@ export interface Dict {
   "designWorkspace.repairTitle": string;
   "designWorkspace.repairHint": string;
   "reactPreview.type": string;
+  "reactPreview.jsonProps": string;
+  "reactPreview.jsonHint": string;
+  "reactPreview.editJson": string;
+  "reactPreview.recoveryHint": string;
+  "reactPreview.invalidJson": string;
   "reactPreview.provenance.typescript": string;
   "reactPreview.provenance.default": string;
   "reactPreview.provenance.usage": string;
@@ -307,6 +315,10 @@ export interface Dict {
   "designVersions.name": string;
   "designVersions.version": string;
   "designVersions.sourceFiles": string;
+  "designVersions.authoringBase": string;
+  "designVersions.authoringHint": string;
+  "designVersions.restoreAuthoringBase": string;
+  "designVersions.sourceUpdateHint": string;
   "designVersions.sourceHint": string;
   "designVersions.constraints": string;
   "designVersions.constraintHint": string;

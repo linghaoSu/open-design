@@ -1,4 +1,6 @@
-export const PRODUCT_NAME = "Open Design";
+import { DESIGN_LOOM_PRODUCT } from "@open-design/release";
+
+export const PRODUCT_NAME = DESIGN_LOOM_PRODUCT.name;
 
 export const INTERNAL_PACKAGES = [
   { directory: "packages/release", name: "@open-design/release" },

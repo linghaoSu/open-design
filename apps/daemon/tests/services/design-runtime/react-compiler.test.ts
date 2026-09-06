@@ -22,6 +22,53 @@ function compile(sourceText = fixtureSource, overrides: Partial<CompileReactComp
 }
 
 describe('compileReactComponent', () => {
+  it('resolves bounded supplied local type imports with isolated module scopes and exact source locations', () => {
+    const sourceFiles = new Map([
+      ['fixture/types.ts', "import type {Tone} from './tone'; export interface Props {label:string;tone?:Tone}"],
+      ['fixture/tone.ts', "export type Tone='quiet'|'loud'"],
+    ]);
+    const source = "import type {Props as ButtonProps} from './types'; type Tone='wrong'; export const Button=({label,tone='quiet'}:ButtonProps)=><button>{label}</button>";
+    const compiled = compile(source, { sourceFiles });
+    expect(compiled.codeComponent.props.tone).toMatchObject({ type: 'enum', values: ['quiet', 'loud'], default: 'quiet', source: { sourcePath: 'fixture/types.ts' } });
+    expect(() => compile(source, { sourceFiles: new Map([['fixture/types.ts', "export interface Props {label:string;tone:{value:string}}"]]) })).toThrow(/TSTypeLiteral/);
+    expect(() => compile(source, { sourceFiles: new Map([['fixture/types.ts', 'interface Props {label:string}']]) })).toThrow(/same source/);
+    expect(() => compile(source, { sourceFiles: new Map([['fixture/types.ts', "export type Props=Props"]]) })).toThrow(/Cyclic/);
+  });
+  it.each([
+    ["import {memo as keep} from 'react'; const Inner = ({label='Ready'}:{label?:string}) => <button>{label}</button>; export const Button=keep(Inner);", 'Button'],
+    ["import React from 'react'; export const Button=React.forwardRef<HTMLButtonElement,{label?:string}>(({label='Ready'},ref)=><button ref={ref}>{label}</button>);", 'Button'],
+    ["const Inner=({label='Ready'}:{label?:string})=><button>{label}</button>;export {Inner as Button};", 'Button'],
+    ["export default function Button({label='Ready'}:{label?:string}){return <button>{label}</button>}", 'default'],
+  ])('proves the actual contract behind a stable local React export %s', (source, exportName) => {
+    const result = compile(source, { exportName });
+    expect(result.codeComponent.props.label).toMatchObject({ type: 'string', required: false, default: 'Ready' });
+    expect(result.binding).toMatchObject({ status: 'bound', verified: true });
+    expect(result.codeComponent.exportName).toBe(exportName);
+  });
+
+  it.each([
+    "import {forwardRef,memo} from 'react';export const Button=forwardRef(memo((props:{label:string})=><p/>));",
+    "import type React from 'react';export const Button=React.memo((props:{label:string})=><p/>);",
+    "import {memo} from 'other';export const Button=memo((props:{label:string})=><p/>);",
+    "import {memo} from 'react';let Inner=(props:{label:string})=><p/>;export const Button=memo(Inner);",
+    "import {memo} from 'react';const Inner=(props:{label:string})=><p/>;Inner.defaultProps={label:'changed'};export const Button=memo(Inner);",
+    "import React from 'react';React.memo=(value)=>value;export const Button=React.memo((props:{label:string})=><p/>);",
+  ])('rejects unproved wrappers or mutations in the selected local export chain', (source) => {
+    expect(() => compile(source)).toThrow(CompilerError);
+  });
+
+  it('keeps memo around a forwardRef render function and identifies unsupported imported fields at their actual source location', () => {
+    expect(compile("import {forwardRef,memo} from 'react';export const Button=memo(forwardRef<HTMLButtonElement,{label:string}>((props,ref)=><button ref={ref}>{props.label}</button>));").binding.status).toBe('bound');
+    for (const declaration of ['export interface Props{\n\nrun():void\n}', 'interface Base{label:string}\n\nexport interface Props extends Base{}', 'export type Props<T>={label:T}']) {
+      try {
+        compile("import type {Props} from './types';export function Button(props:Props){return null}", { sourceFiles: new Map([['fixture/types.ts', declaration]]) });
+        expect.fail('Expected unsupported imported contract');
+      } catch (error) {
+        expect(error).toBeInstanceOf(CompilerError);
+        expect(error).toMatchObject({ sourcePath: 'fixture/types.ts', line: declaration.startsWith('export type') ? 1 : 3 });
+      }
+    }
+  });
   it('extracts the acceptance fixture and establishes its explicit code binding', () => {
     const result = compile();
     expect(result.registry).toMatchObject({
@@ -124,7 +171,7 @@ describe('compileReactComponent', () => {
     ['mutable export', 'export let Button = (props: {}) => null', /const arrow/],
     ['wrapped export', 'export const Button = memo((props: {}) => null)', /const arrow/],
     ['function type annotation', 'export const Button: React.FC<{}> = () => null', /type on the props parameter/],
-    ['export specifier', 'function Button(props: {}) {}; export { Button }', /Export specifiers/],
+    ['re-export', "export { Button } from './other'", /re-export/],
     ['missing export', 'function Button(props: {}) {}', /found 0/],
     ['default export', 'export default function Button(props: {}) {}', /found 0/],
     ['computed default', "export function Button({ label = getLabel() }: { label?: string }) {}", /computed defaults/],

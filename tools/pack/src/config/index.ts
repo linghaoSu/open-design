@@ -6,10 +6,9 @@ import path from "node:path";
 
 import {
   OPEN_DESIGN_SIDECAR_CONTRACT,
-  SIDECAR_DEFAULTS,
 } from "@open-design/sidecar-proto";
 import { resolveNamespace } from "@open-design/sidecar";
-import { releaseChannelFromVersion, releaseNamespace } from "@open-design/release";
+import { DESIGN_LOOM_PRODUCT, assertDesignLoomNamespace } from "@open-design/release";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -34,6 +33,11 @@ function resolveToolPackRoot(startDir: string): string {
 export const WORKSPACE_ROOT = resolve(resolveToolPackRoot(__dirname), "../..");
 
 export type ToolPackPlatform = "mac" | "win" | "linux";
+
+/** Other platform installers retain upstream internals and are not fork release products yet. */
+export function assertDesignLoomPackagedPlatform(platform: ToolPackPlatform): void {
+  if (platform !== 'mac') throw new Error('Design Loom currently supports macOS packaging only.');
+}
 export type ToolPackBuildOutput = "all" | "app" | "appimage" | "dir" | "dmg" | "nsis" | "zip";
 export type ToolPackMacCompression = "store" | "normal" | "maximum";
 export type ToolPackWebOutputMode = "server" | "standalone";
@@ -194,13 +198,6 @@ function resolveToolPackAppVersion(value: string | undefined): string | undefine
   return normalized;
 }
 
-function defaultNamespaceForAppVersion(platform: ToolPackPlatform, appVersion: string | undefined): string {
-  const channel = releaseChannelFromVersion(appVersion);
-  if (channel == null) return SIDECAR_DEFAULTS.namespace;
-
-  return releaseNamespace(channel, platform);
-}
-
 function resolveToolPackWebOutputMode(platform: ToolPackPlatform, value: string | undefined): ToolPackWebOutputMode {
   // Standalone web output is wired for desktop packaged platforms; Linux stays on
   // the existing server output until its AppImage resource path is optimized.
@@ -220,42 +217,6 @@ function resolveToolPackAmrProfile(value: string | undefined): ToolPackAmrProfil
   throw new Error(`OPEN_DESIGN_AMR_PROFILE must be prod, test, feature-test, or local: ${value}`);
 }
 
-function resolveToolPackPosthogKey(value: string | undefined): string | undefined {
-  if (value == null) return undefined;
-  const normalized = value.trim();
-  if (normalized.length === 0) return undefined;
-  // PostHog public keys start with `phc_`. We don't hard-fail on other
-  // shapes — third-party PostHog deployments may use different prefixes —
-  // but flag obviously-wrong values (whitespace, control chars) so a
-  // misconfigured CI secret doesn't silently bake garbage into the bundle.
-  if (/[\s\x00-\x1f]/.test(normalized)) {
-    throw new Error(`POSTHOG_KEY contains whitespace or control chars: ${value}`);
-  }
-  return normalized;
-}
-
-function resolveToolPackPosthogHost(value: string | undefined): string | undefined {
-  if (value == null) return undefined;
-  const normalized = value.trim();
-  if (normalized.length === 0) return undefined;
-  let parsed: URL;
-  try {
-    parsed = new URL(normalized);
-  } catch {
-    throw new Error(`POSTHOG_HOST must be an absolute URL: ${value}`);
-  }
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    throw new Error(`POSTHOG_HOST must be http(s): ${value}`);
-  }
-  return normalized.replace(/\/+$/, "");
-}
-
-/**
- * The vela web console origin to bake into the bundle, or undefined when this
- * build was given none. Rejects anything that is not an absolute http(s) URL so
- * a misconfigured CI secret fails the build instead of shipping a bundle whose
- * console links are silently broken.
- */
 function resolveToolPackVelaWebUrl(value: string | undefined): string | undefined {
   if (value == null) return undefined;
   const normalized = value.trim();
@@ -285,78 +246,6 @@ function resolveToolPackVelaWebUrls(env: NodeJS.ProcessEnv): ToolPackVelaWebUrls
     if (origin) result[profile] = origin;
   }
   return Object.keys(result).length > 0 ? result : undefined;
-}
-
-function resolveToolPackPosthogCliApiKey(value: string | undefined): string | undefined {
-  if (value == null) return undefined;
-  const normalized = value.trim();
-  if (normalized.length === 0) return undefined;
-  // Personal API keys start with `phx_`. As with POSTHOG_KEY, third-party
-  // PostHog deployments may use different prefixes; only flag obviously-wrong
-  // values (whitespace, control chars) so a misconfigured CI secret doesn't
-  // silently corrupt the upload step.
-  if (/[\s\x00-\x1f]/.test(normalized)) {
-    throw new Error(`POSTHOG_CLI_API_KEY contains whitespace or control chars`);
-  }
-  return normalized;
-}
-
-function resolveToolPackPosthogCliProjectId(value: string | undefined): string | undefined {
-  if (value == null) return undefined;
-  const normalized = value.trim();
-  if (normalized.length === 0) return undefined;
-  if (!/^[0-9]+$/.test(normalized)) {
-    throw new Error(`POSTHOG_CLI_PROJECT_ID must be a numeric project id: ${value}`);
-  }
-  return normalized;
-}
-
-function resolveToolPackPosthogCliHost(value: string | undefined): string | undefined {
-  if (value == null) return undefined;
-  const normalized = value.trim();
-  if (normalized.length === 0) return undefined;
-  let parsed: URL;
-  try {
-    parsed = new URL(normalized);
-  } catch {
-    throw new Error(`POSTHOG_CLI_HOST must be an absolute URL: ${value}`);
-  }
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    throw new Error(`POSTHOG_CLI_HOST must be http(s): ${value}`);
-  }
-  return normalized.replace(/\/+$/, "");
-}
-
-function resolveToolPackTelemetryRelayUrl(value: string | undefined): string | undefined {
-  if (value == null) return undefined;
-  const normalized = value.trim();
-  if (normalized.length === 0) return undefined;
-  let parsed: URL;
-  try {
-    parsed = new URL(normalized);
-  } catch {
-    throw new Error(`OPEN_DESIGN_TELEMETRY_RELAY_URL must be an absolute https URL: ${value}`);
-  }
-  if (parsed.protocol !== "https:") {
-    throw new Error(`OPEN_DESIGN_TELEMETRY_RELAY_URL must use https: ${value}`);
-  }
-  return normalized.replace(/\/+$/, "");
-}
-
-function resolveToolPackUpdateMetadataUrl(value: string | undefined): string | undefined {
-  if (value == null) return undefined;
-  const normalized = value.trim();
-  if (normalized.length === 0) return undefined;
-  let parsed: URL;
-  try {
-    parsed = new URL(normalized);
-  } catch {
-    throw new Error(`OD_UPDATE_METADATA_URL must be an absolute URL: ${value}`);
-  }
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    throw new Error(`OD_UPDATE_METADATA_URL must use http(s): ${value}`);
-  }
-  return normalized;
 }
 
 function resolveElectronVersion(workspaceRoot: string): string {
@@ -390,15 +279,16 @@ export function resolveToolPackConfig(
   const namespace = resolveNamespace({
     contract: OPEN_DESIGN_SIDECAR_CONTRACT,
     env: process.env,
-    namespace: options.namespace ?? defaultNamespaceForAppVersion(platform, appVersion),
+    namespace: options.namespace ?? DESIGN_LOOM_PRODUCT.namespace,
   });
+  assertDesignLoomNamespace(namespace);
   const defaultToolPackRoot = join(WORKSPACE_ROOT, ".tmp", "tools-pack");
   const toolPackRoot = resolve(options.dir ?? defaultToolPackRoot);
   const cacheRoot = resolve(options.cacheDir ?? join(defaultToolPackRoot, "cache"));
   const outputRoot = join(toolPackRoot, "out");
   const outputPlatformRoot = join(outputRoot, platform);
   const outputNamespaceRoot = join(outputPlatformRoot, "namespaces", namespace);
-  const runtimeNamespaceBaseRoot = join(toolPackRoot, "runtime", platform, "namespaces");
+  const runtimeNamespaceBaseRoot = join(toolPackRoot, "runtime", DESIGN_LOOM_PRODUCT.id, platform, "namespaces");
 
   return {
     appVersion,
@@ -410,7 +300,7 @@ export function resolveToolPackConfig(
     macNotarize: options.notarize === true,
     namespace,
     platform,
-    portable: options.portable === true,
+    portable: true,
     roots: {
       output: {
         appBuilderRoot: join(outputNamespaceRoot, "builder"),
@@ -434,19 +324,15 @@ export function resolveToolPackConfig(
     silent: options.silent !== false,
     signed: options.signed === true,
     amrProfile: resolveToolPackAmrProfile(process.env.OPEN_DESIGN_AMR_PROFILE),
-    telemetryRelayUrl: resolveToolPackTelemetryRelayUrl(process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL),
-    updateMetadataUrl: resolveToolPackUpdateMetadataUrl(process.env.OD_UPDATE_METADATA_URL),
-    posthogKey: resolveToolPackPosthogKey(process.env.POSTHOG_KEY),
-    posthogHost: resolveToolPackPosthogHost(process.env.POSTHOG_HOST),
+    telemetryRelayUrl: undefined,
+    updateMetadataUrl: undefined,
+    posthogKey: undefined,
+    posthogHost: undefined,
     velaWebUrl: resolveToolPackVelaWebUrl(process.env.OD_VELA_WEB_URL),
     velaWebUrls: resolveToolPackVelaWebUrls(process.env),
-    posthogCliApiKey: resolveToolPackPosthogCliApiKey(
-      process.env.POSTHOG_CLI_API_KEY ?? process.env.POSTHOG_PERSONAL_API_KEY,
-    ),
-    posthogCliProjectId: resolveToolPackPosthogCliProjectId(
-      process.env.POSTHOG_CLI_PROJECT_ID ?? process.env.POSTHOG_PROJECT_ID,
-    ),
-    posthogCliHost: resolveToolPackPosthogCliHost(process.env.POSTHOG_CLI_HOST),
+    posthogCliApiKey: undefined,
+    posthogCliProjectId: undefined,
+    posthogCliHost: undefined,
     to: resolveToolPackBuildOutput(platform, options.to),
     webOutputMode: resolveToolPackWebOutputMode(platform, process.env.OD_WEB_OUTPUT_MODE),
     workspaceRoot: WORKSPACE_ROOT,

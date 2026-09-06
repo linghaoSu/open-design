@@ -6,6 +6,7 @@ import {
 import { composeProjectCodeIndex } from './local-component-binding.js';
 import { reindexComponentBindings } from './code-component-index.js';
 import { extractSourceCodeComponent } from './source-compiler.js';
+import { readTypeScriptSourceGraph, type TypeScriptSourceFiles } from './typescript-source-graph.js';
 
 export const effectiveProjectCodeIndex = (state: ProjectDesignRuntimeState) => composeProjectCodeIndex(state.codeIndex, state.projectCodeIndex);
 
@@ -15,7 +16,12 @@ export async function readProjectCodeEvidence(index: CodeComponentIndex, readSou
   for (const code of index.components) if (!files.has(code.sourcePath)) files.set(code.sourcePath, readSource(code.sourcePath).catch(() => undefined));
   const entries = await Promise.all(index.components.map(async (code) => {
     const sourceText = await files.get(code.sourcePath)!;
-    return sourceText === undefined ? [] : [{ codeComponentId: code.id, sourceText }];
+    if (sourceText === undefined) return [];
+    try {
+      const graph = code.framework === 'react' ? await readTypeScriptSourceGraph(new Map([[code.sourcePath, sourceText]]), readSource) : new Map<string, string>();
+      const sourceFiles = [...graph].filter(([path]) => path !== code.sourcePath).map(([sourcePath, sourceText]) => ({ sourcePath, sourceText }));
+      return [{ codeComponentId: code.id, sourceText, ...(sourceFiles.length ? { sourceFiles } : {}) }];
+    } catch { return []; }
   }));
   return entries.flat().sort((left, right) => left.codeComponentId < right.codeComponentId ? -1 : left.codeComponentId > right.codeComponentId ? 1 : 0);
 }
@@ -36,13 +42,13 @@ function missingReactExport(sourceText: string, exportName: string): boolean {
 }
 
 /** Refresh preserves a failed source selection so a later explicit repair can find it again. */
-export function refreshProjectCode(state: ProjectDesignRuntimeState, codeId: string, sourceText: string | undefined): { state: ProjectDesignRuntimeState; diagnostics: ValidationDiagnostic[] } {
+export function refreshProjectCode(state: ProjectDesignRuntimeState, codeId: string, sourceText: string | undefined, sourceFiles?: TypeScriptSourceFiles): { state: ProjectDesignRuntimeState; diagnostics: ValidationDiagnostic[] } {
   const previous = state.projectCodeIndex.components.find((component) => component.id === codeId);
   if (!previous) throw new Error('Registered project code component not found.');
   try {
     if (sourceText === undefined) throw new Error('The registered source path is unavailable.');
     const code = extractSourceCodeComponent({ framework: previous.framework, sourcePath: previous.sourcePath, exportName: previous.exportName, codeComponentId: previous.id, sourceText,
-      ...(previous.packageName === undefined ? {} : { packageName: previous.packageName }) });
+      ...(previous.packageName === undefined ? {} : { packageName: previous.packageName }) }, sourceFiles);
     const next = { ...state, projectCodeIndex: { ...state.projectCodeIndex, components: state.projectCodeIndex.components.map((entry) => entry.id === codeId ? code : entry) } };
     return { state: { ...next, bindings: reindexComponentBindings(state.bindings, effectiveProjectCodeIndex(state), effectiveProjectCodeIndex(next), state.registry, state.projectComponents) }, diagnostics: [] };
   } catch (error) {

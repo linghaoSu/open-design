@@ -96,7 +96,7 @@ function makeConfig(root: string, overrides: Partial<ToolPackConfig> = {}): Tool
     electronDistPath: "/x/electron/dist",
     electronVersion: "41.3.0",
     macCompression: "normal",
-    namespace: "local-test",
+    namespace: "design-loom-local-test",
     platform: "mac",
     portable: true,
     removeData: false,
@@ -106,14 +106,14 @@ function makeConfig(root: string, overrides: Partial<ToolPackConfig> = {}): Tool
     requireVelaCli: false,
     roots: {
       output: {
-        appBuilderRoot: join(root, ".tmp", "tools-pack", "out", "mac", "namespaces", "local-test", "builder"),
-        namespaceRoot: join(root, ".tmp", "tools-pack", "out", "mac", "namespaces", "local-test"),
+        appBuilderRoot: join(root, ".tmp", "tools-pack", "out", "mac", "namespaces", "design-loom-local-test", "builder"),
+        namespaceRoot: join(root, ".tmp", "tools-pack", "out", "mac", "namespaces", "design-loom-local-test"),
         platformRoot: join(root, ".tmp", "tools-pack", "out", "mac"),
         root: join(root, ".tmp", "tools-pack", "out"),
       },
       runtime: {
         namespaceBaseRoot: join(root, ".tmp", "tools-pack", "runtime", "mac", "namespaces"),
-        namespaceRoot: join(root, ".tmp", "tools-pack", "runtime", "mac", "namespaces", "local-test"),
+        namespaceRoot: join(root, ".tmp", "tools-pack", "runtime", "mac", "namespaces", "design-loom-local-test"),
       },
       cacheRoot: join(root, ".tmp", "tools-pack", "cache"),
       toolPackRoot: join(root, ".tmp", "tools-pack"),
@@ -151,7 +151,7 @@ describe("startPackedMacApp", () => {
     try {
       const config = makeConfig(root);
       const paths = resolveMacPaths(config);
-      const executablePath = join(paths.installedAppPath, "Contents", "MacOS", "Open Design");
+      const executablePath = join(paths.installedAppPath, "Contents", "MacOS", "Design Loom");
       const delegatedPid = 5678;
 
       await mkdir(join(paths.installedAppPath, "Contents", "MacOS"), { recursive: true });
@@ -195,7 +195,7 @@ describe("startPackedMacApp", () => {
     try {
       const config = makeConfig(root);
       const paths = resolveMacPaths(config);
-      const executablePath = join(paths.installedAppPath, "Contents", "MacOS", "Open Design");
+      const executablePath = join(paths.installedAppPath, "Contents", "MacOS", "Design Loom");
 
       await mkdir(join(paths.installedAppPath, "Contents", "MacOS"), { recursive: true });
       await writeFile(executablePath, "#!/bin/sh\nexit 1\n", "utf8");
@@ -217,7 +217,7 @@ describe("startPackedMacApp", () => {
     try {
       const config = makeConfig(root);
       const paths = resolveMacPaths(config);
-      const executablePath = join(paths.installedAppPath, "Contents", "MacOS", "Open Design");
+      const executablePath = join(paths.installedAppPath, "Contents", "MacOS", "Design Loom");
 
       await mkdir(join(paths.installedAppPath, "Contents", "MacOS"), { recursive: true });
       await writeFile(executablePath, "#!/bin/sh\nexit 0\n", "utf8");
@@ -243,7 +243,7 @@ describe("startPackedMacApp", () => {
     try {
       const config = makeConfig(root);
       const paths = resolveMacPaths(config);
-      const executablePath = join(paths.installedAppPath, "Contents", "MacOS", "Open Design");
+      const executablePath = join(paths.installedAppPath, "Contents", "MacOS", "Design Loom");
       const bundledConfigPath = join(paths.installedAppPath, "Contents", "Resources", "open-design-config.json");
 
       await mkdir(join(paths.installedAppPath, "Contents", "MacOS"), { recursive: true });
@@ -280,9 +280,9 @@ describe("startPackedMacApp", () => {
   it("uses the preview executable name for preview release namespaces", async () => {
     const root = await mkdtemp(join(tmpdir(), "open-design-tools-pack-mac-lifecycle-"));
     try {
-      const config = makeConfig(root, { namespace: "release-preview" });
+      const config = makeConfig(root, { namespace: "design-loom-release-preview" });
       const paths = resolveMacPaths(config);
-      const executablePath = join(paths.installedAppPath, "Contents", "MacOS", "Open Design Preview");
+      const executablePath = join(paths.installedAppPath, "Contents", "MacOS", "Design Loom");
 
       await mkdir(join(paths.installedAppPath, "Contents", "MacOS"), { recursive: true });
       await writeFile(executablePath, "#!/bin/sh\nexit 0\n", "utf8");

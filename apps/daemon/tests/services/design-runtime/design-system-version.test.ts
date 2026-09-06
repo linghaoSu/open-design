@@ -2,10 +2,24 @@ import { describe, expect, it, vi } from 'vitest';
 import { DesignSystemResolutionResultSchema, DesignSystemVersionCatalogSchema, type DesignSystemPackage, type DesignSystemVersionCatalog } from '@open-design/contracts';
 import { packageFixture } from '../../fixtures/design-runtime/design-system-version.js';
 import { createDesignSystemVersion, createProjectDesignSystemLock, digestDesignSystemSource, publishDesignSystemVersion, resolveLockedDesignSystems, satisfiesDesignSystemRange, validateDesignSystemPackage, verifyDesignSystemVersion } from '../../../src/services/design-runtime/design-system-version.js';
+import { compileComponentRegistry } from '../../../src/services/design-runtime/registry-compiler.js';
 
 const catalog = (): DesignSystemVersionCatalog => ({ schemaVersion: 1, id: 'catalog', versions: [] });
 
 describe('immutable design-system versions', () => {
+  it('verifies imported props against frozen package type files and rejects missing or changed definitions', () => {
+    const sourceText = "import type {Props} from './types';export function Button(props:Props){return null}";
+    const types = 'export interface Props{label:string}';
+    const compiled = compileComponentRegistry({ designSystemId: 'acme', selections: [{ sourcePath: 'src/Button.tsx', sourceText, exportName: 'Button', componentId: 'Button', codeComponentId: 'ui/Button' }] }, new Map([['src/types.ts', types]]));
+    const pkg = packageFixture();
+    pkg.registry = compiled.registry; pkg.codeIndex = compiled.codeIndex; pkg.bindings.bindings = compiled.bindings; pkg.patterns.patterns = [];
+    pkg.source.files = [{ path: 'src/Button.tsx', encoding: 'utf8', content: sourceText }, { path: 'src/types.ts', encoding: 'utf8', content: types }];
+    expect(verifyDesignSystemVersion(createDesignSystemVersion(pkg))).toEqual([]);
+    pkg.source.files[1]!.content = 'export interface Props{label:number}';
+    expect(() => createDesignSystemVersion(pkg)).toThrow('contradicts');
+    pkg.source.files.pop();
+    expect(() => createDesignSystemVersion(pkg)).toThrow();
+  });
   it('hashes compiler-produced metadata and actual source bytes deterministically without mutating input', () => {
     const pkg = packageFixture(); const before = structuredClone(pkg);
     const version = createDesignSystemVersion(pkg);

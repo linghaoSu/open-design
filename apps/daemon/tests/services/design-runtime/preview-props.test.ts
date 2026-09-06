@@ -4,6 +4,17 @@ import { analyzeComponentPreviewSource } from '../../../src/services/design-runt
 const analyze = (sourceText: string, extra: { exportName?: string; props?: Record<string, import('@open-design/contracts').JsonValue> } = {}) => analyzeComponentPreviewSource({ sourceText, sourcePath: 'Card.tsx', ...extra });
 
 describe('preview-only static prop analysis', () => {
+  it('models bounded local Pick/Omit/Partial/Required props without resolving shadowed utility names', () => {
+    const source = `type Base={title:string;count?:number;secret:string};
+export function Card(props:Required<Pick<Partial<Omit<Base,'secret'>>,'title'|'count'>>){return <p>{props.title}</p>}`;
+    const result = analyze(source);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.controls.map(({ name, kind, required }) => ({ name, kind, required }))).toEqual([
+      { name: 'title', kind: 'string', required: true }, { name: 'count', kind: 'number', required: true },
+    ]);
+    expect(analyze(`import type {Partial} from './custom'; type Base={title:string}; export function Card(props:Partial<Base>){return <div/>}`).controls).toEqual([]);
+    expect(analyze(`type Base={title:string}; export function Card(props:Pick<Base,'missing'>){return <div/>}`).diagnostics.some((entry) => entry.message.includes('unresolved'))).toBe(true);
+  });
   it('selects JSX component exports instead of preceding metadata and respects explicit named selection', () => {
     const source = `export const metadata = { name: 'card' }; export function Card({title = 'Hello'}) { return <h1>{title}</h1>; } export const Other = ({count = 2}) => <p>{count}</p>;`;
     expect(analyze(source)).toMatchObject({ exports: ['Card', 'Other'], selectedExport: 'Card', mockProps: {}, controls: [{ name: 'title', hasDefault: true, defaultValue: 'Hello', provenance: 'default' }] });

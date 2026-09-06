@@ -18,6 +18,9 @@ import {
   type HandoffCodeResult,
   ProjectDesignRuntimeImportVersionRequestSchema,
   ProjectDesignRuntimePublishCurrentRequestSchema,
+  ProjectDesignRuntimeRestoreAuthoringBaseRequestSchema,
+  type ProjectDesignRuntimeRestoreAuthoringBaseRequest,
+  type DesignSystemSourceFile,
   ProjectDesignRuntimeActivateDependencyRequestSchema,
   type ProjectDesignRuntimeImportVersionRequest,
   type ProjectDesignRuntimePublishCurrentRequest,
@@ -60,6 +63,7 @@ import { reviewDesignSystemUpgrade, applyDesignSystemUpgrade } from './design-sy
 import { resolveComponentBinding } from './binding-resolver.js';
 import { registerLocalComponentBinding, synchronizeLocalComponentBindings, verifyProjectCodeSources } from './local-component-binding.js';
 import { effectiveProjectCodeIndex, readProjectCodeEvidence, refreshProjectCode } from './project-code.js';
+import { readTypeScriptSourceGraph } from './typescript-source-graph.js';
 import { buildProjectHandoff } from './project-handoff.js';
 import { createProjectPreviewService, type ProjectPreviewAuthority } from './project-preview.js';
 import { DesignPreviewError } from './preview-preparation.js';
@@ -80,6 +84,7 @@ import {
 } from './code-component-index.js';
 import { validateComponentProperties, validateComponentUsage } from './component-validator.js';
 import { compileComponentRegistry } from './registry-compiler.js';
+import { decodeDesignRuntimeSource } from './source-text.js';
 import { deleteProjectComponent, detachComponentInstance, resolveProjectDocument } from './project-components.js';
 import { analyzeComponentDeletion, compareDesignRuntimeKeys, queryReferenceGraph } from './reference-graph.js';
 import {
@@ -108,6 +113,8 @@ export interface ProjectDesignRuntimeServiceDeps {
   acquirePreviewAuthority?: (projectId: string) => Promise<ProjectPreviewAuthority>;
   acquireComponentPreviewAuthority?: (projectId: string) => Promise<ComponentPreviewAuthority>;
   acquireMigrationAuthority?: (projectId: string) => Promise<ProjectLegacyMigrationAuthority>;
+  acquirePublicationAuthority?: (projectId: string) => Promise<ProjectLegacyMigrationAuthority>;
+  acquireCompilationAuthority?: (projectId: string) => Promise<ProjectLegacyMigrationAuthority>;
 }
 
 function requireRegistry(state: ProjectDesignRuntimeState): ComponentRegistry {
@@ -150,7 +157,24 @@ function requireProjectComponent(state: ProjectDesignRuntimeState, componentId: 
   return definition;
 }
 
-export function createProjectDesignRuntimeService({ store, readSource, acquirePreviewAuthority, acquireMigrationAuthority, acquireComponentPreviewAuthority, observeTargetPackages = async (_projectId, names) => [...new Set(names)].sort().map((name) => ({ name, installation: { status: 'unknown' as const } })) }: ProjectDesignRuntimeServiceDeps) {
+export function createProjectDesignRuntimeService({ store, readSource, acquirePreviewAuthority, acquireMigrationAuthority, acquirePublicationAuthority, acquireCompilationAuthority, acquireComponentPreviewAuthority, observeTargetPackages = async (_projectId, names) => [...new Set(names)].sort().map((name) => ({ name, installation: { status: 'unknown' as const } })) }: ProjectDesignRuntimeServiceDeps) {
+  async function compilationSources(projectId: string) {
+    const authority = await acquireCompilationAuthority?.(projectId);
+    return {
+      read: async (path: string) => {
+        if (!authority) return readSource(projectId, path);
+        const file = await authority.readSourceFile(path);
+        if (file.path !== path) throw new ProjectDesignRuntimeError(409, 'DESIGN_RUNTIME_SOURCE_UNAVAILABLE', 'The source reader returned a different project path.');
+        return decodeDesignRuntimeSource(Buffer.from(file.content, file.encoding));
+      },
+      commit: async <T>(reauthorize: () => Promise<void>, action: () => T): Promise<T> => {
+        await authority?.assertCurrent();
+        await reauthorize();
+        authority?.assertCurrentSync();
+        return action();
+      },
+    };
+  }
   function dependencyResolution(projectId: string, state: ProjectDesignRuntimeState) {
     return resolveLockedDesignSystemsSync(state.dependencies, state.lock, (entry) => store.readVersion(projectId, entry.designSystemId, entry.version));
   }
@@ -166,7 +190,8 @@ export function createProjectDesignRuntimeService({ store, readSource, acquirePr
     return { ...next, bindings: reindexComponentBindings(state.bindings, effectiveProjectCodeIndex(state), effectiveProjectCodeIndex(next), next.registry, next.projectComponents) };
   }
   function persist(projectId: string, expectedRevision: number, state: ProjectDesignRuntimeState, versions?: readonly DesignSystemVersion[]) {
-    const next = { ...state, bindings: synchronizeLocalComponentBindings({ ...state, baseCodeIndex: state.codeIndex }) };
+    const next = { ...state, authoringBase: state.lock.dependencies[0] ?? state.authoringBase ?? null,
+      bindings: synchronizeLocalComponentBindings({ ...state, baseCodeIndex: state.codeIndex }) };
     const checked = ProjectDesignRuntimeStateSchema.safeParse(next);
     if (!checked.success) throw new ProjectDesignRuntimeError(400, 'DESIGN_RUNTIME_INVALID_BINDING', 'The proposed project crosses code or binding ownership boundaries.', { issues: checked.error.issues.map(({ path, message }) => ({ path, message })) });
     return store.write(projectId, expectedRevision, checked.data, versions);
@@ -196,12 +221,24 @@ export function createProjectDesignRuntimeService({ store, readSource, acquirePr
   }
   function publishVersion(projectId: string, expectedRevision: number, state: ProjectDesignRuntimeState, pkg: DesignSystemPackage) {
     const version = createDesignSystemVersion(pkg);
+    return persistVersion(projectId, expectedRevision, state, version);
+  }
+  function persistVersion(projectId: string, expectedRevision: number, state: ProjectDesignRuntimeState, version: DesignSystemVersion) {
+    const pkg = version.package;
     const previous = store.readVersion(projectId, pkg.id, pkg.version);
     if (previous) {
       const diagnostics = verifyDesignSystemVersion(previous);
       if (diagnostics.length) throw new DesignSystemVersionError(diagnostics);
     }
     return { state: persist(projectId, expectedRevision, state, [version]), version: versionSummary(version) };
+  }
+  function authoringVersion(projectId: string, state: ProjectDesignRuntimeState): DesignSystemVersion | undefined {
+    const active = activeVersion(projectId, state);
+    if (active || !state.authoringBase) return active;
+    const base = state.authoringBase;
+    const version = requireVersion(projectId, base.designSystemId, base.version);
+    if (version.digest !== base.digest || version.sourceDigest !== base.source.digest) throw new ProjectDesignRuntimeError(409, 'DESIGN_RUNTIME_DEPENDENCY_INVALID', 'The exact authoring baseline no longer matches its verified snapshot.');
+    return version;
   }
 
   function readAtRevision(projectId: string, expectedRevision: number): ProjectDesignRuntimeState {
@@ -242,27 +279,59 @@ export function createProjectDesignRuntimeService({ store, readSource, acquirePr
       return publishVersion(projectId, request.expectedRevision, state, request.package);
     },
 
-    async publishCurrent(projectId: string, input: ProjectDesignRuntimePublishCurrentRequest) {
+    async publishCurrent(projectId: string, input: ProjectDesignRuntimePublishCurrentRequest, reauthorize: () => Promise<void> = async () => {}) {
       const request = ProjectDesignRuntimePublishCurrentRequestSchema.parse(input);
       const state = readAtRevision(projectId, request.expectedRevision);
       const registry = requireRegistry(state);
-      const active = activeVersion(projectId, state)?.package;
-      const constraints = request.constraints ?? active?.constraints;
+      const baseline = authoringVersion(projectId, state)?.package;
+      if (!baseline && store.listVersions(projectId).some((entry) => entry.id === registry.id)) throw new ProjectDesignRuntimeError(409, 'DESIGN_RUNTIME_DEPENDENCY_INVALID', 'Select an exact authoring baseline before republishing this existing design system.');
+      const constraints = request.constraints ?? baseline?.constraints;
       if (!constraints) throw new ProjectDesignRuntimeError(400, 'BAD_REQUEST', 'An initial publication requires explicit design constraints.');
-      const files = await Promise.all(request.sourcePaths.map(async (path) => {
-        try { return { path, encoding: 'utf8' as const, content: await readSource(projectId, path) }; }
-        catch { throw new ProjectDesignRuntimeError(400, 'DESIGN_RUNTIME_SOURCE_UNAVAILABLE', 'A selected project source could not be read.', { sourcePath: path }); }
-      }));
-      const origin = request.origin ?? active?.origin;
-      const migrations = request.migrations ?? active?.migrations;
-      return publishVersion(projectId, request.expectedRevision, state, {
+      const authority = acquirePublicationAuthority ? await acquirePublicationAuthority(projectId) : undefined;
+      const readFile = async (path: string): Promise<DesignSystemSourceFile> => {
+        try {
+          if (authority) {
+            const file = await authority.readSourceFile(path);
+            if (file.path !== path) throw new Error('Source reader returned a different identity.');
+            return file;
+          }
+          // Legacy embedders can update text; binary updates require the byte-preserving host reader.
+          if (baseline?.source.files.find((file) => file.path === path)?.encoding === 'base64' || !/\.(?:css|scss|sass|less|ts|tsx|js|jsx|mjs|cjs|vue|svelte|html?|json|md|txt|yaml|yml|svg|xml)$/i.test(path)) throw new Error('A byte-preserving source reader is required.');
+          return { path, encoding: 'utf8', content: await readSource(projectId, path) };
+        } catch { throw new ProjectDesignRuntimeError(400, 'DESIGN_RUNTIME_SOURCE_UNAVAILABLE', 'A selected project source could not be read without changing its bytes.', { sourcePath: path }); }
+      };
+      const updates = await Promise.all(request.sourcePaths.map(readFile));
+      const files = new Map((baseline?.source.files ?? []).map((file) => [file.path, file]));
+      for (const file of updates) files.set(file.path, file);
+      const origin = request.origin ?? baseline?.origin;
+      const migrations = request.migrations ?? baseline?.migrations;
+      const version = createDesignSystemVersion({
         schemaVersion: 1, id: registry.id, name: request.name, version: request.version,
         registry, codeIndex: { ...state.codeIndex, id: registry.id }, bindings: { ...dsBindings(state), id: registry.id },
-        tokens: request.tokens ?? active?.tokens ?? { schemaVersion: 1, id: registry.id, tokens: [] },
-        patterns: request.patterns ?? active?.patterns ?? { schemaVersion: 1, id: registry.id, patterns: [] },
-        constraints, codeCompatibility: request.codeCompatibility ?? active?.codeCompatibility ?? [],
-        source: { schemaVersion: 1, files }, ...(origin === undefined ? {} : { origin }), ...(migrations === undefined ? {} : { migrations }),
+        tokens: request.tokens ?? baseline?.tokens ?? { schemaVersion: 1, id: registry.id, tokens: [] },
+        patterns: request.patterns ?? baseline?.patterns ?? { schemaVersion: 1, id: registry.id, patterns: [] },
+        constraints, codeCompatibility: request.codeCompatibility ?? baseline?.codeCompatibility ?? [],
+        source: { schemaVersion: 1, files: [...files.values()] }, ...(origin === undefined ? {} : { origin }), ...(migrations === undefined ? {} : { migrations }),
       });
+      const checked = await Promise.all(request.sourcePaths.map(readFile));
+      if (!isDeepStrictEqual(updates, checked)) throw new ProjectDesignRuntimeError(409, 'DESIGN_RUNTIME_DEPENDENCY_INVALID', 'Selected source changed during publication; review and publish again.');
+      await authority?.assertCurrent();
+      await reauthorize();
+      authority?.assertCurrentSync();
+      // Verify catalog evidence again after asynchronous reads, before the synchronous CAS transaction.
+      authoringVersion(projectId, state);
+      return persistVersion(projectId, request.expectedRevision, { ...state,
+        authoringBase: state.lock.dependencies[0] ?? createProjectDesignSystemLock(projectId, [version]).dependencies[0]!,
+      }, version);
+    },
+
+    restoreAuthoringBase(projectId: string, input: ProjectDesignRuntimeRestoreAuthoringBaseRequest) {
+      const request = ProjectDesignRuntimeRestoreAuthoringBaseRequestSchema.parse(input);
+      const state = readAtRevision(projectId, request.expectedRevision);
+      if (state.lock.dependencies.length) throw new ProjectDesignRuntimeError(409, 'DESIGN_RUNTIME_REGISTRY_LOCKED', 'Clear the active dependency before restoring an editable baseline.');
+      if (requireRegistry(state).id !== request.designSystemId) throw new ProjectDesignRuntimeError(409, 'DESIGN_RUNTIME_REGISTRY_CHANGE_REQUIRES_UPGRADE', 'The baseline must belong to the working design system.');
+      const version = requireVersion(projectId, request.designSystemId, request.version);
+      return persist(projectId, request.expectedRevision, { ...state, authoringBase: createProjectDesignSystemLock(projectId, [version]).dependencies[0]! });
     },
 
     activateDependency(projectId: string, input: ProjectDesignRuntimeActivateDependencyRequest) {
@@ -294,7 +363,8 @@ export function createProjectDesignRuntimeService({ store, readSource, acquirePr
       // Explicit recovery can unpin an unavailable package without pretending its bytes were verified.
       const state = store.read(projectId);
       if (state.revision !== expectedRevision) throw new DesignRuntimeRevisionConflictError(expectedRevision, state.revision);
-      return persist(projectId, expectedRevision, validation.prepareDependencyClear(projectId, state));
+      return persist(projectId, expectedRevision, { ...validation.prepareDependencyClear(projectId, state),
+        authoringBase: state.lock.dependencies[0] ?? state.authoringBase ?? null });
     },
 
     resolveDependency(projectId: string) {
@@ -324,17 +394,18 @@ export function createProjectDesignRuntimeService({ store, readSource, acquirePr
       return { state: next, review: result.review };
     },
 
-    async compile(projectId: string, input: ProjectDesignRuntimeCompileRequest): Promise<ProjectDesignRuntimeState> {
+    async compile(projectId: string, input: ProjectDesignRuntimeCompileRequest, reauthorize: () => Promise<void> = async () => {}): Promise<ProjectDesignRuntimeState> {
       const request = ProjectDesignRuntimeCompileRequestSchema.parse(input);
       const current = readAtRevision(projectId, request.expectedRevision);
       if (current.lock.dependencies.length) throw new ProjectDesignRuntimeError(409, 'DESIGN_RUNTIME_REGISTRY_LOCKED', 'Clear the active dependency before compiling editable registry changes.');
       if (current.registry && current.registry.id !== request.designSystemId) {
         throw new ProjectDesignRuntimeError(409, 'DESIGN_RUNTIME_REGISTRY_CHANGE_REQUIRES_UPGRADE', 'Changing the active design system requires an explicit upgrade.');
       }
+      const authority = await compilationSources(projectId);
       const sources = new Map<string, Promise<string>>();
       for (const selection of request.selections) {
         for (const { sourcePath } of [selection, ...selection.storySources ?? []]) {
-          if (!sources.has(sourcePath)) sources.set(sourcePath, readSource(projectId, sourcePath).catch(() => {
+          if (!sources.has(sourcePath)) sources.set(sourcePath, authority.read(sourcePath).catch(() => {
             throw new ProjectDesignRuntimeError(400, 'DESIGN_RUNTIME_SOURCE_UNAVAILABLE', 'A selected project source could not be read.', { sourcePath });
           }));
         }
@@ -344,7 +415,10 @@ export function createProjectDesignRuntimeService({ store, readSource, acquirePr
         ...selection, sourceText: sourceTexts.get(selection.sourcePath)!,
         ...(storySources ? { storySources: storySources.map((source) => ({ ...source, sourceText: sourceTexts.get(source.sourcePath)! })) } : {}),
       }));
-      const compiled = compileComponentRegistry({ designSystemId: request.designSystemId, selections });
+      const graph = await readTypeScriptSourceGraph(sourceTexts, authority.read);
+      const compiled = compileComponentRegistry({ designSystemId: request.designSystemId, selections }, graph);
+      const checkedGraph = await readTypeScriptSourceGraph(new Map(await Promise.all([...sourceTexts].map(async ([path]) => [path, await authority.read(path)] as const))), authority.read);
+      if (!isDeepStrictEqual(graph, checkedGraph)) throw new ProjectDesignRuntimeError(409, 'DESIGN_RUNTIME_SOURCE_UNAVAILABLE', 'Component source or its local type dependencies changed during compilation. Review and retry.');
       assertValidProject({ ...current, registry: compiled.registry });
       const codeIndex = { ...compiled.codeIndex, id: projectId };
       const previous = reindexComponentBindings(current.bindings, effectiveProjectCodeIndex(current), effectiveProjectCodeIndex({ ...current, codeIndex }), compiled.registry, current.projectComponents);
@@ -354,9 +428,9 @@ export function createProjectDesignRuntimeService({ store, readSource, acquirePr
         ...previous,
         bindings: [...previous.bindings, ...added].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
       };
-      return persist(projectId, request.expectedRevision, {
+      return authority.commit(reauthorize, () => persist(projectId, request.expectedRevision, {
         ...current, registry: compiled.registry, codeIndex, bindings,
-      });
+      }));
     },
 
     components(projectId: string, query = '') {
@@ -379,25 +453,31 @@ export function createProjectDesignRuntimeService({ store, readSource, acquirePr
       return { revision: state.revision, components: searchCodeComponents(state.projectCodeIndex, query) };
     },
 
-    async registerLocalBinding(projectId: string, input: ProjectDesignRuntimeRegisterLocalBindingRequest) {
+    async registerLocalBinding(projectId: string, input: ProjectDesignRuntimeRegisterLocalBindingRequest, reauthorize: () => Promise<void> = async () => {}) {
       const request = ProjectDesignRuntimeRegisterLocalBindingRequestSchema.parse(input);
       const state = readAtRevision(projectId, request.expectedRevision);
+      const authority = await compilationSources(projectId);
       let sourceText: string;
-      try { sourceText = await readSource(projectId, request.source.sourcePath); }
+      try { sourceText = await authority.read(request.source.sourcePath); }
       catch { throw new ProjectDesignRuntimeError(400, 'DESIGN_RUNTIME_SOURCE_UNAVAILABLE', 'The selected project source could not be read.', { sourcePath: request.source.sourcePath }); }
-      const result = registerLocalComponentBinding({ ...state, baseCodeIndex: state.codeIndex }, { source: { ...request.source, sourceText }, binding: request.binding });
+      const graph = request.source.framework === 'react' ? await readTypeScriptSourceGraph(new Map([[request.source.sourcePath, sourceText]]), authority.read) : undefined;
+      const result = registerLocalComponentBinding({ ...state, baseCodeIndex: state.codeIndex }, { source: { ...request.source, sourceText }, binding: request.binding }, graph);
       if (!result.ok) throw new ProjectDesignRuntimeError(400, 'DESIGN_RUNTIME_INVALID_BINDING', 'Local source and binding could not be verified.', { diagnostics: result.diagnostics });
-      return { state: persist(projectId, request.expectedRevision, { ...state, projectCodeIndex: result.projectCodeIndex, bindings: result.bindings }), binding: result.binding, diagnostics: result.diagnostics };
+      if (graph && !isDeepStrictEqual(graph, await readTypeScriptSourceGraph(new Map([[request.source.sourcePath, await authority.read(request.source.sourcePath)]]), authority.read))) throw new ProjectDesignRuntimeError(409, 'DESIGN_RUNTIME_SOURCE_UNAVAILABLE', 'Local source or its type dependencies changed while registering the binding.');
+      return authority.commit(reauthorize, () => ({ state: persist(projectId, request.expectedRevision, { ...state, projectCodeIndex: result.projectCodeIndex, bindings: result.bindings }), binding: result.binding, diagnostics: result.diagnostics }));
     },
 
-    async refreshCodeComponent(projectId: string, codeId: string, input: ProjectDesignRuntimeRevisionRequest) {
+    async refreshCodeComponent(projectId: string, codeId: string, input: ProjectDesignRuntimeRevisionRequest, reauthorize: () => Promise<void> = async () => {}) {
       const { expectedRevision } = ProjectDesignRuntimeRevisionRequestSchema.parse(input);
       const state = readAtRevision(projectId, expectedRevision);
       const code = state.projectCodeIndex.components.find((entry) => entry.id === codeId);
       if (!code) throw new ProjectDesignRuntimeError(404, 'DESIGN_RUNTIME_COMPONENT_NOT_FOUND', 'Registered project code component not found.');
-      const sourceText = await readSource(projectId, code.sourcePath).catch(() => undefined);
-      const result = refreshProjectCode(state, codeId, sourceText);
-      return { state: persist(projectId, expectedRevision, result.state), diagnostics: result.diagnostics };
+      const authority = await compilationSources(projectId);
+      const sourceText = await authority.read(code.sourcePath).catch(() => undefined);
+      const graph = sourceText !== undefined && code.framework === 'react' ? await readTypeScriptSourceGraph(new Map([[code.sourcePath, sourceText]]), authority.read).catch(() => undefined) : undefined;
+      const result = refreshProjectCode(state, codeId, sourceText, graph);
+      if (graph && !isDeepStrictEqual(graph, await readTypeScriptSourceGraph(new Map([[code.sourcePath, await authority.read(code.sourcePath)]]), authority.read))) throw new ProjectDesignRuntimeError(409, 'DESIGN_RUNTIME_SOURCE_UNAVAILABLE', 'Local source or its type dependencies changed while refreshing the component.');
+      return authority.commit(reauthorize, () => ({ state: persist(projectId, expectedRevision, result.state), diagnostics: result.diagnostics }));
     },
 
     async handoff(projectId: string, input: ProjectDesignRuntimeCreateHandoffRequest) {

@@ -59,6 +59,7 @@ import {
   DesignSystemResolutionResultSchema,
   ProjectDesignSystemDependenciesSchema,
   ProjectDesignSystemLockSchema,
+  DesignSystemLockedDependencySchema,
   ValidationDiagnosticSchema,
   ExtractSourceCodeComponentRequestSchema,
   RegisterLocalComponentBindingRequestSchema,
@@ -86,7 +87,12 @@ export const ProjectDesignRuntimeStateSchema = z.object({
   sharedChanges: SharedComponentChangeStateSchema,
   dependencies: ProjectDesignSystemDependenciesSchema,
   lock: ProjectDesignSystemLockSchema,
+  /** Exact immutable metadata/source baseline for an editable registry. Optional only for legacy snapshots. */
+  authoringBase: DesignSystemLockedDependencySchema.nullable().optional(),
 }).strict().superRefine((state, ctx) => {
+  if (state.authoringBase && state.registry?.id !== state.authoringBase.designSystemId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['authoringBase'], message: 'The authoring baseline must belong to the working design system.' });
+  }
   if ([state.projectCodeIndex.id, state.bindings.id, state.projectComponents.id, state.sharedChanges.id, state.dependencies.id, state.lock.id].some((id) => id !== state.codeIndex.id)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['bindings', 'id'], message: 'All project runtime registries and change state must share a project identity.' });
   }
@@ -294,17 +300,23 @@ export type ProjectDesignRuntimeImportVersionRequest = z.infer<typeof ProjectDes
 export const ProjectDesignRuntimePublishVersionResponseSchema = z.object({ state: ProjectDesignRuntimeStateSchema, version: ProjectDesignRuntimeVersionSummarySchema }).strict();
 export type ProjectDesignRuntimePublishVersionResponse = z.infer<typeof ProjectDesignRuntimePublishVersionResponseSchema>;
 const packageFields = DesignSystemPackageSchema.innerType().shape;
-/** Selected paths are read as UTF-8; full-package import supports binary bundle entries. */
+/** Selected paths update the exact baseline; unselected frozen source bytes are retained. */
 export const ProjectDesignRuntimePublishCurrentRequestSchema = z.object({
   expectedRevision: revisionSchema, name: z.string().min(1), version: DesignSystemSemVerSchema,
-  sourcePaths: z.array(SourcePathSchema).min(1),
+  sourcePaths: z.array(SourcePathSchema),
   constraints: packageFields.constraints.optional(), tokens: packageFields.tokens.optional(), patterns: packageFields.patterns.optional(),
   codeCompatibility: packageFields.codeCompatibility.optional(), origin: packageFields.origin, migrations: packageFields.migrations,
 }).strict().superRefine((request, ctx) => {
+  if (!request.sourcePaths.length) return;
   const bundle = DesignSystemSourceBundleSchema.safeParse({ schemaVersion: 1, files: request.sourcePaths.map((path) => ({ path, encoding: 'utf8', content: '' })) });
   if (!bundle.success) bundle.error.issues.forEach((issue) => ctx.addIssue({ ...issue, path: ['sourcePaths', issue.path[1] ?? 0] }));
 });
 export type ProjectDesignRuntimePublishCurrentRequest = z.infer<typeof ProjectDesignRuntimePublishCurrentRequestSchema>;
+/** Explicit recovery for an older unlocked project; never guesses the most recent version. */
+export const ProjectDesignRuntimeRestoreAuthoringBaseRequestSchema = z.object({
+  expectedRevision: revisionSchema, designSystemId: DesignEntityIdSchema, version: DesignSystemSemVerSchema,
+}).strict();
+export type ProjectDesignRuntimeRestoreAuthoringBaseRequest = z.infer<typeof ProjectDesignRuntimeRestoreAuthoringBaseRequestSchema>;
 export const ProjectDesignRuntimeActivateDependencyRequestSchema = z.object({
   expectedRevision: revisionSchema, designSystemId: DesignEntityIdSchema, version: DesignSystemSemVerSchema, range: DesignSystemVersionRangeSchema,
 }).strict();

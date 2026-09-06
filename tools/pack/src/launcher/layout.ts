@@ -1,3 +1,4 @@
+import { DESIGN_LOOM_PRODUCT } from "@open-design/release";
 import { dirname, join } from "node:path";
 
 import {
@@ -81,7 +82,7 @@ export function resolveToolPackLauncherPayloadLayout(
   const archivePath = join(
     config.roots.output.namespaceRoot,
     "payload",
-    `Open Design-${namespaceToken}-payload.${payloadArchiveExtension(config.platform)}`,
+    `${config.namespace.startsWith(DESIGN_LOOM_PRODUCT.namespace) ? DESIGN_LOOM_PRODUCT.name : "Open Design"}-${namespaceToken}-payload.${payloadArchiveExtension(config.platform)}`,
   );
   return {
     archivePath,

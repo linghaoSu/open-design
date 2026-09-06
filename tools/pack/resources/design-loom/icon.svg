@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Design Loom</title>
+  <rect x="48" y="48" width="928" height="928" rx="220" fill="#F2EFE8"/>
+  <path d="M288 270v484h388" fill="none" stroke="#243E38" stroke-width="100" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M464 270v310h212" fill="none" stroke="#243E38" stroke-width="100" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M640 270v136" fill="none" stroke="#C27B54" stroke-width="100" stroke-linecap="round"/>
+  <path d="M238 456h338" fill="none" stroke="#F2EFE8" stroke-width="28"/>
+  <path d="M512 704v100" fill="none" stroke="#F2EFE8" stroke-width="28"/>
+</svg>

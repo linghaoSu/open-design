@@ -91,22 +91,22 @@ async function writeFakeMacApp(config: ToolPackConfig): Promise<ReturnType<typeo
 
 describe("tools-pack mac launcher payload archives", () => {
   it("builds a channel- and namespace-scoped payload manifest", () => {
-    const identity = resolveMacInstallIdentity({ appVersion: "0.9.0-beta.2", namespace: "release-beta" });
+    const identity = resolveMacInstallIdentity({ appVersion: "0.9.0-beta.2", namespace: "design-loom-beta" });
 
     expect(buildMacLauncherPayloadManifest({
       channel: "beta",
       executableName: identity.executableName,
-      namespace: "release-beta",
+      namespace: "design-loom-beta",
       publicAppBundleName: identity.publicAppBundleName,
       version: "0.9.0-beta.2",
     })).toEqual({
-      appBundleName: "Open Design Beta.app",
+      appBundleName: "Design Loom.app",
       channel: "beta",
       entry: {
-        cwd: "payload/Open Design Beta.app",
-        executable: "payload/Open Design Beta.app/Contents/MacOS/Open Design Beta",
+        cwd: "payload/Design Loom.app",
+        executable: "payload/Design Loom.app/Contents/MacOS/Design Loom",
       },
-      namespace: "release-beta",
+      namespace: "design-loom-beta",
       payloadRoot: "payload",
       platform: "darwin",
       schemaVersion: LAUNCHER_SCHEMA_VERSION,
@@ -117,7 +117,7 @@ describe("tools-pack mac launcher payload archives", () => {
   it.skipIf(process.platform !== "darwin")("creates a payload zip with bootstrap-readable contents", async () => {
     const root = await mkdtemp(join(tmpdir(), "od-tools-pack-mac-payload-"));
     try {
-      const config = makeMacConfig(root, "release-beta", "0.9.0-beta.2");
+      const config = makeMacConfig(root, "design-loom-beta", "0.9.0-beta.2");
       const paths = await writeFakeMacApp(config);
       const archivePath = await createMacLauncherPayloadArchive(config, paths);
       const extractRoot = join(root, "extracted");
@@ -129,14 +129,14 @@ describe("tools-pack mac launcher payload archives", () => {
         entry: { executable: string };
         version: string;
       };
-      expect(manifest.appBundleName).toBe("Open Design Beta.app");
-      expect(manifest.entry.executable).toBe("payload/Open Design Beta.app/Contents/MacOS/Open Design Beta");
+      expect(manifest.appBundleName).toBe("Design Loom.app");
+      expect(manifest.entry.executable).toBe("payload/Design Loom.app/Contents/MacOS/Design Loom");
       expect(manifest.version).toBe("0.9.0-beta.2");
       await expectPathExists(join(extractRoot, manifest.entry.executable));
       await expectPathExists(join(
         extractRoot,
         "payload",
-        "Open Design Beta.app",
+        "Design Loom.app",
         "Contents",
         "Resources",
         "open-design-config.json",

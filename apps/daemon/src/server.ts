@@ -8513,16 +8513,18 @@ export async function startServer({
     acquirePreviewAuthority: acquireDesignRuntimeSourceAuthority,
     acquireComponentPreviewAuthority: acquireDesignRuntimeSourceAuthority,
     acquireMigrationAuthority: acquireDesignRuntimeSourceAuthority,
+    acquirePublicationAuthority: acquireDesignRuntimeSourceAuthority,
+    acquireCompilationAuthority: acquireDesignRuntimeSourceAuthority,
     observeTargetPackages: async (projectId, packageNames) => {
       const project = getProject(db, projectId);
       if (!project) throw new DesignRuntimeProjectNotFoundError();
       return observeInstalledTargetPackages(resolveProjectDir(PROJECTS_DIR, projectId, project.metadata), packageNames);
     },
     readSource: async (projectId, sourcePath) => {
-      const project = getProject(db, projectId);
-      if (!project) throw new DesignRuntimeProjectNotFoundError();
-      const source = await readProjectFile(PROJECTS_DIR, projectId, sourcePath, project.metadata);
-      return decodeDesignRuntimeSource(source.buffer);
+      const authority = await acquireDesignRuntimeSourceAuthority(projectId);
+      const source = await authority.readSourceFile(sourcePath);
+      authority.assertCurrentSync();
+      return decodeDesignRuntimeSource(Buffer.from(source.content, source.encoding));
     },
   });
   const generationProjectRoot = (projectId) => {

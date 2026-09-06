@@ -6,15 +6,18 @@ import {
 } from '../src/api/social-share';
 
 describe('social-share contract', () => {
-  it('builds OpenDesign repository share targets', () => {
+  it('builds Design Loom repository share targets', () => {
     const payload = buildSocialSharePayload({
       kind: 'open-design-repo',
       locale: 'zh-CN',
-      title: 'OpenDesign GitHub',
-      text: '推荐 OpenDesign',
+      title: 'Design Loom GitHub',
+      text: '推荐 Design Loom',
     });
 
-    expect(payload.url).toBe(OPEN_DESIGN_GITHUB_REPO_URL);
+    expect(payload.url).toBe('https://github.com/linghaoSu/open-design');
+    const defaults = buildSocialSharePayload({ kind: 'open-design-repo' });
+    expect(defaults.title).toBe('Design Loom');
+    expect(defaults.text).toContain('Design Loom');
     expect(payload.locale).toBe('zh-CN');
     expect(payload.platforms.some((target) => target.platform === 'x' && target.shareUrl?.includes('twitter.com/intent/tweet'))).toBe(true);
     expect(payload.platforms.some((target) => target.platform === 'xiaohongshu' && target.mode === 'copy-open')).toBe(true);

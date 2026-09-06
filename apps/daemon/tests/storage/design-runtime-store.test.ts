@@ -20,7 +20,7 @@ describe('design runtime SQLite persistence', () => {
       db.pragma('foreign_keys = ON'); db.exec("CREATE TABLE projects (id TEXT PRIMARY KEY); INSERT INTO projects VALUES ('project');"); migrateDesignRuntimeStore(db);
       const store = createDesignRuntimeStore(db); const version = createDesignSystemVersion(packageFixture());
       const saved = store.write('project', 0, store.read('project'), [version]);
-      const { projectCodeIndex: _projectCode, ...legacy } = saved;
+      const { projectCodeIndex: _projectCode, authoringBase: _authoringBase, ...legacy } = saved;
       const bytes = JSON.stringify(legacy); db.prepare('UPDATE project_design_runtime SET state_json = ? WHERE project_id = ?').run(bytes, 'project');
       const catalog = db.prepare('SELECT version_json FROM project_design_system_versions').get();
       expect(store.read('project')).toEqual(saved);

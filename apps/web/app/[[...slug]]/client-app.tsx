@@ -1,6 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import { DESIGN_LOOM_PRODUCT } from '@open-design/contracts';
 
 import { installErrorHandlers } from '../../src/analytics/error-tracking';
 import { MatrixLoader } from '../../src/components/MatrixLoader';
@@ -31,7 +32,7 @@ const App = dynamic(() => import('../../src/App').then((m) => m.App), {
   loading: () => (
     <div className="od-loading-shell">
       <MatrixLoader />
-      <span>Loading OpenDesign…</span>
+      <span>Loading {DESIGN_LOOM_PRODUCT.name}…</span>
     </div>
   ),
 });

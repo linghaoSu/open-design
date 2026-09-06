@@ -52,6 +52,7 @@ import {
   ProjectDesignRuntimeVersionResponseSchema,
   ProjectDesignRuntimeImportVersionRequestSchema,
   ProjectDesignRuntimePublishCurrentRequestSchema,
+  ProjectDesignRuntimeRestoreAuthoringBaseRequestSchema,
   ProjectDesignRuntimePublishVersionResponseSchema,
   ProjectDesignRuntimeActivateDependencyRequestSchema,
   ProjectDesignRuntimeDependencyResponseSchema,
@@ -108,6 +109,7 @@ export const DESIGN_RUNTIME_CLI_USAGE = `Usage:
   od design-runtime publish-version <projectId> --prompt-file <path|->
   od design-runtime activate-dependency <projectId> --prompt-file <path|->
   od design-runtime clear-dependency <projectId>
+  od design-runtime restore-authoring-base <projectId> --prompt-file <path|->
   od design-runtime resolve-dependency <projectId>
   od design-runtime migration-recipes <projectId> <designSystemId> <exactVersion>
   od design-runtime use-migration-recipe <projectId> --prompt-file <path|->
@@ -158,11 +160,16 @@ Component IDs identify local definitions; references use local:Card or ds:acme/b
 Stage and undo save drafts for review; only publish changes live definitions.
 Detach returns a materialized node; save-document persists an edited document.
 Import-version publishes the supplied complete package; publish-version freezes the
-current registry and project-relative source files read by the daemon. Publication
+current registry and explicitly updated project-relative files read by the daemon.
+Unselected baseline source files and binary assets retain their exact bytes. Publication
 does not activate a dependency. Activate-dependency selects the exact version and
 records the declared range; resolve-dependency uses its locked version and digests.
-Initial publication requires explicit constraints. When a dependency is locked,
-omitted publication metadata preserves that locked package's metadata.
+Initial publication requires explicit constraints and source files. Unlocking saves
+the exact editing baseline; omitted metadata preserves its tokens, patterns, policies,
+compatibility, origin and migrations. sourcePaths:[] keeps every baseline file.
+For a legacy unlocked project, restore-authoring-base accepts
+{designSystemId,version} plus expectedRevision and restores that exact baseline;
+it preserves current component edits and never guesses latest or activates a lock.
 Instantiate-pattern accepts {instanceId,destinationScreenId,props,slots,document}.\nIt previews the explicit draft against the locked package and current local definitions;\nno project document is saved. Use save-document separately to adopt the returned subtree.\nUse-migration-recipe accepts {designSystemId,version,recipeId,planId,targetRange}
 and returns an editable plan without changing project state. Manual binding
 overlays are preserved; skipped package decisions are returned as warnings.
@@ -265,6 +272,7 @@ const COMMANDS: Record<string, CommandSpec> = {
   'publish-version': { mutates: true, input: ProjectDesignRuntimePublishCurrentRequestSchema },
   'activate-dependency': { mutates: true, input: ProjectDesignRuntimeActivateDependencyRequestSchema },
   'clear-dependency': { mutates: true },
+  'restore-authoring-base': { mutates: true, input: ProjectDesignRuntimeRestoreAuthoringBaseRequestSchema },
   'resolve-dependency': {},
 };
 
@@ -329,6 +337,7 @@ function printState({ state }: ProjectDesignRuntimeResponse): void {
   process.stdout.write(`Revision ${state.revision}\nDesign system: ${state.registry?.id ?? '(not compiled)'}\nComponents: ${state.registry?.components.length ?? 0}\nCode components: ${state.codeIndex.components.length}\nBindings: ${state.bindings.bindings.length}\nLocal components: ${state.projectComponents.components.length}\nScreens: ${state.document?.screens.length ?? 0}\nPending drafts: ${state.sharedChanges.drafts.length}\n`);
   const locked = state.lock.dependencies[0];
   process.stdout.write(`Dependency: ${locked ? `${locked.designSystemId}@${locked.version}` : '(none)'}\n`);
+  if (state.authoringBase) process.stdout.write(`Editing baseline: ${state.authoringBase.designSystemId}@${state.authoringBase.version}\n`);
   if (locked) process.stdout.write(`Declared range: ${state.dependencies.dependencies[0]!.version}\nPackage digest: ${locked.digest}\nSource digest: ${locked.source.digest}\n`);
 }
 
@@ -731,6 +740,11 @@ export async function runDesignRuntimeCli(args: string[], deps: DesignRuntimeCli
     if (command === 'get') data = await request('', ProjectDesignRuntimeResponseSchema);
     else if (command === 'activate-dependency') data = await request('/dependency', ProjectDesignRuntimeResponseSchema, 'POST', mutationBody);
     else if (command === 'clear-dependency') data = await request('/dependency', ProjectDesignRuntimeResponseSchema, 'DELETE', { expectedRevision });
+    else if (command === 'restore-authoring-base') {
+      const body = parseInput(ProjectDesignRuntimeRestoreAuthoringBaseRequestSchema, mutationBody);
+      data = await request('/authoring-base', ProjectDesignRuntimeResponseSchema, 'PUT', body);
+      if (data.state.revision !== body.expectedRevision + 1 || data.state.authoringBase?.designSystemId !== body.designSystemId || data.state.authoringBase.version !== body.version || data.state.lock.dependencies.length) throw new Error('The daemon returned a different editing baseline or revision.');
+    }
     else if (command === 'compile') data = await request('/compile', ProjectDesignRuntimeResponseSchema, 'POST', mutationBody);
     else if (command === 'save-document') data = await request('/document', ProjectDesignRuntimeResponseSchema, 'PUT', mutationBody);
     else if (command === 'discard') data = await request(`/component-changes/${encodedTarget}`, ProjectDesignRuntimeResponseSchema, 'DELETE', { expectedRevision });

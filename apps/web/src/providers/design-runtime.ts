@@ -23,6 +23,7 @@ import {
   ProjectDesignRuntimeVersionsResponseSchema, ProjectDesignRuntimeVersionResponseSchema,
   ProjectDesignRuntimeImportVersionRequestSchema, ProjectDesignRuntimePublishVersionResponseSchema,
   ProjectDesignRuntimePublishCurrentRequestSchema, ProjectDesignRuntimeActivateDependencyRequestSchema,
+  ProjectDesignRuntimeRestoreAuthoringBaseRequestSchema, type ProjectDesignRuntimeRestoreAuthoringBaseRequest,
   ProjectDesignRuntimeDependencyResponseSchema,
   type ProjectDesignRuntimeImportVersionRequest, type ProjectDesignRuntimePublishCurrentRequest,
   type ProjectDesignRuntimeActivateDependencyRequest,
@@ -260,6 +261,13 @@ export const activateProjectDesignRuntimeDependency = (scope: ProjectDesignRunti
 
 export const clearProjectDesignRuntimeDependency = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeRevisionRequest) =>
   request(scope, '/dependency', ProjectDesignRuntimeResponseSchema, 'DELETE', ProjectDesignRuntimeRevisionRequestSchema.parse(input));
+
+export const restoreProjectDesignRuntimeAuthoringBase = async (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeRestoreAuthoringBaseRequest) => {
+  const body = ProjectDesignRuntimeRestoreAuthoringBaseRequestSchema.parse(input);
+  const result = await request(scope, '/authoring-base', ProjectDesignRuntimeResponseSchema, 'PUT', body);
+  if (result.state.revision !== body.expectedRevision + 1 || result.state.authoringBase?.designSystemId !== body.designSystemId || result.state.authoringBase.version !== body.version || result.state.lock.dependencies.length) throw new Error('The server returned a different editing baseline or revision.');
+  return result;
+};
 
 export const resolveProjectDesignRuntimeDependency = (scope: ProjectDesignRuntimeScope) =>
   request(scope, '/dependency/resolve', ProjectDesignRuntimeDependencyResponseSchema);

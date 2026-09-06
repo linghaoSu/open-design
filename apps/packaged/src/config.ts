@@ -1,7 +1,9 @@
-import { access, readFile } from "node:fs/promises";
+import { access, mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-import { SIDECAR_DEFAULTS, normalizeNamespace } from "@open-design/sidecar-proto";
+import { normalizeNamespace } from "@open-design/sidecar-proto";
+import { DESIGN_LOOM_PRODUCT } from '@open-design/release';
+import { assertDesignLoomPackagedIdentity, designLoomUserDataRoot, isolateDesignLoomEnvironment } from './product-isolation.js';
 
 // `electron` is loaded lazily so this module can also be imported from the
 // headless entry, which runs in a plain Node process without the electron
@@ -24,6 +26,7 @@ export type PackagedAmrProfile = "prod" | "test" | "feature-test" | "local";
 export type PackagedVelaWebUrls = Partial<Record<PackagedAmrProfile, string>>;
 
 export type RawPackagedConfig = {
+  productId?: string;
   amrProfile?: string;
   appVersion?: string;
   daemonCliEntryRelative?: string;
@@ -184,14 +187,21 @@ async function resolvePackagedRelativeEntry(value: string | undefined): Promise<
 }
 
 export async function readPackagedConfig(): Promise<PackagedConfig> {
+  isolateDesignLoomEnvironment(process.env);
   const raw = await readRawPackagedConfig();
   const namespace = normalizeNamespace(
-    process.env[PACKAGED_NAMESPACE_ENV] ?? raw.namespace ?? SIDECAR_DEFAULTS.namespace,
+    process.env[PACKAGED_NAMESPACE_ENV] ?? raw.namespace ?? DESIGN_LOOM_PRODUCT.namespace,
   );
+  assertDesignLoomPackagedIdentity(raw, namespace);
   const electronApp = await loadElectronApp();
+  electronApp.setName(DESIGN_LOOM_PRODUCT.name);
+  const userDataRoot = designLoomUserDataRoot(electronApp.getPath('appData'));
+  await mkdir(userDataRoot, { recursive: true });
+  electronApp.setPath('userData', userDataRoot);
   const namespaceBaseRoot = resolvePackagedNamespaceBaseRoot(
     raw.namespaceBaseRoot,
-    electronApp.getPath("userData"),
+    userDataRoot,
+    {},
   );
   const resourceRoot = resolveOptionalPath(raw.resourceRoot) ?? join(process.resourcesPath, "open-design");
   const relativeNodeCommand =
@@ -225,10 +235,10 @@ export async function readPackagedConfig(): Promise<PackagedConfig> {
     namespaceBaseRoot,
     nodeCommand,
     resourceRoot,
-    telemetryRelayUrl: cleanOptionalString(raw.telemetryRelayUrl),
-    updateMetadataUrl: cleanOptionalString(raw.updateMetadataUrl),
-    posthogKey: cleanOptionalString(raw.posthogKey),
-    posthogHost: cleanOptionalString(raw.posthogHost),
+    telemetryRelayUrl: null,
+    updateMetadataUrl: null,
+    posthogKey: null,
+    posthogHost: null,
     velaWebUrl: cleanOptionalString(raw.velaWebUrl),
     velaWebUrls: cleanVelaWebUrls(raw.velaWebUrls),
     webSidecarEntry,

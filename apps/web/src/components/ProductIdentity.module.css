@@ -1,0 +1,21 @@
+.identity {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 0 24px;
+}
+
+.identity h3 {
+  margin: 0 0 4px;
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.identity p {
+  margin: 0 0 6px;
+}
+
+.identity a {
+  font-size: 12px;
+  color: var(--text-muted);
+}

@@ -2,17 +2,28 @@ import { describe, expect, it, vi } from 'vitest';
 import { componentPreviewFiles } from '../../fixtures/design-runtime/component-preview.js';
 import { createComponentPreviewService } from '../../../src/services/design-runtime/component-preview.js';
 
-function setup() {
+function setup(projectRoot?: string) {
   const files = componentPreviewFiles(); let identity = 'first';
   const read = vi.fn(async (path: string) => { const file = files.get(path); if (!file) throw new Error('Missing file'); return structuredClone(file); });
   const service = createComponentPreviewService({ acquireAuthority: async () => {
     const captured = identity; const assertCurrentSync = () => { if (identity !== captured) throw new Error('Authority changed'); };
-    return { readSourceFile: read, assertCurrent: async () => assertCurrentSync(), assertCurrentSync };
+    return { readSourceFile: read, ...(projectRoot ? { projectRoot } : {}), assertCurrent: async () => assertCurrentSync(), assertCurrentSync };
   } });
   return { files, read, service, drift: () => { identity = 'second'; } };
 }
 
 describe('standalone project component preview', () => {
+  it.each([
+    ['@preview-missing/context', 'package manager'],
+    ['@/theme', 'project-relative import'],
+    ['node:fs', 'browser-compatible code'],
+  ])('returns an actionable failure for unavailable runtime dependency %s without executing or faking it', async (specifier, action) => {
+    const { files, service } = setup(process.cwd());
+    files.set('Card.tsx', { path: 'Card.tsx', encoding: 'utf8', content: `import {value} from ${JSON.stringify(specifier)};export default function Card(){return <p>{value}</p>}` });
+    const result = await service.componentPreview('project', { sourcePath: 'Card.tsx' });
+    expect(result.bundle).toBeNull();
+    expect(result.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ severity: 'error', message: expect.stringContaining(action) })]));
+  });
   it('infers missing props, preserves explicit values and builds local code/CSS/assets with one shared byte snapshot and no structured state', async () => {
     const { files, read, service } = setup(); const original = structuredClone(files);
     const reauthorize = vi.fn(async () => {});

@@ -27,6 +27,20 @@ interface Props {
 }
 
 export const isLegacyDesignSource = (name: string) => /(^|\/)(DESIGN\.md|tokens\.css|components\.html)$/i.test(name) || /^system\/variables\.css$/i.test(name);
+/** HTML pages alone are not evidence of a design system. Require its inventory
+ * name plus adjacent design facts, or an explicit registered component source. */
+export function legacyHtmlDesignSources(files: Props['files'], registeredSources: readonly string[] = []): string[] {
+  const paths = files.filter((file) => file.type !== 'dir').map((file) => file.name);
+  const names = new Set(paths.map((path) => path.toLowerCase()));
+  return paths.filter((path) => {
+    if (!/\.html?$/i.test(path)) return false;
+    if (registeredSources.includes(path)) return true;
+    if (!/(^|\/)components\.html$/i.test(path)) return false;
+    const directory = path.slice(0, path.lastIndexOf('/') + 1).toLowerCase();
+    return ['design.md', 'tokens.css', 'variables.css', 'components.manifest.json'].some((name) => names.has(directory + name))
+      || !directory && names.has('system/variables.css');
+  });
+}
 const json = (value: unknown) => JSON.stringify(value, null, 2);
 const migrationSteps = ['name', 'files', 'review'] as const;
 type MigrationStep = typeof migrationSteps[number];
@@ -48,7 +62,7 @@ function MigrationContent({ scope, state, files, viewerOnly, externalBusy = fals
   const [draft, setDraft] = useState<LegacyDesignSystemMigrationPlan>(() => {
     const tokenStylesheet = paths.find((name) => /^tokens\.css$/i.test(name)) ?? paths.find((name) => /^system\/variables\.css$/i.test(name));
     return { schemaVersion: 1, designSystemId: state?.registry?.id ?? scope.projectId, name: t('designMigration.defaultName'), version: '1.0.0',
-      mode: state?.validationSettings.mode === 'guided' ? 'guided' : 'explore', sourcePaths: paths.filter(isLegacyDesignSource),
+      mode: state?.validationSettings.mode === 'guided' ? 'guided' : 'explore', sourcePaths: [...new Set([...paths.filter(isLegacyDesignSource), ...legacyHtmlDesignSources(files, state?.registry?.components.flatMap((component) => component.source?.sourcePath ? [component.source.sourcePath] : []) ?? [])])],
       ...(tokenStylesheet ? { tokenStylesheet } : {}), selections: [], constraints: state?.validationSettings.projectConstraints ?? initialVersionConstraints(), codeCompatibility: [] };
   });
   const [reviewed, setReviewed] = useState<{ review: LegacyDesignSystemMigrationReview; plan: LegacyDesignSystemMigrationPlan; state: ProjectDesignRuntimeState; sourceIdentity: string; draft: LegacyDesignSystemMigrationPlan } | null>(null);

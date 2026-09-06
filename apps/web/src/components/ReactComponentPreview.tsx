@@ -21,7 +21,7 @@ interface Props {
   layout?: 'workspace' | 'component';
 }
 
-function RuntimeFrame({ bundle, values, retry, title, onRetry }: { bundle: DesignPreviewBundle; values: PreviewProps; retry: number; title: string; onRetry?: () => void }) {
+function RuntimeFrame({ bundle, values, retry, title, onRetry, onEditProps }: { bundle: DesignPreviewBundle; values: PreviewProps; retry: number; title: string; onRetry?: () => void; onEditProps: () => void }) {
   const t = useT();
   const ref = useRef<HTMLIFrameElement>(null);
   const nonce = useMemo(() => crypto.randomUUID(), []);
@@ -57,7 +57,7 @@ function RuntimeFrame({ bundle, values, retry, title, onRetry }: { bundle: Desig
 
   return <div className={styles.runtime}>
     <p className={styles.status} role="status" data-testid="react-component-preview-status" data-status={status}>{t(`reactPreview.${status}`)}</p>
-    {error ? <div className={styles.runtimeError}><p className={styles.error} role="alert">{error}</p>{onRetry ? <Button className={styles.compactAction} onClick={onRetry}>{t('reactPreview.retry')}</Button> : null}</div> : null}
+    {error ? <div className={styles.runtimeError}><p className={styles.error} role="alert">{error}</p><p className={styles.recoveryHint}>{t('reactPreview.recoveryHint')}</p><Button className={styles.compactAction} onClick={onEditProps}>{t('reactPreview.editJson')}</Button>{onRetry ? <Button className={styles.compactAction} onClick={onRetry}>{t('reactPreview.retry')}</Button> : null}</div> : null}
     <div className={styles.canvas}><PreviewDrawOverlay><iframe ref={ref} title={title}
       data-testid="react-component-preview-frame" sandbox="allow-scripts allow-downloads" referrerPolicy="no-referrer"
       className={styles.frame} srcDoc={srcDoc} onLoad={send} /></PreviewDrawOverlay></div>
@@ -82,6 +82,10 @@ function PreviewContent({ projectId, sourcePath, workspaceContext, componentPrev
   const [values, setValues] = useState<PreviewProps>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [invalid, setInvalid] = useState<Record<string, boolean>>({});
+  const [jsonDraft, setJsonDraft] = useState<string | null>(null);
+  const [invalidJson, setInvalidJson] = useState(false);
+  const previewDetails = useRef<HTMLDetailsElement>(null);
+  const jsonEditor = useRef<HTMLTextAreaElement>(null);
   const [failure, setFailure] = useState('');
   const [retry, setRetry] = useState(0);
   const [buildRetry, setBuildRetry] = useState(0);
@@ -90,7 +94,7 @@ function PreviewContent({ projectId, sourcePath, workspaceContext, componentPrev
 
   useEffect(() => {
     const controller = new AbortController(); let canceled = false;
-    setBusy(true); setFailure(''); setResult(null); setDrafts({}); setInvalid({});
+    setBusy(true); setFailure(''); setResult(null); setDrafts({}); setInvalid({}); setJsonDraft(null); setInvalidJson(false);
     void createReactComponentPreview({ projectId, workspaceContext: scopeRef.current, signal: controller.signal }, { sourcePath, ...(exportName ? { exportName } : {}) })
       .then((response) => { if (!canceled) { setResult(response); setValues(response.effectiveProps); } })
       .catch((error: unknown) => { if (!canceled) setFailure(error instanceof Error ? error.message : t('reactPreview.failed')); })
@@ -99,6 +103,7 @@ function PreviewContent({ projectId, sourcePath, workspaceContext, componentPrev
   }, [projectId, sourcePath, exportName, buildRetry, t]);
 
   function change(control: ComponentPreviewControl, text: string) {
+    setJsonDraft(null); setInvalidJson(false);
     setDrafts((old) => ({ ...old, [control.name]: text }));
     try {
       let value: JsonValue;
@@ -114,11 +119,21 @@ function PreviewContent({ projectId, sourcePath, workspaceContext, componentPrev
     } catch { setInvalid((old) => ({ ...old, [control.name]: true })); }
   }
   function resetProp(name: string) {
+    setJsonDraft(null); setInvalidJson(false);
     setDrafts((old) => { const next = { ...old }; delete next[name]; return next; });
     setInvalid((old) => ({ ...old, [name]: false }));
     setValues((old) => { const next = { ...old }; if (result && Object.hasOwn(result.effectiveProps, name)) next[name] = result.effectiveProps[name]!; else delete next[name]; return next; });
   }
-  const reset = () => { setValues({ ...result?.effectiveProps }); setDrafts({}); setInvalid({}); setRetry((old) => old + 1); };
+  const reset = () => { setValues({ ...result?.effectiveProps }); setDrafts({}); setInvalid({}); setJsonDraft(null); setInvalidJson(false); setRetry((old) => old + 1); };
+  function changeJson(text: string) {
+    setJsonDraft(text);
+    try {
+      const parsed = ComponentPreviewPropsSchema.parse(JSON.parse(text));
+      setValues(parsed); setInvalidJson(false); setInvalid({});
+      setDrafts(Object.fromEntries((result?.controls ?? []).filter((control) => Object.hasOwn(parsed, control.name)).map((control) => [control.name, editorText(control, parsed[control.name])])));
+    } catch { setInvalidJson(true); }
+  }
+  const editJson = () => { if (previewDetails.current) previewDetails.current.open = true; jsonEditor.current?.focus(); };
   const retryPreview = () => result?.bundle ? setRetry((old) => old + 1) : setBuildRetry((old) => old + 1);
   const valueOrigin = (control: ComponentPreviewControl) => control.hasDefault && !Object.hasOwn(values, control.name) ? t('reactPreview.sourceDefault') : Object.hasOwn(drafts, control.name) ? t('reactPreview.edited') : Object.hasOwn(values, control.name) ? t('reactPreview.sample') : t('reactPreview.unset');
   const exportSelector = <label className={styles.export}>{t('reactPreview.export')}<select aria-label={t('reactPreview.export')} value={exportName ?? result?.selectedExport ?? ''} disabled={busy || !result?.exports.length} onChange={(event) => setExportName(event.target.value)}>
@@ -168,17 +183,19 @@ function PreviewContent({ projectId, sourcePath, workspaceContext, componentPrev
             </div>;
           })}
         </aside>
-        {result.bundle ? <RuntimeFrame key={JSON.stringify([result.sourceDigest, result.selectedExport, result.bundle.digest])} bundle={result.bundle} values={values} retry={retry} title={sourcePath} onRetry={layout === 'component' ? retryPreview : undefined} /> : <p className={styles.unavailable}>{t('reactPreview.unavailable')}</p>}
+        {result.bundle ? <RuntimeFrame key={JSON.stringify([result.sourceDigest, result.selectedExport, result.bundle.digest])} bundle={result.bundle} values={values} retry={retry} title={sourcePath} onRetry={layout === 'component' ? retryPreview : undefined} onEditProps={editJson} /> : <p className={styles.unavailable}>{t('reactPreview.unavailable')}</p>}
       </div>
     </> : null}
-    {layout === 'component' ? <details className={styles.previewDetails} open={Boolean(failure || (result && !result.bundle))}>
-      <summary>{t('reactPreview.diagnostics')}</summary>
-      <div className={styles.toolbar}>{exportSelector}<Button className={styles.compactAction} disabled={busy} onClick={retryPreview}>{t('reactPreview.retry')}</Button></div>
-      {result?.diagnostics.length ? <ul>{result.diagnostics.map((item, index) => <li key={index}>{item.message}</li>)}</ul> : null}
-      {result?.controls.length ? <dl className={styles.propDetails}>{result.controls.map((control) => <div key={control.name}>
+    <details ref={previewDetails} className={styles.previewDetails} open={layout === 'component' && Boolean(failure || (result && !result.bundle))}>
+      <summary>{t(layout === 'component' ? 'reactPreview.diagnostics' : 'reactPreview.jsonProps')}</summary>
+      {layout === 'component' ? <div className={styles.toolbar}>{exportSelector}<Button className={styles.compactAction} disabled={busy} onClick={retryPreview}>{t('reactPreview.retry')}</Button></div> : null}
+      {result ? <label className={styles.jsonProps}>{t('reactPreview.jsonProps')}<textarea ref={jsonEditor} aria-label={t('reactPreview.jsonProps')} aria-describedby={`${editorId}-json-hint`} rows={6} spellCheck={false} disabled={!result.bundle} value={jsonDraft ?? JSON.stringify(values, null, 2)} aria-invalid={invalidJson || undefined} onChange={(event) => changeJson(event.target.value)} /><span id={`${editorId}-json-hint`} className={styles.hint}>{t('reactPreview.jsonHint')}</span></label> : null}
+      {invalidJson ? <p role="alert" className={styles.error}>{t('reactPreview.invalidJson')}</p> : null}
+      {layout === 'component' && result?.diagnostics.length ? <ul>{result.diagnostics.map((item, index) => <li key={index}>{item.message}</li>)}</ul> : null}
+      {layout === 'component' && result?.controls.length ? <dl className={styles.propDetails}>{result.controls.map((control) => <div key={control.name}>
         <dt><code>{control.name}</code>{control.required ? <span className={styles.badge}>{t('reactPreview.required')}</span> : null}</dt>
         <dd><span>{t('reactPreview.type', { kind: control.kind })} · {t(`reactPreview.provenance.${control.provenance}`)}</span><span>{valueOrigin(control)}</span></dd>
       </div>)}</dl> : null}
-    </details> : null}
+    </details>
   </section>;
 }

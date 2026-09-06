@@ -1,7 +1,8 @@
+import { DESIGN_LOOM_PRODUCT } from "@open-design/release";
 // Pure core of the desktop invite hand-off — no electron import, so it is unit
 // testable. The electron scheme registration lives in `invite-deeplink.ts`.
 
-export const INVITE_DEEPLINK_SCHEME = "opendesign";
+export const INVITE_DEEPLINK_SCHEME = DESIGN_LOOM_PRODUCT.protocol;
 const INVITE_DEEPLINK_HOST = "workspace";
 const INVITE_DEEPLINK_PATH = "/invite/continue";
 const WORKSPACE_OPEN_DEEPLINK_PATH = "/open";

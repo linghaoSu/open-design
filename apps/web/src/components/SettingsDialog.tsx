@@ -47,6 +47,8 @@ import { DeepSeekHarnessSetupDialog } from './DeepSeekHarnessSetupDialog';
 import { AmrLoginPill } from './AmrLoginPill';
 import { PlanBadge } from './PlanBadge';
 import { orderAgentsWithOpenDesignFirst } from './agentOrdering';
+import { ProductIdentity } from './ProductIdentity';
+import { DESIGN_LOOM_PRODUCT } from '@open-design/contracts';
 import {
   AMR_LOGIN_STATUS_EVENT,
   amrLoginStatusEventReason,
@@ -293,7 +295,7 @@ interface ByokProviderPreset {
 // sign-in coachmark when the user has not authorized AMR yet).
 export type SettingsHighlight = 'amr' | null;
 
-const OPEN_DESIGN_RELEASES_URL = 'https://github.com/nexu-io/open-design/releases';
+const OPEN_DESIGN_RELEASES_URL = `${DESIGN_LOOM_PRODUCT.repositoryUrl}/releases`;
 
 type AboutUpdatePrimaryAction = 'check' | 'download' | 'install' | 'quit';
 type AboutUpdateTone = 'neutral' | 'success' | 'warning' | 'error';
@@ -6061,6 +6063,7 @@ export function SettingsDialog({
 
           {activeSection === 'about' ? (
             <section className="settings-section">
+              <ProductIdentity />
               {appVersionInfo ? (
                 <dl className="settings-about-list">
                   <div className="settings-about-version-row">

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { join, resolve } from "node:path";
 
-import { resolveToolPackConfig, WORKSPACE_ROOT } from "@/config/index.js";
+import { assertDesignLoomPackagedPlatform, resolveToolPackConfig, WORKSPACE_ROOT } from "@/config/index.js";
 
 const savedTelemetryRelayUrl = process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL;
 const savedPosthogKey = process.env.POSTHOG_KEY;
@@ -49,7 +49,7 @@ afterEach(() => {
 describe("resolveToolPackConfig AMR profile", () => {
   it("bakes OPEN_DESIGN_AMR_PROFILE into packaged config when set at build time", () => {
     process.env.OPEN_DESIGN_AMR_PROFILE = "feature-test";
-    const config = resolveToolPackConfig("mac", { namespace: "amr-profile-test" });
+    const config = resolveToolPackConfig("mac", { namespace: "design-loom-amr-profile-test" });
     expect(config.amrProfile).toBe("feature-test");
   });
 
@@ -63,13 +63,13 @@ describe("resolveToolPackConfig AMR profile", () => {
 
 describe("resolveToolPackConfig Vela CLI requirement", () => {
   it("defaults to optional Vela CLI bundling", () => {
-    const config = resolveToolPackConfig("mac", { namespace: "vela-optional-test" });
+    const config = resolveToolPackConfig("mac", { namespace: "design-loom-vela-optional-test" });
     expect(config.requireVelaCli).toBe(false);
   });
 
   it("reads --require-vela-cli from build options", () => {
     const config = resolveToolPackConfig("mac", {
-      namespace: "vela-required-test",
+      namespace: "design-loom-vela-required-test",
       requireVelaCli: true,
     });
     expect(config.requireVelaCli).toBe(true);
@@ -89,7 +89,7 @@ describe("resolveToolPackConfig cache root", () => {
   it("keeps the default cache outside custom tools-pack roots", () => {
     const config = resolveToolPackConfig("win", {
       dir: "C:\\odqa-release-4ch",
-      namespace: "cache-root-test",
+      namespace: "design-loom-cache-root-test",
     });
 
     expect(config.roots.toolPackRoot).toBe(resolve("C:\\odqa-release-4ch"));
@@ -100,7 +100,7 @@ describe("resolveToolPackConfig cache root", () => {
     const config = resolveToolPackConfig("win", {
       cacheDir: "C:\\odqa-tools-pack-cache",
       dir: "C:\\odqa-release-4ch",
-      namespace: "cache-root-test",
+      namespace: "design-loom-cache-root-test",
     });
 
     expect(config.roots.toolPackRoot).toBe(resolve("C:\\odqa-release-4ch"));
@@ -108,88 +108,34 @@ describe("resolveToolPackConfig cache root", () => {
   });
 });
 
-describe("resolveToolPackConfig namespace defaults", () => {
-  it("keeps ordinary local builds on the default namespace", () => {
-    expect(resolveToolPackConfig("mac").namespace).toBe("default");
-    expect(resolveToolPackConfig("win", { appVersion: "0.8.0" }).namespace).toBe("default");
+describe("Design Loom build isolation", () => {
+  it("does not expose unbranded platform installers from this fork", () => {
+    expect(() => assertDesignLoomPackagedPlatform("win")).toThrow(/macOS packaging only/);
+    expect(() => assertDesignLoomPackagedPlatform("linux")).toThrow(/macOS packaging only/);
+    expect(() => assertDesignLoomPackagedPlatform("mac")).not.toThrow();
   });
-
-  it("defaults prerelease mac builds to their release channel namespace", () => {
-    expect(resolveToolPackConfig("mac", { appVersion: "0.8.0-beta.4" }).namespace).toBe("release-beta");
-    expect(resolveToolPackConfig("mac", { appVersion: "0.8.0-preview.4" }).namespace).toBe("release-preview");
-    expect(resolveToolPackConfig("mac", { appVersion: "0.8.0-prerelease.4" }).namespace).toBe("release-prerelease");
+  it.each(["mac", "win", "linux"] as const)("uses the independent namespace and portable config for %s", (platform) => {
+    const config = resolveToolPackConfig(platform, { appVersion: "0.1.0-beta.1", portable: false });
+    expect(config.namespace).toBe("design-loom");
+    expect(config.portable).toBe(true);
+    expect(config.roots.runtime.namespaceBaseRoot).toContain(join("runtime", "design-loom", platform, "namespaces"));
   });
-
-  it("defaults prerelease non-mac builds to platform-specific release channel namespaces", () => {
-    expect(resolveToolPackConfig("win", { appVersion: "0.8.0-beta.4" }).namespace).toBe("release-beta-win");
-    expect(resolveToolPackConfig("linux", { appVersion: "0.8.0-preview.4" }).namespace).toBe("release-preview-linux");
-    expect(resolveToolPackConfig("win", { appVersion: "0.8.0-prerelease.4" }).namespace).toBe("release-prerelease-win");
+  it.each(["default", "open-design", "release-beta", "release-stable", "release-preview"])("rejects upstream namespace %s before lifecycle work", (namespace) => {
+    expect(() => resolveToolPackConfig("mac", { namespace })).toThrow(/Design Loom requires namespace/);
   });
-
-  it("keeps an explicit namespace ahead of the prerelease channel default", () => {
-    expect(resolveToolPackConfig("mac", { appVersion: "0.8.0-beta.4", namespace: "custom-beta" }).namespace).toBe(
-      "custom-beta",
-    );
+  it("allows explicit isolated acceptance namespaces", () => {
+    expect(resolveToolPackConfig("mac", { namespace: "design-loom-acceptance" }).namespace).toBe("design-loom-acceptance");
   });
-});
-
-describe("resolveToolPackConfig telemetry relay", () => {
-  it("reads and normalizes OPEN_DESIGN_TELEMETRY_RELAY_URL for packaged config", () => {
-    process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL = "https://telemetry.open-design.ai/api/langfuse//";
-    const config = resolveToolPackConfig("mac", { namespace: "telemetry-test" });
-    expect(config.telemetryRelayUrl).toBe("https://telemetry.open-design.ai/api/langfuse");
-  });
-
-  it("rejects invalid telemetry relay URLs", () => {
-    process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL = "not-a-url";
-    expect(() => resolveToolPackConfig("mac")).toThrow(
-      /OPEN_DESIGN_TELEMETRY_RELAY_URL must be an absolute https URL/,
-    );
-  });
-
-  it("rejects plaintext telemetry relay URLs for packaged config", () => {
-    process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL = "http://telemetry.open-design.ai/api/langfuse";
-    expect(() => resolveToolPackConfig("mac")).toThrow(
-      /OPEN_DESIGN_TELEMETRY_RELAY_URL must use https/,
-    );
-  });
-});
-
-describe("resolveToolPackConfig PostHog analytics", () => {
-  it("bakes POSTHOG_KEY into packaged config when set at build time", () => {
-    process.env.POSTHOG_KEY = "phc_test_abc123";
+  it("ignores upstream telemetry and update build credentials", () => {
+    process.env.OPEN_DESIGN_TELEMETRY_RELAY_URL = "https://telemetry.open-design.ai/api/langfuse";
+    process.env.POSTHOG_KEY = "phc_upstream";
     process.env.POSTHOG_HOST = "https://us.i.posthog.com";
-    const config = resolveToolPackConfig("mac", { namespace: "analytics-test" });
-    expect(config.posthogKey).toBe("phc_test_abc123");
-    expect(config.posthogHost).toBe("https://us.i.posthog.com");
-  });
-
-  it("omits POSTHOG_KEY for fork builds that lack the secret", () => {
-    delete process.env.POSTHOG_KEY;
-    delete process.env.POSTHOG_HOST;
-    const config = resolveToolPackConfig("mac", { namespace: "analytics-test" });
+    const config = resolveToolPackConfig("mac");
+    expect(config.telemetryRelayUrl).toBeUndefined();
     expect(config.posthogKey).toBeUndefined();
     expect(config.posthogHost).toBeUndefined();
-  });
-
-  it("rejects POSTHOG_KEY values that contain whitespace", () => {
-    process.env.POSTHOG_KEY = "phc_test abc";
-    expect(() => resolveToolPackConfig("mac")).toThrow(
-      /POSTHOG_KEY contains whitespace/,
-    );
-  });
-
-  it("rejects invalid POSTHOG_HOST URLs", () => {
-    process.env.POSTHOG_KEY = "phc_test_abc";
-    process.env.POSTHOG_HOST = "not-a-url";
-    expect(() => resolveToolPackConfig("mac")).toThrow(/POSTHOG_HOST must be an absolute URL/);
-  });
-
-  it("strips trailing slashes from POSTHOG_HOST", () => {
-    process.env.POSTHOG_KEY = "phc_test_abc";
-    process.env.POSTHOG_HOST = "https://eu.i.posthog.com///";
-    const config = resolveToolPackConfig("mac");
-    expect(config.posthogHost).toBe("https://eu.i.posthog.com");
+    expect(config.posthogCliApiKey).toBeUndefined();
+    expect(config.updateMetadataUrl).toBeUndefined();
   });
 });
 
@@ -202,7 +148,7 @@ describe("resolveToolPackConfig vela web origin", () => {
     process.env.OD_VELA_WEB_URL_PROD = "https://prod.example.invalid";
     process.env.OD_VELA_WEB_URL_TEST = "https://test.example.invalid/";
     process.env.OD_VELA_WEB_URL_FEATURE_TEST = "https://feature.example.invalid";
-    const config = resolveToolPackConfig("mac", { namespace: "vela-web-test" });
+    const config = resolveToolPackConfig("mac", { namespace: "design-loom-vela-web-test" });
     expect(config.velaWebUrls).toEqual({
       prod: "https://prod.example.invalid",
       test: "https://test.example.invalid",
@@ -212,19 +158,19 @@ describe("resolveToolPackConfig vela web origin", () => {
 
   it("bakes OD_VELA_WEB_URL into packaged config when set at build time", () => {
     process.env.OD_VELA_WEB_URL = "https://vela.example.invalid";
-    const config = resolveToolPackConfig("mac", { namespace: "vela-web-test" });
+    const config = resolveToolPackConfig("mac", { namespace: "design-loom-vela-web-test" });
     expect(config.velaWebUrl).toBe("https://vela.example.invalid");
   });
 
   it("omits the vela web origin for builds without the secret", () => {
     delete process.env.OD_VELA_WEB_URL;
-    const config = resolveToolPackConfig("mac", { namespace: "vela-web-test" });
+    const config = resolveToolPackConfig("mac", { namespace: "design-loom-vela-web-test" });
     expect(config.velaWebUrl).toBeUndefined();
   });
 
   it("strips trailing slashes so the daemon can append console paths", () => {
     process.env.OD_VELA_WEB_URL = "https://vela.example.invalid///";
-    const config = resolveToolPackConfig("mac", { namespace: "vela-web-test" });
+    const config = resolveToolPackConfig("mac", { namespace: "design-loom-vela-web-test" });
     expect(config.velaWebUrl).toBe("https://vela.example.invalid");
   });
 

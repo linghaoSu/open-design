@@ -8,7 +8,7 @@ import {
   type DesktopUpdateMode,
   type SidecarSource,
 } from "@open-design/sidecar-proto";
-import { isReleaseChannel, releaseChannelFromVersion } from "@open-design/release";
+import { DESIGN_LOOM_PRODUCT, isReleaseChannel, releaseChannelFromVersion } from "@open-design/release";
 
 /**
  * @module updater-config
@@ -161,9 +161,11 @@ export function defaultChannelForVersion(version: string): DesktopUpdateChannel 
 
 export function resolveDesktopUpdaterConfig(input: DesktopUpdaterConfigInput): DesktopUpdaterConfig {
   const env = input.env ?? process.env;
+  const forkDistribution = input.namespace === DESIGN_LOOM_PRODUCT.namespace
+    || input.namespace?.startsWith(`${DESIGN_LOOM_PRODUCT.namespace}-`) === true;
   const mode = normalizeMode(env[DESKTOP_UPDATE_ENV.MODE], input.mode ?? DESKTOP_UPDATE_MODES.PACKAGE_LAUNCHER);
   const defaultEnabled = input.source === SIDECAR_SOURCES.PACKAGED;
-  const enabled = isTruthyEnv(env[DESKTOP_UPDATE_ENV.ENABLED]) ?? defaultEnabled;
+  const enabled = !forkDistribution && (isTruthyEnv(env[DESKTOP_UPDATE_ENV.ENABLED]) ?? defaultEnabled);
   const runtimeBase = resolve(input.runtimeBase == null ? process.cwd() : input.runtimeBase);
   const downloadRoot = normalizeDownloadRoot(
     env[DESKTOP_UPDATE_ENV.DOWNLOAD_ROOT] ??
@@ -186,9 +188,9 @@ export function resolveDesktopUpdaterConfig(input: DesktopUpdaterConfigInput): D
 
   return {
     arch: env[DESKTOP_UPDATE_ENV.ARCH] ?? input.arch ?? process.arch,
-    autoCheck: isTruthyEnv(env[DESKTOP_UPDATE_ENV.AUTO_CHECK]) ?? enabled,
-    autoDownload: isTruthyEnv(env[DESKTOP_UPDATE_ENV.AUTO_DOWNLOAD]) ?? true,
-    autoOpen: isTruthyEnv(env[DESKTOP_UPDATE_ENV.AUTO_OPEN]) ?? false,
+    autoCheck: !forkDistribution && (isTruthyEnv(env[DESKTOP_UPDATE_ENV.AUTO_CHECK]) ?? enabled),
+    autoDownload: !forkDistribution && (isTruthyEnv(env[DESKTOP_UPDATE_ENV.AUTO_DOWNLOAD]) ?? true),
+    autoOpen: !forkDistribution && (isTruthyEnv(env[DESKTOP_UPDATE_ENV.AUTO_OPEN]) ?? false),
     checkBackoffInitialMs: positiveDurationEnv(
       env[DESKTOP_UPDATE_ENV.CHECK_BACKOFF_INITIAL_MS],
       DEFAULT_POLL_BACKOFF_INITIAL_MS,
@@ -219,7 +221,7 @@ export function resolveDesktopUpdaterConfig(input: DesktopUpdaterConfigInput): D
     ...(launcherRoot == null ? {} : { launcherRoot }),
     ...(launcherPayloadExtractorPath == null ? {} : { launcherPayloadExtractorPath }),
     ...(launcherRuntimePath == null ? {} : { launcherRuntimePath }),
-    metadataUrl: env[DESKTOP_UPDATE_ENV.METADATA_URL] ?? defaultMetadataUrl(channel),
+    metadataUrl: forkDistribution ? `https://updates.invalid/${DESIGN_LOOM_PRODUCT.id}` : env[DESKTOP_UPDATE_ENV.METADATA_URL] ?? defaultMetadataUrl(channel),
     mode,
     ...(namespace == null ? {} : { namespace }),
     openDryRun: isTruthyEnv(env[DESKTOP_UPDATE_ENV.OPEN_DRY_RUN]) ?? false,

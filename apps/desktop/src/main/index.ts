@@ -1,3 +1,4 @@
+import { DESIGN_LOOM_PRODUCT } from "@open-design/release";
 import { randomBytes, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -538,28 +539,18 @@ function installDesktopMenu(
           {
             label: "Documentation",
             click() {
-              void shell.openExternal("https://github.com/nexu-io/open-design#readme");
+              void shell.openExternal(`${DESIGN_LOOM_PRODUCT.repositoryUrl}#readme`);
             },
           },
           { type: "separator" },
-          {
-            label: "Contact Us",
-            click() {
-              void shell.openExternal("https://x.com/OpenDesignHQ");
-            },
-          },
+
           {
             label: "Report Issue",
             click() {
-              void shell.openExternal("https://github.com/nexu-io/open-design/issues/new");
+              void shell.openExternal(`${DESIGN_LOOM_PRODUCT.repositoryUrl}/issues/new`);
             },
           },
-          {
-            label: "Join Discord",
-            click() {
-              void shell.openExternal("https://discord.gg/mHAjSMV6gz");
-            },
-          },
+
           { type: "separator" },
           { label: "Export Diagnostics…", click: exportDiagnostics },
         ],

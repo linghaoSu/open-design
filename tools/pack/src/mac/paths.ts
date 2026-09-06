@@ -25,7 +25,7 @@ export function macAppBundleName(namespace: string): string {
   return `${PRODUCT_NAME}.${sanitizeNamespace(namespace)}.app`;
 }
 
-export function macAppExecutablePath(appPath: string, executableName = PRODUCT_NAME): string {
+export function macAppExecutablePath(appPath: string, executableName: string = PRODUCT_NAME): string {
   return join(appPath, "Contents", "MacOS", executableName);
 }
 

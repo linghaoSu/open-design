@@ -4870,12 +4870,12 @@ describe('SettingsDialog MCP server interactions', () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith('/api/mcp/install-info');
     });
-    expect(screen.getByRole('heading', { name: /Connect OpenDesign to your coding agent/i })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: /Connect Design Loom to your coding agent/i })).toBeTruthy();
     expect(screen.queryByText(/Run this command in your terminal/i)).toBeNull();
     await waitFor(() => {
       expect(screen.getByText(/claude mcp add-json --scope user open-design/i)).toBeTruthy();
     });
-    expect(screen.getByText(/Keep OpenDesign running\. Restart your coding agent after setup\./i)).toBeTruthy();
+    expect(screen.getByText(/Keep Design Loom running\. Restart your coding agent after setup\./i)).toBeTruthy();
     expect(screen.getByText(/What your agent can do/i)).toBeTruthy();
   });
 
@@ -5917,7 +5917,7 @@ describe('SettingsDialog about interactions', () => {
 
     fireEvent.click(screen.getByRole('button', { name: en['settings.updateViewReleases'] }));
 
-    expect(openExternalUrlMock).toHaveBeenCalledWith('https://github.com/nexu-io/open-design/releases');
+    expect(openExternalUrlMock).toHaveBeenCalledWith('https://github.com/linghaoSu/open-design/releases');
   });
 
   it('downloads an available packaged update from the about page', async () => {

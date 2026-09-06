@@ -1,14 +1,5 @@
-import {
-  releaseChannelFromNamespace,
-  releaseChannelFromVersion,
-  releaseInstallIdentity,
-} from "@open-design/release";
+import { DESIGN_LOOM_PRODUCT } from "@open-design/release";
 
-const DEFAULT_WINDOW_TITLE = "Open Design";
-
-export function resolvePackagedWindowTitle(config: { appVersion: string | null; namespace: string }): string {
-  const channel =
-    releaseChannelFromVersion(config.appVersion) ??
-    releaseChannelFromNamespace(config.namespace);
-  return channel == null ? DEFAULT_WINDOW_TITLE : releaseInstallIdentity(channel).productName;
+export function resolvePackagedWindowTitle(_config: { appVersion: string | null; namespace: string }): string {
+  return DESIGN_LOOM_PRODUCT.name;
 }

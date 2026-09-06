@@ -1,3 +1,4 @@
+import { DESIGN_LOOM_PRODUCT } from "@open-design/release";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -24,7 +25,7 @@ export function resolveSeededAppConfigPaths(config: ToolPackConfig): SeededAppCo
 }
 
 export async function seedPackagedAppConfig(config: ToolPackConfig): Promise<void> {
-  if (config.portable) return;
+  if (config.namespace === DESIGN_LOOM_PRODUCT.namespace || config.namespace.startsWith(`${DESIGN_LOOM_PRODUCT.namespace}-`) || config.portable) return;
 
   const { sourcePath, targetPath } = resolveSeededAppConfigPaths(config);
   if (!(await pathExists(sourcePath))) return;
@@ -55,6 +56,7 @@ export async function writeLaunchPackagedConfig(config: ToolPackConfig, appPath:
     `${JSON.stringify(
       {
         ...raw,
+        productId: DESIGN_LOOM_PRODUCT.id,
         namespace: config.namespace,
         namespaceBaseRoot: config.roots.runtime.namespaceBaseRoot,
       },

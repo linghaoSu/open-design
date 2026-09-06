@@ -64,6 +64,10 @@ export const zhTW: Dict = {
   "designVersions.name": "設計系統名稱",
   "designVersions.version": "確切版本",
   "designVersions.sourceFiles": "原始檔",
+  "designVersions.authoringBase": "編輯基準",
+  "designVersions.authoringHint": "沿用此確切版本的中繼資料和未選取更新的檔案。",
+  "designVersions.restoreAuthoringBase": "將所選版本用作編輯基準",
+  "designVersions.sourceUpdateHint": "選取要更新的檔案。未選取的檔案和二進位資源保留原始位元組。",
   "designVersions.sourceHint": "選擇此版本所需的所有原始碼和中繼資料檔案。所選檔案將以 UTF-8 文字讀取。",
   "designVersions.constraints": "約束策略",
   "designVersions.constraintHint": "探索模式預設使用警告；引導和嚴格模式預設使用錯誤。嚴格策略要求所有約束皆設為錯誤。",
@@ -476,22 +480,22 @@ export const zhTW: Dict = {
   "plugins.actions.openSource": "開啟原始碼",
   "plugins.actions.openHomepage": "開啟專案首頁",
   "plugins.actions.openMarketplace": "在外掛市場開啟",
-  "app.brand": "OpenDesign",
+  "app.brand": "Design Loom",
   "app.brandPill": "研究預覽版",
-  "app.brandSubtitle": "由 Nexu Labs 出品",
+  "app.brandSubtitle": "源自 OpenDesign 的獨立設計工作區",
   "app.welcomeLoading": "正在載入工作區…",
   "settings.welcomeKicker": "",
-  "settings.welcomeTitle": "歡迎使用 OpenDesign",
+  "settings.welcomeTitle": "歡迎使用 Design Loom",
   "settings.welcomeSubtitle": "",
   "settings.onboardingCreateTitle": "從一句需求開始",
   "settings.onboardingCreateBody":
-    "描述你想做的網站、應用、Deck、圖片或影片，OpenDesign 會建立專案，並保留可繼續編輯的產出。",
+    "描述你想做的網站、應用、Deck、圖片或影片，Design Loom 會建立專案，並保留可繼續編輯的產出。",
   "settings.onboardingMemoryTitle": "保存工作上下文",
   "settings.onboardingMemoryBody":
     "把偏好、專案事實和長期規則寫入 Memory，後續對話會自動帶上正確背景。",
   "settings.onboardingMemoryCalloutTitle": "已儲存到你的記憶",
   "settings.onboardingMemoryCalloutBody":
-    "這些回答會構成你的記憶檔案。OpenDesign 會在每個任務中重複使用它，並在你工作時持續學習。",
+    "這些回答會構成你的記憶檔案。Design Loom 會在每個任務中重複使用它，並在你工作時持續學習。",
   "settings.onboardingMemoryBenefitIntent": "從一句簡短需求就能理解你的意圖",
   "settings.onboardingMemoryBenefitFewerQuestions": "跳過重複的設定提問",
   "settings.onboardingMemoryBenefitPersonalized":
@@ -674,11 +678,11 @@ export const zhTW: Dict = {
   "settings.agentInstall.install": "安裝",
   "settings.agentInstall.docs": "查看文件",
   "settings.agentInstall.pathHint":
-    "如果你透過 npm 或 Homebrew 安裝了 CLI，但仍顯示為未安裝，請確認該工具的 bin 目錄已加入 OpenDesign daemon 繼承的 PATH（在 macOS 上，Terminal 與 GUI 應用的 PATH 可能不同）。請參閱 QUICKSTART.md（「Local agent CLI and PATH」章節）。",
+    "如果你透過 npm 或 Homebrew 安裝了 CLI，但仍顯示為未安裝，請確認該工具的 bin 目錄已加入 Design Loom daemon 繼承的 PATH（在 macOS 上，Terminal 與 GUI 應用的 PATH 可能不同）。請參閱 QUICKSTART.md（「Local agent CLI and PATH」章節）。",
   "settings.agentInstall.stepOpenLinks":
     "在目標代理卡片上開啟「安裝」或「文件」連結。",
   "settings.agentInstall.stepAuth":
-    "返回 OpenDesign 前，請先在對應 CLI 完成驗證（登入或新增 API 憑證）。",
+    "返回 Design Loom 前，請先在對應 CLI 完成驗證（登入或新增 API 憑證）。",
   "settings.agentInstall.stepRescan": "在此區域點擊「重新掃描」。",
   "settings.agentInstall.stepSelect": "當代理顯示為已安裝後，選擇該代理卡片。",
   "settings.noAgentsDetected":
@@ -832,7 +836,7 @@ export const zhTW: Dict = {
   "settings.modelCustomPlaceholder": "例如 anthropic/claude-sonnet-4-6",
   "settings.mediaProviders": "媒體生成提供商",
   "settings.mediaProvidersHint": "連接圖片、影片、音訊和搜尋供應商。",
-  "settings.mcpServerTitle": "OpenDesign MCP",
+  "settings.mcpServerTitle": "Design Loom MCP",
   "settings.mcpServerHint":
     "將 OpenDesign 作為 MCP 伺服器暴露給你的編碼代理。",
   "settings.externalMcpTitle": "外部 MCP",
@@ -889,10 +893,10 @@ export const zhTW: Dict = {
   "settings.allowSilentUpdatesDesc": "有可套用的應用內更新時，下次啟動將自動安裝。不會立刻升級目前版本。安裝器更新仍會先詢問。",
   "settings.installLatest": "安裝最新版本",
   "settings.alreadyLatest": "目前已是最新版本",
-  "settings.mcpTitle": "將 OpenDesign 連接至程式設計 agent",
+  "settings.mcpTitle": "將 Design Loom 連接至程式設計 agent",
   "settings.mcpHint": "透過 MCP，讓支援的 agent 存取您的專案與設計脈絡。",
   "settings.mcpDaemonError":
-    "無法連線到本地守護程序以解析安裝路徑（{error}）。請確認 OpenDesign 正在執行，然後重新開啟此面板。",
+    "無法連線到本地守護程序以解析安裝路徑（{error}）。請確認 Design Loom 正在執行，然後重新開啟此面板。",
   "settings.mcpBuildDaemon": "請先建置守護行程。",
   "settings.mcpNodeMissing": "缺少 Node 執行檔。",
   "settings.mcpBuildHint":
@@ -939,8 +943,8 @@ export const zhTW: Dict = {
   "settings.mcpCapabilityRead": "讀取或搜尋專案中的任何檔案。",
   "settings.mcpCapabilityPull": "將設計檔案、樣式、元件和字型作為脈絡。",
   "settings.mcpCapabilityDefault":
-    "將目前在 OpenDesign 中開啟的專案與檔案作為脈絡。",
-  "settings.mcpRunningNote": "請保持 OpenDesign 執行。設定完成後，重新啟動程式設計 agent。",
+    "將目前在 Design Loom 中開啟的專案與檔案作為脈絡。",
+  "settings.mcpRunningNote": "請保持 Design Loom 執行。設定完成後，重新啟動程式設計 agent。",
   "entry.tabDesigns": "我的設計",
   "entry.tabTemplates": "範本",
   "entry.tabDesignSystems": "設計系統",
@@ -2315,10 +2319,10 @@ export const zhTW: Dict = {
   "avatar.reasoningLabel": "推理",
   "avatar.serviceTierLabel": "服務層級",
   "avatar.customSuffix": "（自訂）",
-  "socialShare.openDesignSection": "分享 OpenDesign",
-  "socialShare.openDesignTitle": "GitHub 上的 OpenDesign",
+  "socialShare.openDesignSection": "分享 Design Loom",
+  "socialShare.openDesignTitle": "GitHub 上的 Design Loom",
   "socialShare.openDesignText":
-    "OpenDesign 是原始碼可用的設計智慧工作區，可以生成、編輯、部署並交付設計產物。",
+    "Design Loom 是原始碼可用的設計智慧工作區，可以生成、編輯、部署並交付設計產物。",
   "socialShare.openDesignCopyText": "{text}\n{url}",
   "socialShare.projectSection": "社群分享",
   "socialShare.publishPageTitle": "發布分享頁",
@@ -4545,7 +4549,7 @@ export const zhTW: Dict = {
   'settings.updateRetry': '重試',
   'settings.updateViewReleases': '查看發佈記錄',
   'settings.updateActionFailed': '無法完成更新操作。',
-  'settings.updateQuitFailed': '安裝程式已開啟，但 OpenDesign 未能自動結束。',
+  'settings.updateQuitFailed': '安裝程式已開啟，但 Design Loom 未能自動結束。',
   'settings.updateStatusNotChecked': '未檢查更新',
   'settings.updateStatusDevelopment': '開發環境不支援應用程式內更新。',
   'settings.updateStatusUnsupported': '目前環境不支援應用程式內更新。',

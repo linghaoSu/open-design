@@ -1,3 +1,4 @@
+import { DESIGN_LOOM_PRODUCT } from "@open-design/release";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -114,7 +115,7 @@ export async function runElectronBuilder(
     executableName: identity.executableName,
     extraMetadata: {
       main: "./main.cjs",
-      name: "open-design-packaged-app",
+      name: `${DESIGN_LOOM_PRODUCT.id}-packaged-app`,
       productName: identity.productName,
       version: packageVersion,
     },
@@ -139,7 +140,7 @@ export async function runElectronBuilder(
       target: targets,
     },
     // Register the workspace-invite deeplink scheme so macOS routes
-    // `opendesign://workspace/invite/continue?...` to this app (electron-builder
+    // `designloom://workspace/invite/continue?...` to this app (electron-builder
     // writes it into Info.plist CFBundleURLTypes; a runtime
     // setAsDefaultProtocolClient alone is unreliable on macOS). The scheme string
     // must match INVITE_DEEPLINK_SCHEME in
@@ -147,7 +148,7 @@ export async function runElectronBuilder(
     protocols: [
       {
         name: `${PRODUCT_NAME} Invite`,
-        schemes: ["opendesign"],
+        schemes: [DESIGN_LOOM_PRODUCT.protocol],
       },
     ],
     nodeGypRebuild: false,
@@ -157,7 +158,7 @@ export async function runElectronBuilder(
     publish: [
       {
         provider: "generic",
-        url: "https://updates.invalid/open-design",
+        url: `https://updates.invalid/${DESIGN_LOOM_PRODUCT.id}`,
       },
     ],
   };

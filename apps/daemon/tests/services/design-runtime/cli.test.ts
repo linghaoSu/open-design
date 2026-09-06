@@ -408,6 +408,22 @@ describe('od design-runtime version and exact dependency CLI', () => {
     expect(stub.requests[0]).toMatchObject({ method: 'POST', url: `${prefix}/versions/publish-current`, body: { ...input, expectedRevision: 7 } });
   });
 
+  it('restores an exact editing baseline from stdin with workspace authority and fails closed on a substituted response', async () => {
+    const { version } = versionFixture();
+    const next = { ...state(8), authoringBase: { designSystemId: 'acme', version: '1.0.0', digest: version.digest, source: { type: 'bundle' as const, digest: version.sourceDigest } } };
+    const stub = await startServer(() => ({ body: { state: next } }));
+    const input = { expectedRevision: 7, designSystemId: 'acme', version: '1.0.0' };
+    const result = await runCli(['design-runtime', 'restore-authoring-base', projectId, '--prompt-file', '-', '--json', '--daemon-url', stub.url, ...scope], JSON.stringify(input));
+    expect(result.code, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout).state.authoringBase).toEqual(next.authoringBase);
+    expect(stub.requests[0]).toMatchObject({ method: 'PUT', url: `${prefix}/authoring-base`, body: input, headers: { 'x-od-workspace-member-id': 'member-1' } });
+    expect(stub.requests).toHaveLength(1);
+    const mismatch = await runCli(['design-runtime', 'restore-authoring-base', projectId, '--prompt-file', '-', '--json', '--daemon-url', stub.url], JSON.stringify({ ...input, version: '1.1.0' }));
+    expect(mismatch.code).toBe(1);
+    expect(mismatch.stdout).toBe('');
+    expect(mismatch.stderr).toContain('different editing baseline');
+  });
+
   it('activates explicit range/version intent, resolves the lock and clears it with CAS through the same authority', async () => {
     const { version } = versionFixture();
     const activated = state(8);

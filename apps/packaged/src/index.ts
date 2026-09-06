@@ -29,6 +29,7 @@ import {
   type DesktopMainHandle,
 } from "@open-design/desktop/main";
 import { releaseChannelFromNamespace, releaseChannelFromVersion } from "@open-design/release";
+import { resolveDesignLoomLaunchNamespace } from './product-isolation.js';
 import { join } from "node:path";
 import { app, dialog } from "electron";
 
@@ -122,7 +123,7 @@ async function main(): Promise<void> {
   const convergedArgvStamp = (() => {
     try { return readCurrentSidecarStamp(); } catch { return null; }
   })();
-  const namespace = convergedArgvStamp?.namespace ?? config.namespace;
+  const namespace = resolveDesignLoomLaunchNamespace(config.namespace, convergedArgvStamp?.namespace);
   const namespaceConfig = namespace === config.namespace ? config : { ...config, namespace };
   const initialPaths = resolvePackagedNamespacePaths(namespaceConfig, namespace, process.env);
   const launchStamp: SidecarStamp = {
