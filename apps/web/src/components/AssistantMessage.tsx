@@ -615,7 +615,16 @@ function AssistantMessageImpl({
     (block) => block.kind === "text" && block.text.trim().length > 0,
   );
   const fileOps = useMemo(() => deriveFileOps(displayEvents), [displayEvents]);
-  const produced = message.producedFiles ?? [];
+  const produced = useMemo(() => {
+    // A folded turn retains each physical Run's produced-file evidence. Its
+    // result cards list each delivered path once, using the latest metadata;
+    // the original records and tool-operation counts remain intact.
+    const byPath = new Map<string, ProjectFile>();
+    for (const file of message.producedFiles ?? []) {
+      byPath.set(normalizeTouchedPath(file.path || file.name), file);
+    }
+    return [...byPath.values()];
+  }, [message.producedFiles]);
   const displayedProduced = useMemo(
     () => {
       const linkedFiles = recoverLinkedProjectFilesFromContent(
