@@ -2,6 +2,8 @@
 
 Design Loom 是独立维护的本地设计工作区，基于 OpenDesign，重点提供结构化设计系统、组件复用和真实代码预览。代码与问题反馈面向[当前 fork](https://github.com/linghaoSu/open-design)，不向上游提交合并。
 
+当前安装版已经验证的路径、支持边界与待完成项目见[本地安装版验收报告](design-loom-acceptance.md)。
+
 ## 独立安装
 
 当前安装包面向 macOS；本机构建使用 Apple Silicon。应用名为 **Design Loom.app**，bundle ID 为 `io.github.linghaosu.designloom`，系统链接协议为 `designloom://`。
@@ -61,4 +63,6 @@ tokens／patterns 的结构化修改可通过完整版本包导入或同一 API 
 
 源码工作区提供 `designloom` CLI 别名，现有内部包名、HTTP API 和 `od design-runtime` 保留兼容性。两套应用同时运行时，外部 CLI 调用应明确传入目标应用的 `--daemon-url`；不要依赖全局 `od` 命令选择应用。各操作由 daemon 统一执行，CLI 支持 `--json` 和 `--prompt-file <path|->`。完整命令见[结构化设计运行时指南](structured-design-runtime.md)。
 
-Explore 保留自由生成；Guided 增加结构校验及有界修复；Strict 还需要完整语义文档、生产代码和绑定证明。检测到不支持的语法会给出诊断，不会把未知结果当作已经通过。
+Explore 保留自由生成；Guided 增加结构校验及有界修复；Strict 还需要完整语义文档、生产代码和绑定证明。使用已有设计组件生成 Guided／Strict 页面前，先在 **More → Versions** 发布并激活审阅过的版本，再保存模式与生成目标。只注册组件并不等于已经锁定可交付的设计版本。
+
+生成结束后查看聊天中的设计验证卡片：先显示关键问题，展开可读其余诊断及对应源文件证据。代理进程结束、页面能渲染与设计校验通过分别记录。检测到不支持的语法会给出诊断，不会把未知结果当作已经通过。
