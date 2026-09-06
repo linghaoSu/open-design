@@ -1,6 +1,9 @@
+import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const ar: Dict = {
+  ...designMigrationFallback,
+
   "designGenerationTargets.title": "أهداف التوليد",
   "designGenerationTargets.description": "خطط لملفات المخرجات والتصديرات ومعرّفات الشاشات الدلالية. يمكن إدخال مسارات ومعرّفات شاشات جديدة. حفظ الأهداف لا يتحقق من المصدر أو تغطية الشاشات.",
   "designGenerationTargets.save": "حفظ أهداف التوليد",

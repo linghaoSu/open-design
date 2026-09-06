@@ -431,3 +431,59 @@ come from parsed source/IR and binding resolution: reuse, unknown components and
 tokens, raw literals, duplicate controls, repair attempts and repeatability. Visual
 impact renders graph-selected current/proposed screens through the locked
 React/Vue production runtime.
+
+## Legacy design-system migration
+
+Implemented and accepted on 2026-09-06. Existing catalog and brand workspaces expose
+their files through the project API and `FileWorkspace`. Legacy packages commonly
+contain `DESIGN.md`, `tokens.css`, HTML fixtures and derived selector inventories;
+brand workspaces may instead use `system/variables.css`. Their selector inventories
+are reference evidence, not typed component definitions. Imported source snippets
+may also lack the original dependency graph.
+
+The migration extends the existing project runtime with a read-only review and an
+explicit apply operation. Canonical contracts belong in `packages/contracts`, CSS
+extraction and orchestration in the daemon's existing design-runtime service, and
+the entry point in the Design runtime panel with matching `od design-runtime`
+commands. No new package or prompt implementation is required.
+
+Review freezes the selected source bytes, converts supported root CSS token values
+with provenance, and compiles explicitly selected React/Vue components through the
+existing compiler. Unsupported values and theme overrides remain visible in the
+report and preserved sources. Existing HTML fixtures remain reference material.
+The review contains an immutable package candidate. Applying it installs an exact
+lock and the explicitly selected Explore or Guided mode; migration itself supplies
+no Strict certification.
+
+Apply rechecks the reviewed project revision, plan and selected source bytes before
+atomically saving the package and runtime state. It leaves the original project
+files and catalog selection unchanged. Existing structured registries or locks
+must use the normal upgrade workflow. Documentation-only inputs without convertible
+tokens or components receive actionable diagnostics instead of an empty migration.
+
+Acceptance completed:
+
+- Contracts and daemon tests cover token conversion and unsupported values,
+  binary assets, BOM/CRLF preservation, source/revision drift, review tampering,
+  project authority and atomic writes. The route regression revokes write authority
+  during the last source read and proves that application returns 403 without
+  publishing a version or changing state.
+- Web/provider/locale tests cover 54 cases; CLI suites cover 82 cases. Full
+  repository type checking and `pnpm guard` pass. Independent review found no
+  outstanding correctness, permission or data-integrity blocker.
+- The running Electron app was operated from **Your systems → Edit with agent →
+  Design runtime → Migration** using the existing Stripe package. Review converted
+  45 base tokens, reported 11 unresolved declarations, and preserved all nine
+  selected source/asset files. Apply created and activated `migrated-stripe@1.0.0`.
+  The exact lock survived reload and the original HTML preview remained usable.
+  All nine original and frozen-file SHA-256 hashes matched their pre-migration
+  values, including the binary image; the catalog selection was unchanged.
+- Real CLI review/apply migrated a React component plus brand `system/variables.css`.
+  A changed source rejected the old review with zero publication; a fresh review
+  installed three base tokens, one bound component and the exact version. A dark
+  override remained unresolved. BOM, CRLF and binary bytes survived unchanged.
+  Both the CLI and the native UI accepted `tone: primary` and rejected the
+  undeclared `tone: filled` with `ODDS1003`.
+- Native visual inspection caught the global input-width rule stretching migration
+  checkboxes. A scoped CSS reset corrected the file list; the running app was
+  visually rechecked after the fix.

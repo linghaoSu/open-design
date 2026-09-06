@@ -1,4 +1,7 @@
 import {
+  ProjectDesignRuntimeReviewLegacyMigrationRequestSchema, ProjectDesignRuntimeReviewLegacyMigrationResponseSchema,
+  ProjectDesignRuntimeApplyLegacyMigrationRequestSchema, ProjectDesignRuntimeApplyLegacyMigrationResponseSchema,
+  type ProjectDesignRuntimeReviewLegacyMigrationRequest, type ProjectDesignRuntimeApplyLegacyMigrationRequest,
   ProjectDesignRuntimePreviewRequestSchema, ProjectDesignRuntimePreviewResponseSchema, type ProjectDesignRuntimePreviewRequest,
   ProjectDesignRuntimePatternsResponseSchema, ProjectDesignRuntimePatternResponseSchema, ProjectDesignRuntimeInstantiatePatternRequestSchema, ProjectDesignRuntimeInstantiatePatternResponseSchema, type ProjectDesignRuntimeInstantiatePatternRequest,
   CodeIdentitySchema,
@@ -121,6 +124,32 @@ async function request<T>(
 
 export const getProjectDesignRuntime = (scope: ProjectDesignRuntimeScope) =>
   request(scope, '', ProjectDesignRuntimeResponseSchema);
+
+export const reviewProjectDesignRuntimeLegacyMigration = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeReviewLegacyMigrationRequest) => {
+  const body = ProjectDesignRuntimeReviewLegacyMigrationRequestSchema.parse(input);
+  return request(scope, '/legacy-migration/review', ProjectDesignRuntimeReviewLegacyMigrationResponseSchema, 'POST', body).then((result) => {
+    const candidate = result.review.candidate?.package;
+    if (result.revision !== body.expectedRevision || result.review.baseRevision !== body.expectedRevision
+      || result.review.projectId !== scope.projectId
+      || (candidate && (candidate.id !== body.plan.designSystemId || candidate.name !== body.plan.name || candidate.version !== body.plan.version))) {
+      throw new Error('The migration review does not match the requested project and version.');
+    }
+    return result;
+  });
+};
+
+export const applyProjectDesignRuntimeLegacyMigration = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeApplyLegacyMigrationRequest) => {
+  const body = ProjectDesignRuntimeApplyLegacyMigrationRequestSchema.parse(input);
+  return request(scope, '/legacy-migration/apply', ProjectDesignRuntimeApplyLegacyMigrationResponseSchema, 'POST', body).then((result) => {
+    const { review, version } = result;
+    if (review.projectId !== scope.projectId || review.baseRevision !== body.expectedRevision
+      || review.id !== body.reviewId || review.baseDigest !== body.baseDigest || review.planDigest !== body.planDigest || review.sourceDigest !== body.sourceDigest
+      || version.id !== body.plan.designSystemId || version.version !== body.plan.version) {
+      throw new Error('The applied migration does not match the submitted review.');
+    }
+    return result;
+  });
+};
 
 export const compileProjectDesignRuntime = (scope: ProjectDesignRuntimeScope, input: ProjectDesignRuntimeCompileRequest) =>
   request(scope, '/compile', ProjectDesignRuntimeResponseSchema, 'POST', ProjectDesignRuntimeCompileRequestSchema.parse(input));

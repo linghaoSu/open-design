@@ -2,6 +2,8 @@ import { z } from 'zod';
 export { ProjectDesignPreviewRequestSchema as ProjectDesignRuntimePreviewRequestSchema, ProjectDesignPreviewResultSchema as ProjectDesignRuntimePreviewResponseSchema } from '../design-runtime/preview.js';
 export type { ProjectDesignPreviewRequest as ProjectDesignRuntimePreviewRequest, ProjectDesignPreviewResult as ProjectDesignRuntimePreviewResponse } from '../design-runtime/preview.js';
 import {
+  LegacyDesignSystemMigrationPlanSchema, LegacyDesignSystemMigrationReviewSchema,
+  type LegacyDesignSystemMigrationReview,
   DesignPatternSearchResultSchema, DesignPatternReadResultSchema, DesignPatternInstantiationResultSchema, InstantiateDesignPatternRequestSchema,
   DesignGenerationTargetsSchema,
   ProjectDesignValidationSettingsSchema,
@@ -411,3 +413,27 @@ export const ProjectDesignRuntimeGenerationTargetsRequestSchema = z.object({ exp
 export type ProjectDesignRuntimeGenerationTargetsRequest = z.infer<typeof ProjectDesignRuntimeGenerationTargetsRequestSchema>;
 export const ProjectDesignRuntimeGenerationTargetsResponseSchema = z.object({ revision: revisionSchema, targets: DesignGenerationTargetsSchema }).strict();
 export type ProjectDesignRuntimeGenerationTargetsResponse = z.infer<typeof ProjectDesignRuntimeGenerationTargetsResponseSchema>;
+
+export const ProjectDesignRuntimeReviewLegacyMigrationRequestSchema = z.object({ expectedRevision: revisionSchema, plan: LegacyDesignSystemMigrationPlanSchema }).strict();
+export type ProjectDesignRuntimeReviewLegacyMigrationRequest = z.infer<typeof ProjectDesignRuntimeReviewLegacyMigrationRequestSchema>;
+export interface ProjectDesignRuntimeReviewLegacyMigrationResponse { revision: number; review: LegacyDesignSystemMigrationReview }
+export const ProjectDesignRuntimeReviewLegacyMigrationResponseSchema: z.ZodType<ProjectDesignRuntimeReviewLegacyMigrationResponse> = z.object({ revision: revisionSchema, review: LegacyDesignSystemMigrationReviewSchema }).strict().superRefine((response, ctx) => {
+  if (response.revision !== response.review.baseRevision) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['revision'], message: 'The review must identify the exact project revision.' });
+});
+export const ProjectDesignRuntimeApplyLegacyMigrationRequestSchema = ProjectDesignRuntimeReviewLegacyMigrationRequestSchema.extend({
+  reviewId: DesignEntityIdSchema, baseDigest: DesignSystemDigestSchema, planDigest: DesignSystemDigestSchema, sourceDigest: DesignSystemDigestSchema,
+}).strict();
+export type ProjectDesignRuntimeApplyLegacyMigrationRequest = z.infer<typeof ProjectDesignRuntimeApplyLegacyMigrationRequestSchema>;
+export interface ProjectDesignRuntimeApplyLegacyMigrationResponse {
+  state: ProjectDesignRuntimeState; review: LegacyDesignSystemMigrationReview; version: ProjectDesignRuntimeVersionSummary;
+}
+export const ProjectDesignRuntimeApplyLegacyMigrationResponseSchema: z.ZodType<ProjectDesignRuntimeApplyLegacyMigrationResponse> = z.object({
+  state: ProjectDesignRuntimeStateSchema, review: LegacyDesignSystemMigrationReviewSchema, version: ProjectDesignRuntimeVersionSummarySchema,
+}).strict().superRefine((response, ctx) => {
+  const { state, review, version } = response;
+  const candidate = review.candidate;
+  const locked = state.lock.dependencies[0];
+  if (!review.canApply || !candidate || state.revision !== review.baseRevision + 1 || state.codeIndex.id !== review.projectId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['review'], message: 'Applied state must follow its applicable review by exactly one project revision.' });
+  if (!candidate || version.id !== candidate.package.id || version.name !== candidate.package.name || version.version !== candidate.package.version || version.digest !== candidate.digest || version.sourceDigest !== candidate.sourceDigest
+    || locked?.designSystemId !== version.id || locked.version !== version.version || locked.digest !== version.digest || locked.source.digest !== version.sourceDigest) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['version'], message: 'Applied migration must install the exact reviewed immutable package and source.' });
+});

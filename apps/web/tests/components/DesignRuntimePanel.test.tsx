@@ -38,6 +38,15 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('DesignRuntimePanel', () => {
+  it('opens the Migration tab for an existing legacy design system without starting a review or mutation', async () => {
+    vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state: emptyDesignRuntimeState() });
+    render(<DesignRuntimePanel {...panelProps} files={[{ name: 'DESIGN.md' }, { name: 'system/variables.css' }, { name: 'components.html' }]} />);
+    await screen.findByTestId('design-runtime-legacy-migration');
+    expect(screen.getByTestId('design-runtime-migration-tab').getAttribute('aria-selected')).toBe('true');
+    expect((screen.getByTestId('legacy-token-stylesheet') as HTMLSelectElement).value).toBe('system/variables.css');
+    expect(screen.queryByTestId('legacy-review-result')).toBeNull();
+    expect(provider.compileProjectDesignRuntime).not.toHaveBeenCalled();
+  });
   it('preserves and exposes typed and legacy value conversions when editing another code mapping', async () => {
     const state = designRuntimeState();
     state.bindings.bindings[0]!.propMappings = [

@@ -1,6 +1,9 @@
+import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const pl: Dict = {
+  ...designMigrationFallback,
+
   "designGenerationTargets.title": "Cele generowania",
   "designGenerationTargets.description": "Zaplanuj pliki wyjściowe, eksporty i identyfikatory ekranów semantycznych. Dozwolone są nowe ścieżki i identyfikatory. Zapisanie celów nie sprawdza kodu źródłowego ani pokrycia ekranów.",
   "designGenerationTargets.save": "Zapisz cele",

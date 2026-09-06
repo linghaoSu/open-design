@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import {
+  ProjectDesignRuntimeReviewLegacyMigrationRequestSchema, ProjectDesignRuntimeReviewLegacyMigrationResponseSchema,
+  ProjectDesignRuntimeApplyLegacyMigrationRequestSchema, ProjectDesignRuntimeApplyLegacyMigrationResponseSchema,
   ProjectDesignRuntimePreviewRequestSchema, ProjectDesignRuntimePreviewResponseSchema,
   ProjectDesignRuntimePatternsResponseSchema, ProjectDesignRuntimePatternResponseSchema, ProjectDesignRuntimeInstantiatePatternRequestSchema, ProjectDesignRuntimeInstantiatePatternResponseSchema,
   CodeIdentitySchema,
@@ -109,6 +111,8 @@ export const DESIGN_RUNTIME_CLI_USAGE = `Usage:
   od design-runtime use-migration-recipe <projectId> --prompt-file <path|->
   od design-runtime review-upgrade <projectId> --prompt-file <path|->
   od design-runtime apply-upgrade <projectId> --prompt-file <path|->
+  od design-runtime review-legacy <projectId> --prompt-file <path|->
+  od design-runtime apply-legacy <projectId> --prompt-file <path|->
 
 Common options:
   --json                     Emit the daemon JSON response.
@@ -153,6 +157,15 @@ Instantiate-pattern accepts {instanceId,destinationScreenId,props,slots,document
 and returns an editable plan without changing project state. Manual binding
 overlays are preserved; skipped package decisions are returned as warnings.
 Review-upgrade accepts {plan} and returns a review without changing live state.
+Review-legacy accepts {plan:{schemaVersion:1,designSystemId,name,version,mode,sourcePaths,
+tokenStylesheet?,selections:[],constraints,codeCompatibility:[]}}. The daemon reads the
+explicit project files; CSS variables become base tokens, while HTML and documentation
+remain source references. Optional React/Vue selections use the compile shape above.
+Every selected stylesheet, component and story must also occur in sourcePaths.
+Apply-legacy requires {plan,reviewId,baseDigest,planDigest,sourceDigest} from the review.
+It atomically publishes the reviewed version and activates its exact dependency in
+Explore or Guided. Original files are preserved. Token-only packages are not Strict
+ready. Changed sources or review inputs require a fresh review; conflicts never retry.
 Apply-upgrade requires {plan,reviewId,baseDigest,planDigest} from that review.
 Both accept expectedRevision or read it once; apply never retries a conflict.
 No command selects latest or upgrades a dependency implicitly. Clear-dependency
@@ -211,6 +224,8 @@ const COMMANDS: Record<string, CommandSpec> = {
   'use-migration-recipe': { revisioned: true, input: ProjectDesignRuntimeInstantiateMigrationRecipeRequestSchema },
   'review-upgrade': { revisioned: true, input: ProjectDesignRuntimeReviewUpgradeRequestSchema },
   'apply-upgrade': { mutates: true, input: ProjectDesignRuntimeApplyUpgradeRequestSchema },
+  'review-legacy': { revisioned: true, input: ProjectDesignRuntimeReviewLegacyMigrationRequestSchema },
+  'apply-legacy': { mutates: true, input: ProjectDesignRuntimeApplyLegacyMigrationRequestSchema },
   compile: { mutates: true, input: ProjectDesignRuntimeCompileRequestSchema },
   components: { query: true },
   'code-components': { query: true },
@@ -523,6 +538,31 @@ export async function runDesignRuntimeCli(args: string[], deps: DesignRuntimeCli
       if (json) output(data);
       else { process.stdout.write(`${JSON.stringify(data.plan, null, 2)}\n`); printDiagnostics(data.diagnostics); }
       return { exitCode: 0 };
+    }
+    if (command === 'review-legacy' || command === 'apply-legacy') {
+      const data = command === 'review-legacy'
+        ? await request('/legacy-migration/review', ProjectDesignRuntimeReviewLegacyMigrationResponseSchema, 'POST', mutationBody)
+        : await request('/legacy-migration/apply', ProjectDesignRuntimeApplyLegacyMigrationResponseSchema, 'POST', mutationBody);
+      const plan = command === 'review-legacy'
+        ? ProjectDesignRuntimeReviewLegacyMigrationRequestSchema.parse(mutationBody).plan
+        : ProjectDesignRuntimeApplyLegacyMigrationRequestSchema.parse(mutationBody).plan;
+      const { review } = data;
+      if (review.projectId !== projectId || review.baseRevision !== expectedRevision
+        || (review.candidate && (review.candidate.package.id !== plan.designSystemId || review.candidate.package.name !== plan.name || review.candidate.package.version !== plan.version))
+        || ('revision' in data && data.revision !== expectedRevision)
+        || (command === 'apply-legacy' && (review.id !== input.reviewId || review.baseDigest !== input.baseDigest || review.planDigest !== input.planDigest || review.sourceDigest !== input.sourceDigest))) {
+        throw new CliFailure(1, createApiErrorResponse(createApiError('INTERNAL_ERROR', 'Migration response does not match the requested project, version and review.')));
+      }
+      if (json) output(data);
+      else {
+        if ('state' in data) printState(data);
+        process.stdout.write(`Migration: ${plan.designSystemId}@${plan.version}\nCan apply: ${review.canApply}\nBase tokens: ${review.tokens.filter((record) => record.status === 'converted').length}\nUnresolved tokens: ${review.tokens.filter((record) => record.status === 'unresolved').length}\nCompiled components: ${review.compiledComponentRefs.length}\nReview: ${review.id}\nBase digest: ${review.baseDigest}\nPlan digest: ${review.planDigest}\nSource digest: ${review.sourceDigest}\n`);
+        for (const file of review.files) process.stdout.write(`Preserved source: ${file.path} (${file.byteLength} bytes)\n`);
+        for (const record of review.tokens) if (record.status === 'unresolved') process.stdout.write(`Unresolved ${record.cssVariable}: ${record.reason} at ${record.sourcePath}:${record.line}\n`);
+        if (!review.compiledComponentRefs.length) process.stdout.write('Token foundation only; not Strict ready.\n');
+        printDiagnostics(review.diagnostics);
+      }
+      return { exitCode: review.canApply ? 0 : 1 };
     }
     if (command === 'review-upgrade'  || command === 'apply-upgrade') {
       const data = command === 'review-upgrade'

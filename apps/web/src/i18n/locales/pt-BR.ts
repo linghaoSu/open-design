@@ -1,6 +1,9 @@
+import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const ptBR: Dict = {
+  ...designMigrationFallback,
+
   "designGenerationTargets.title": "Destinos da geração",
   "designGenerationTargets.description": "Planeje arquivos de saída, exportações e IDs de telas semânticas. Novos caminhos e IDs são permitidos. Salvar os destinos não verifica o código-fonte nem a cobertura das telas.",
   "designGenerationTargets.save": "Salvar destinos",

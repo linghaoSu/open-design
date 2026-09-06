@@ -1,6 +1,9 @@
+import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const esES: Dict = {
+  ...designMigrationFallback,
+
   "designGenerationTargets.title": "Objetivos de generación",
   "designGenerationTargets.description": "Planifica archivos de salida, exportaciones e identificadores de pantallas semánticas. Se permiten rutas e identificadores nuevos. Guardar los objetivos no verifica el código fuente ni la cobertura de pantallas.",
   "designGenerationTargets.save": "Guardar objetivos",

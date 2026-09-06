@@ -24,3 +24,4 @@ export * from './migration-recipes.js';
 export * from './migration-recipe-plan.js';
 export * from './pattern-runtime.js';
 export * from './preview.js';
+export * from './legacy-migration.js';

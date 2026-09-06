@@ -1,6 +1,9 @@
+import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const fr: Dict = {
+  ...designMigrationFallback,
+
   "designGenerationTargets.title": "Cibles de génération",
   "designGenerationTargets.description": "Planifiez les fichiers de sortie, les exports et les identifiants des écrans sémantiques. Les nouveaux chemins et identifiants sont autorisés. Enregistrer les cibles ne vérifie ni le code source ni la couverture des écrans.",
   "designGenerationTargets.save": "Enregistrer les cibles",

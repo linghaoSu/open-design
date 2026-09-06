@@ -1,6 +1,9 @@
+import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const ko: Dict = {
+  ...designMigrationFallback,
+
   "designGenerationTargets.title": "생성 대상",
   "designGenerationTargets.description": "생성할 출력 파일, 내보내기 이름, 의미 구조 화면 ID를 계획합니다. 새 경로와 화면 ID도 입력할 수 있습니다. 대상을 저장해도 소스나 화면 포함 범위는 검증되지 않습니다.",
   "designGenerationTargets.save": "생성 대상 저장",

@@ -1,6 +1,9 @@
+import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const it: Dict = {
+  ...designMigrationFallback,
+
   "designGenerationTargets.title": "Destinazioni di generazione",
   "designGenerationTargets.description": "Pianifica file di output, esportazioni e ID delle schermate semantiche. Sono consentiti nuovi percorsi e ID. Il salvataggio non verifica il codice sorgente o la copertura delle schermate.",
   "designGenerationTargets.save": "Salva destinazioni",

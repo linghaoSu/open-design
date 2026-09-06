@@ -1,6 +1,9 @@
+import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const hu: Dict = {
+  ...designMigrationFallback,
+
   "designGenerationTargets.title": "Generálási célok",
   "designGenerationTargets.description": "Tervezze meg a kimeneti fájlokat, exportokat és szemantikus képernyőazonosítókat. Új útvonalak és azonosítók is megadhatók. A mentés nem ellenőrzi a forráskódot vagy a képernyők lefedettségét.",
   "designGenerationTargets.save": "Célok mentése",

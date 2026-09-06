@@ -29,6 +29,7 @@ import { ProjectStructurePanel } from './ProjectStructurePanel';
 import { DesignRuntimeValidationPanel } from './DesignRuntimeValidationPanel';
 import { DesignSystemVersionsPanel } from './DesignSystemVersionsPanel';
 import { DesignRuntimeSourceSelections } from './DesignRuntimeSourceSelections';
+import { DesignRuntimeLegacyMigration, isLegacyDesignSource } from './DesignRuntimeLegacyMigration';
 import { DesignHandoffPanel } from './DesignHandoffPanel';
 import { DesignPreviewPanel, type DesignPreviewSelection } from './DesignPreviewPanel';
 import styles from './DesignRuntimePanel.module.css';
@@ -36,7 +37,7 @@ import styles from './DesignRuntimePanel.module.css';
 interface Props {
   projectId: string;
   workspaceContext: WorkspaceCollabContext | null;
-  files: readonly { name: string }[];
+  files: readonly { name: string; size?: number; mtime?: number; type?: 'file' | 'dir' }[];
   viewerOnly: boolean;
   onClose(): void;
 }
@@ -118,7 +119,8 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(true);
   const [structureBusy, setStructureBusy] = useState(false);
-  const [tab, setTab] = useState<'code' | 'structure' | 'versions' | 'validation' | 'handoff' | 'preview'>('code');
+  const [tab, setTab] = useState<'code' | 'structure' | 'migration' | 'versions' | 'validation' | 'handoff' | 'preview'>('code');
+  const [migrationOpened, setMigrationOpened] = useState(false);
   const [previewOpened, setPreviewOpened] = useState(false);
   const [previewSelection, setPreviewSelection] = useState<DesignPreviewSelection>();
   const openPreview = (selection: DesignPreviewSelection) => { setPreviewSelection(selection); setPreviewOpened(true); setTab('preview'); };
@@ -175,7 +177,10 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
     controller.current = abort;
     void getProjectDesignRuntime({ projectId, workspaceContext, signal: abort.signal })
       .then(({ state: nextState }) => {
-        if (mounted.current && generation.current === current) adoptState(nextState, true);
+        if (mounted.current && generation.current === current) {
+          adoptState(nextState, true);
+          if (!nextState.registry && files.some((file) => isLegacyDesignSource(file.name))) { setMigrationOpened(true); setTab('migration'); }
+        }
       })
       .catch((cause: unknown) => {
         if (mounted.current && generation.current === current) setError(cause instanceof Error ? cause.message : String(cause));
@@ -302,6 +307,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
         </div>
       </header>
       <div role="tablist" aria-label={t('designRuntime.title')} className={styles.actions}>
+        <Button role="tab" id={`${inputId}-migration-tab`} aria-controls={`${inputId}-migration`} aria-selected={tab === 'migration'} disabled={busy || structureBusy} data-testid="design-runtime-migration-tab" onClick={() => { setMigrationOpened(true); setTab('migration'); }}>{t('designMigration.title')}</Button>
         <Button role="tab" id={`${inputId}-code-tab`} aria-controls={`${inputId}-code`} aria-selected={tab === 'code'} disabled={busy || structureBusy} data-testid="design-runtime-code-tab" onClick={() => setTab('code')}>{t('projectStructure.codeTab')}</Button>
         <Button role="tab" id={`${inputId}-structure-tab`} aria-controls={`${inputId}-structure`} aria-selected={tab === 'structure'} disabled={busy || structureBusy} data-testid="design-runtime-structure-tab" onClick={() => setTab('structure')}>{t('projectStructure.title')}</Button>
         <Button role="tab" id={`${inputId}-versions-tab`} aria-controls={`${inputId}-versions`} aria-selected={tab === 'versions'} disabled={busy || structureBusy} data-testid="design-runtime-versions-tab" onClick={() => { setVersionsOpened(true); setTab('versions'); }}>{t('designVersions.title')}</Button>
@@ -452,6 +458,9 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
       </div>
       <div id={`${inputId}-handoff`} role="tabpanel" aria-labelledby={`${inputId}-handoff-tab`} hidden={tab !== 'handoff'}>
         {handoffOpened && state ? <DesignHandoffPanel scope={scope} state={state} files={files} viewerOnly={viewerOnly} externalBusy={busy} onState={(next) => adoptState(next)} onBusyChange={setStructureBusy} /> : null}
+      </div>
+      <div id={`${inputId}-migration`} role="tabpanel" aria-labelledby={`${inputId}-migration-tab`} hidden={tab !== 'migration'}>
+        {migrationOpened ? <DesignRuntimeLegacyMigration scope={scope} state={state} files={files} viewerOnly={viewerOnly} externalBusy={busy} onState={(next) => { adoptState(next); setError(''); setDiagnostics(null); }} onBusyChange={setStructureBusy} /> : null}
       </div>
       <div id={`${inputId}-versions`} role="tabpanel" aria-labelledby={`${inputId}-versions-tab`} hidden={tab !== 'versions'}>
         {versionsOpened ? <DesignSystemVersionsPanel scope={scope} state={state} files={files} viewerOnly={viewerOnly} externalBusy={busy} onState={(next) => { adoptState(next); setError(''); setDiagnostics(null); }} onBusyChange={setStructureBusy} onPreview={openPreview} /> : null}

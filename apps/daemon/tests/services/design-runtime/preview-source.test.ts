@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, rm, symlink, truncate, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { readBoundedPreviewSource } from '../../../src/services/design-runtime/preview-source.js';
+import { readBoundedPreviewSource, readBoundedProjectSourceBytes } from '../../../src/services/design-runtime/preview-source.js';
+import { decodeDesignRuntimeSource } from '../../../src/services/design-runtime/source-text.js';
 
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
@@ -18,5 +19,12 @@ describe('bounded authorized preview source reads', () => {
     await expect(readBoundedPreviewSource(path, root)).rejects.toThrow(/escapes/);
     await expect(readBoundedPreviewSource(join(root, 'Link.ts'), root)).rejects.toThrow(/escapes/);
     await expect(readBoundedPreviewSource(root, root)).rejects.toThrow(/escapes/);
+  });
+  it('preserves opaque binary assets and BOM/CRLF source bytes for immutable migration bundles', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'od-migration-bytes-')); directories.push(root);
+    const image = Buffer.from([137, 80, 78, 71, 0, 255, 254, 1]); const text = Buffer.from('\ufeff# Source\r\n');
+    await writeFile(join(root, 'logo.png'), image); await writeFile(join(root, 'DESIGN.md'), text);
+    expect(await readBoundedProjectSourceBytes(join(root, 'logo.png'), root)).toEqual(image);
+    expect(Buffer.from(decodeDesignRuntimeSource(await readBoundedProjectSourceBytes(join(root, 'DESIGN.md'), root)), 'utf8')).toEqual(text);
   });
 });

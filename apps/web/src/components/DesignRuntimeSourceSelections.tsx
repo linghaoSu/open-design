@@ -8,7 +8,7 @@ type StorySource = NonNullable<Selection['storySources']>[number];
 const newStory = () => ({ id: `story-${crypto.randomUUID()}`, exportName: '' });
 
 /** All source and story identities are explicit; editing source labels never reallocates them. */
-export function DesignRuntimeSourceSelections({ selections, files, onChange }: { selections: Selection[]; files: readonly string[]; onChange(value: Selection[]): void }) {
+export function DesignRuntimeSourceSelections({ selections, files, onChange, allowEmpty = false }: { selections: Selection[]; files: readonly string[]; onChange(value: Selection[]): void; allowEmpty?: boolean }) {
   const t = useT();
   function update(index: number, value: Partial<Selection>) { onChange(selections.map((selection, position) => position === index ? { ...selection, ...value } : selection)); }
   function updateSources(index: number, sources: StorySource[]) { update(index, { storySources: sources.length ? sources : undefined }); }
@@ -65,7 +65,7 @@ export function DesignRuntimeSourceSelections({ selections, files, onChange }: {
         </fieldset>)}
         <Button data-testid={`design-runtime-add-story-source-${index}`} onClick={() => updateSources(index, [...selection.storySources ?? [], { sourcePath: '', selections: [newStory()] }])}>{t('designRuntime.addStorySource')}</Button>
       </details>
-      <Button variant="ghost" disabled={selections.length === 1} aria-label={`${t('common.delete')} ${index + 1}`} onClick={() => onChange(selections.filter((_, position) => position !== index))}>{t('common.delete')}</Button>
+      <Button variant="ghost" disabled={!allowEmpty && selections.length === 1} aria-label={`${t('common.delete')} ${index + 1}`} onClick={() => onChange(selections.filter((_, position) => position !== index))}>{t('common.delete')}</Button>
     </div>;
   })}</>;
 }

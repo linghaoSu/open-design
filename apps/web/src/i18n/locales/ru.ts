@@ -1,6 +1,9 @@
+import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const ru: Dict = {
+  ...designMigrationFallback,
+
   "designGenerationTargets.title": "Цели генерации",
   "designGenerationTargets.description": "Укажите выходные файлы, экспорты и идентификаторы семантических экранов. Допускаются новые пути и идентификаторы. Сохранение целей не проверяет исходный код или охват экранов.",
   "designGenerationTargets.save": "Сохранить цели",

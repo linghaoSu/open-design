@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from 'express';
 import {
+  ProjectDesignRuntimeReviewLegacyMigrationRequestSchema, ProjectDesignRuntimeApplyLegacyMigrationRequestSchema,
   ProjectDesignRuntimePreviewRequestSchema,
   ProjectDesignRuntimeInstantiatePatternRequestSchema,
   ProjectDesignRuntimeGenerationTargetsRequestSchema,
@@ -46,6 +47,7 @@ import { DesignSystemUpgradeError } from '../services/design-runtime/design-syst
 import { SharedComponentChangeError } from '../services/design-runtime/shared-component-changes.js';
 import { LocalComponentBindingError } from '../services/design-runtime/local-component-binding.js';
 import { DesignPreviewError } from '../services/design-runtime/preview-preparation.js';
+import { ProjectLegacyMigrationError } from '../services/design-runtime/project-legacy-migration.js';
 
 export interface RegisterDesignRuntimeRoutesDeps extends RouteDeps<'designRuntime' | 'authorizeProjectRequest'> {}
 
@@ -80,6 +82,10 @@ function sendFailure(res: Response, error: unknown): void {
       { details: JsonValueSchema.parse({ diagnostics: error.diagnostics, ...(error.review ? { review: error.review } : {}) }) });
   } else if (error instanceof LocalComponentBindingError) {
     sendApiError(res, 400, 'DESIGN_RUNTIME_INVALID_BINDING', error.message, { details: JsonValueSchema.parse({ diagnostics: error.diagnostics }) });
+  } else if (error instanceof ProjectLegacyMigrationError) {
+    sendApiError(res, error.kind === 'conflict' ? 409 : 400,
+      error.kind === 'conflict' ? 'DESIGN_RUNTIME_LEGACY_MIGRATION_CONFLICT' : 'DESIGN_RUNTIME_LEGACY_MIGRATION_INVALID', error.message,
+      { details: JsonValueSchema.parse({ diagnostics: error.diagnostics, ...(error.review ? { review: error.review } : {}) }) });
   } else if (error instanceof DesignPreviewError) {
     sendApiError(res, error.code === 'CONFLICT' ? 409 : 400, error.code === 'CONFLICT' ? 'DESIGN_RUNTIME_PREVIEW_CONFLICT' : 'DESIGN_RUNTIME_PREVIEW_INVALID', error.message, { details: JsonValueSchema.parse({ diagnostics: error.diagnostics }) });
   } else if (error instanceof ProjectDesignRuntimeError) {
@@ -125,6 +131,22 @@ export function registerDesignRuntimeRoutes(app: Express, deps: RegisterDesignRu
   };
 
   app.get(prefix, handle('read', (req) => ({ state: service.get(String(req.params.id)) })));
+  for (const action of ['review', 'apply'] as const) {
+    app.post(`${prefix}/legacy-migration/${action}`, async (req, res) => {
+      // The second authorization follows all source awaits and precedes the synchronous identity/CAS checks.
+      const denied = Symbol('migration-authorization-denied');
+      const authorize = async () => {
+        if (!await deps.authorizeProjectRequest(req, res, String(req.params.id), action === 'review' ? { mode: 'read' } : { mode: 'write', capability: 'writeFiles' })) throw denied;
+      };
+      try {
+        await authorize();
+        const result = action === 'review'
+          ? await service.reviewLegacyMigration(String(req.params.id), parseInput(ProjectDesignRuntimeReviewLegacyMigrationRequestSchema, req.body), authorize)
+          : await service.applyLegacyMigration(String(req.params.id), parseInput(ProjectDesignRuntimeApplyLegacyMigrationRequestSchema, req.body), authorize);
+        res.json(result);
+      } catch (error) { if (error !== denied) sendFailure(res, error); }
+    });
+  }
   app.post(`${prefix}/previews`, async (req, res) => {
     try {
       const id = String(req.params.id);

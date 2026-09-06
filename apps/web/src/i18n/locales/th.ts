@@ -1,6 +1,9 @@
+import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const th: Dict = {
+  ...designMigrationFallback,
+
   "designGenerationTargets.title": "เป้าหมายการสร้าง",
   "designGenerationTargets.description": "วางแผนไฟล์ผลลัพธ์ ชื่อส่งออก และ ID หน้าจอเชิงความหมายสำหรับการสร้าง ระบุเส้นทางและ ID หน้าจอใหม่ได้ การบันทึกเป้าหมายไม่ได้ตรวจสอบซอร์สโค้ดหรือความครอบคลุมของหน้าจอ",
   "designGenerationTargets.save": "บันทึกเป้าหมายการสร้าง",

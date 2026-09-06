@@ -1,6 +1,9 @@
+import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const en: Dict = {
+  ...designMigrationFallback,
+
   "designGeneration.title": "Design validation",
   "designGeneration.running": "Generation in progress",
   "designGeneration.repairing": "Repair in progress",

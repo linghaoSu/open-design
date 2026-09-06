@@ -1,6 +1,9 @@
+import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const fa: Dict = {
+  ...designMigrationFallback,
+
   "designGenerationTargets.title": "هدف‌های تولید",
   "designGenerationTargets.description": "فایل‌های خروجی، خروجی‌های ماژول و شناسه‌های صفحه‌های معنایی را برنامه‌ریزی کنید. مسیرها و شناسه‌های جدید مجازند. ذخیرهٔ هدف‌ها، کد منبع یا پوشش صفحه‌ها را تأیید نمی‌کند.",
   "designGenerationTargets.save": "ذخیرهٔ هدف‌های تولید",

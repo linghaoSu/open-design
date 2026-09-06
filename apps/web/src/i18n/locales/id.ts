@@ -1,6 +1,9 @@
+import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const id: Dict = {
+  ...designMigrationFallback,
+
   "designGenerationTargets.title": "Target pembuatan",
   "designGenerationTargets.description": "Rencanakan file keluaran, ekspor, dan ID layar semantik untuk pembuatan. Jalur dan ID layar baru diperbolehkan. Menyimpan target tidak memverifikasi sumber atau cakupan layar.",
   "designGenerationTargets.save": "Simpan target",

@@ -848,7 +848,7 @@ import { prepareDesignGenerationRepair } from './services/design-runtime/generat
 import { createDesignRuntimeStore, DesignRuntimeProjectNotFoundError } from './storage/design-runtime-store.js';
 import { decodeDesignRuntimeSource } from './services/design-runtime/source-text.js';
 import { createProjectDesignRuntimeService } from './services/design-runtime/project-service.js';
-import { readBoundedPreviewSource } from './services/design-runtime/preview-source.js';
+import { readBoundedPreviewSource, readBoundedProjectSourceBytes } from './services/design-runtime/preview-source.js';
 import { DesignPreviewError } from './services/design-runtime/preview-preparation.js';
 import { observeInstalledTargetPackages } from './services/design-runtime/installed-package-observer.js';
 import { registerHostToolsRoutes } from './routes/host-tools.js';
@@ -8473,33 +8473,45 @@ export async function startServer({
       : {}),
   });
   const designRuntimeStore = createDesignRuntimeStore(db);
+  const acquireDesignRuntimeSourceAuthority = async (projectId: string) => {
+    const capture = () => {
+      const project = getProject(db, projectId);
+      if (!project) throw new DesignRuntimeProjectNotFoundError();
+      const metadata = structuredClone(project.metadata);
+      const root = fs.realpathSync(resolveProjectDir(PROJECTS_DIR, projectId, metadata));
+      return { metadata, root, key: JSON.stringify({ metadata, root,
+        workspace: pinRunWorkspaceScopeForProject(db, projectId),
+        accountIdentity: velaWorkspaceDirectoryIdentity(undefined, configuredAmrEnv()),
+      }) };
+    };
+    const captured = capture();
+    const assertCurrentSync = () => {
+      try { if (capture().key === captured.key) return; } catch { /* Deleted or unavailable project authority is a conflict too. */ }
+      throw new DesignPreviewError('CONFLICT', 'Project root, workspace or account authority changed during source inspection.');
+    };
+    const assertCurrent = async () => assertCurrentSync();
+    return { projectRoot: captured.root, identity: captured.key, assertCurrent, assertCurrentSync,
+      readSource: async (sourcePath: string) => {
+        await assertCurrent();
+        const file = await resolveProjectFilePath(PROJECTS_DIR, projectId, sourcePath, captured.metadata);
+        return readBoundedPreviewSource(file.filePath, captured.root);
+      },
+      readSourceFile: async (sourcePath: string) => {
+        await assertCurrent();
+        const file = await resolveProjectFilePath(PROJECTS_DIR, projectId, sourcePath, captured.metadata);
+        const buffer = await readBoundedProjectSourceBytes(file.filePath, captured.root);
+        const isText = /\.(?:css|scss|sass|less|ts|tsx|js|jsx|mjs|cjs|vue|svelte|html?|json|md|txt|yaml|yml|svg|xml)$/i.test(sourcePath);
+        return isText
+          ? { path: sourcePath, encoding: 'utf8' as const, content: decodeDesignRuntimeSource(buffer) }
+          : { path: sourcePath, encoding: 'base64' as const, content: buffer.toString('base64') };
+      },
+      observeTargetPackages: async (names: readonly string[]) => { await assertCurrent(); return observeInstalledTargetPackages(captured.root, names); },
+    };
+  };
   const designRuntime = createProjectDesignRuntimeService({
     store: designRuntimeStore,
-    acquirePreviewAuthority: async (projectId) => {
-      const capture = () => {
-        const project = getProject(db, projectId);
-        if (!project) throw new DesignRuntimeProjectNotFoundError();
-        const metadata = structuredClone(project.metadata);
-        const root = fs.realpathSync(resolveProjectDir(PROJECTS_DIR, projectId, metadata));
-        return { metadata, root, key: JSON.stringify({ metadata, root,
-          workspace: pinRunWorkspaceScopeForProject(db, projectId),
-          accountIdentity: velaWorkspaceDirectoryIdentity(undefined, configuredAmrEnv()),
-        }) };
-      };
-      const captured = capture();
-      const assertCurrent = async () => {
-        try { if (capture().key === captured.key) return; } catch { /* Deleted or unavailable project authority is a conflict too. */ }
-        throw new DesignPreviewError('CONFLICT', 'Project root, workspace or account authority changed during preview.');
-      };
-      return { projectRoot: captured.root, assertCurrent,
-        readSource: async (sourcePath) => {
-          await assertCurrent();
-          const file = await resolveProjectFilePath(PROJECTS_DIR, projectId, sourcePath, captured.metadata);
-          return readBoundedPreviewSource(file.filePath, captured.root);
-        },
-        observeTargetPackages: async (names) => { await assertCurrent(); return observeInstalledTargetPackages(captured.root, names); },
-      };
-    },
+    acquirePreviewAuthority: acquireDesignRuntimeSourceAuthority,
+    acquireMigrationAuthority: acquireDesignRuntimeSourceAuthority,
     observeTargetPackages: async (projectId, packageNames) => {
       const project = getProject(db, projectId);
       if (!project) throw new DesignRuntimeProjectNotFoundError();

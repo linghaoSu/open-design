@@ -13,6 +13,63 @@ registries and exact project locks.
 The [delivery plan](../specs/current/structured-design-runtime.md) records milestone
 acceptance and executable evidence.
 
+## Migrate an existing design system
+
+Open **Design systems → Your systems → Edit with agent**, then **Design runtime →
+Migration**. Projects containing legacy design-system files open this tab by default
+when they do not yet have a structured registry. Existing project folders can use
+the same entry after their design-system files have been imported.
+
+Select the files to preserve in the immutable package, including any images, fonts,
+usage guides and source evidence. The form recognizes `tokens.css` and the
+`system/variables.css` used by brand workspaces. Select a different project CSS file
+when needed. Enter the new system's stable ID, name and initial version; choose
+Explore or Guided explicitly. The default preserves the project's current Explore
+or Guided setting.
+
+**Review migration** reads the selected files without changing them. It reports
+converted tokens, unresolved declarations, compiled components and packaged files.
+Supported literal declarations in an unconditional `:root` become typed tokens with
+their CSS variable names and source locations. Theme overrides, unsupported CSS
+expressions and conflicting declarations remain visible as unresolved evidence;
+their original bytes remain in the selected source files. The migration does not
+flatten dark themes into the base token values.
+
+Expand **Code components (optional)** to select existing React/TypeScript exports
+or Vue SFCs. The existing compiler extracts the supported properties, slots and
+explicit code bindings. Select all required source and asset files for reuse.
+HTML examples and the old `components.manifest.json` selector inventory remain
+reference material. They do not supply typed component contracts. A token-only
+system can migrate, while a documentation-only selection with no convertible
+tokens or components reports what is missing.
+
+After reviewing the result, choose **Publish and activate reviewed version**.
+The daemon rechecks the project revision, source bytes and authorization, then
+saves the immutable package and exact dependency lock together. It preserves the
+original project files, existing catalog selection and project-local definitions.
+If the form, source or project changes, review again. A project with an existing
+structured registry uses the normal version/upgrade workflow instead.
+
+The migrated version appears under **Versions**, where it can be inspected and
+exported. Import that package and activate its exact version in another project to
+reuse it. Migration chooses Explore or Guided; Strict still requires complete
+component, semantic-screen and production-source validation.
+
+The CLI uses the same two endpoints:
+
+```bash
+od design-runtime review-legacy <projectId> --json --prompt-file <request.json>
+od design-runtime apply-legacy <projectId> --json --prompt-file <reviewed-request.json>
+```
+
+The review request contains `expectedRevision` and `plan`. The plan records the
+stable identity, version, mode, selected source paths, optional `tokenStylesheet`,
+compiler selections, constraint policies and package compatibility declarations.
+Apply submits that exact plan and revision plus the returned `reviewId` (the
+review's `id`), `baseDigest`, `planDigest` and `sourceDigest`. The daemon reconstructs
+the candidate; callers do not submit replacement package bytes as review evidence.
+Both commands also accept stdin through `--prompt-file -`.
+
 ## Existing extension points
 
 - `packages/contracts/src/design-systems/components-manifest.ts` owns the
@@ -99,6 +156,8 @@ All paths below are relative to `/api/projects/:id/design-runtime`:
 | --- | --- | --- |
 | Read persisted snapshot | `GET /` | `get <projectId>` |
 | Compile project sources | `POST /compile` | `compile <projectId> --prompt-file <path\|->` |
+| Review migration from legacy project files | `POST /legacy-migration/review` | `review-legacy <projectId> --prompt-file <path\|->` |
+| Publish and activate the reviewed migration | `POST /legacy-migration/apply` | `apply-legacy <projectId> --prompt-file <path\|->` |
 | Search design/code components | `GET /components`, `GET /code-components` | `components`, `code-components` with `<projectId> --query <text>` |
 | Bind or unbind | `PUT`, `DELETE /bindings/:bindingId` | `bind <projectId> --prompt-file <path\|->`, `unbind <projectId> <bindingId>` |
 | Revalidate or resolve | `POST /bindings/:bindingId/revalidate`, `GET /bindings/:bindingId/resolve` | `revalidate`, `resolve` with `<projectId> <bindingId>` |

@@ -51,6 +51,10 @@ export const DesignDiagnosticCodeSchema = z.enum([
   'ODDS8002', // UnsupportedPreviewSource
   'ODDS8003', // PreviewBundleFailure
   'ODDS8004', // PreviewRuntimeFailure
+  'ODDS9001', // LegacyMigrationUnavailable
+  'ODDS9002', // UnsupportedLegacyToken
+  'ODDS9003', // InvalidLegacyStylesheet
+  'ODDS9004', // LegacyMigrationConflict
 ]);
 export type DesignDiagnosticCode = z.infer<typeof DesignDiagnosticCodeSchema>;
 

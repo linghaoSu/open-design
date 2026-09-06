@@ -1,6 +1,9 @@
+import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const tr: Dict = {
+  ...designMigrationFallback,
+
   "designGenerationTargets.title": "Üretim hedefleri",
   "designGenerationTargets.description": "Üretilecek çıktı dosyalarını, dışa aktarımları ve anlamsal ekran kimliklerini planlayın. Yeni yollar ve ekran kimlikleri kullanılabilir. Hedefleri kaydetmek kaynak kodunu veya ekran kapsamını doğrulamaz.",
   "designGenerationTargets.save": "Üretim hedeflerini kaydet",

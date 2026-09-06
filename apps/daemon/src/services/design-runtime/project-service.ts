@@ -68,6 +68,7 @@ import { createProjectGenerationTargetsService } from './project-generation-targ
 import { createProjectValidationService } from './project-validation.js';
 import { createProjectPatternService } from './project-patterns.js';
 import { createProjectMigrationRecipeService } from './project-migration-recipes.js';
+import { createProjectLegacyMigrationService, ProjectLegacyMigrationError, type ProjectLegacyMigrationAuthority } from './project-legacy-migration.js';
 import {
   reindexComponentBindings,
   revalidateComponentBinding,
@@ -104,6 +105,7 @@ export interface ProjectDesignRuntimeServiceDeps {
   /** Omission stays explicitly unknown in tests/embedders; production injects the project observer. */
   observeTargetPackages?: (projectId: string, packageNames: readonly string[]) => Promise<HandoffTargetPackage[]>;
   acquirePreviewAuthority?: (projectId: string) => Promise<ProjectPreviewAuthority>;
+  acquireMigrationAuthority?: (projectId: string) => Promise<ProjectLegacyMigrationAuthority>;
 }
 
 function requireRegistry(state: ProjectDesignRuntimeState): ComponentRegistry {
@@ -146,7 +148,7 @@ function requireProjectComponent(state: ProjectDesignRuntimeState, componentId: 
   return definition;
 }
 
-export function createProjectDesignRuntimeService({ store, readSource, acquirePreviewAuthority, observeTargetPackages = async (_projectId, names) => [...new Set(names)].sort().map((name) => ({ name, installation: { status: 'unknown' as const } })) }: ProjectDesignRuntimeServiceDeps) {
+export function createProjectDesignRuntimeService({ store, readSource, acquirePreviewAuthority, acquireMigrationAuthority, observeTargetPackages = async (_projectId, names) => [...new Set(names)].sort().map((name) => ({ name, installation: { status: 'unknown' as const } })) }: ProjectDesignRuntimeServiceDeps) {
   function dependencyResolution(projectId: string, state: ProjectDesignRuntimeState) {
     return resolveLockedDesignSystemsSync(state.dependencies, state.lock, (entry) => store.readVersion(projectId, entry.designSystemId, entry.version));
   }
@@ -212,6 +214,7 @@ export function createProjectDesignRuntimeService({ store, readSource, acquirePr
 
   return {
     ...createProjectPreviewService({ store, readAtRevision, acquireAuthority: acquirePreviewAuthority ?? (async () => { throw new DesignPreviewError('INVALID_REQUEST', 'The host has not configured an authorized preview source reader.'); }) }),
+    ...createProjectLegacyMigrationService({ store, acquireAuthority: acquireMigrationAuthority ?? (async () => { throw new ProjectLegacyMigrationError('invalid', 'The host has not configured an authorized migration source reader.'); }) }),
     ...createProjectGenerationTargetsService({ store, persist }),
     validationSettings: validation.validationSettings,
     saveValidationSettings: validation.saveValidationSettings,

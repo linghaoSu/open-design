@@ -1,6 +1,9 @@
+import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from "../types";
 
 export const zhTW: Dict = {
+  ...designMigrationFallback,
+
   "designGenerationTargets.title": "生成目標",
   "designGenerationTargets.description": "為生成規劃輸出檔案、匯出名稱和語義畫面 ID。可以填寫新路徑和新畫面 ID。儲存目標不會驗證原始碼或畫面涵蓋情況。",
   "designGenerationTargets.save": "儲存生成目標",

@@ -5,6 +5,11 @@ import { DesignPreviewError } from './preview-preparation.js';
 
 /** The caller first applies the project's path visibility rules. Physical roots never come from preview DTOs. */
 export async function readBoundedPreviewSource(filePath: string, authorizedRoot: string): Promise<string> {
+  return new TextDecoder('utf-8', { fatal: true }).decode(await readBoundedProjectSourceBytes(filePath, authorizedRoot));
+}
+
+/** Shared byte boundary for preview code and immutable migration assets. */
+export async function readBoundedProjectSourceBytes(filePath: string, authorizedRoot: string): Promise<Buffer> {
   const root = await realpath(authorizedRoot); const path = await realpath(filePath);
   const rel = relative(root, path);
   if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || rel.startsWith(sep)) throw new DesignPreviewError('INVALID_REQUEST', 'Preview source escapes its authorized project root.');
@@ -17,6 +22,8 @@ export async function readBoundedPreviewSource(filePath: string, authorizedRoot:
     while (offset < buffer.length) { const { bytesRead } = await file.read(buffer, offset, buffer.length - offset, offset); if (!bytesRead) break; offset += bytesRead; }
     const final = await file.stat();
     if (offset !== initial.size || final.size !== initial.size || final.mtimeMs !== initial.mtimeMs || final.ctimeMs !== initial.ctimeMs) throw new DesignPreviewError('CONFLICT', 'Preview source changed while being read.');
-    return new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, offset));
+    const finalLocated = await stat(path);
+    if (await realpath(authorizedRoot) !== root || await realpath(filePath) !== path || finalLocated.dev !== final.dev || finalLocated.ino !== final.ino) throw new DesignPreviewError('CONFLICT', 'Project source identity changed while being read.');
+    return buffer.subarray(0, offset);
   } finally { await file.close(); }
 }

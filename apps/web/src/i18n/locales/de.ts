@@ -1,6 +1,9 @@
+import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const de: Dict = {
+  ...designMigrationFallback,
+
   "designGenerationTargets.title": "Generierungsziele",
   "designGenerationTargets.description": "Plane Ausgabedateien, Exporte und semantische Bildschirm-IDs für die Generierung. Neue Pfade und Bildschirm-IDs sind erlaubt. Das Speichern prüft weder Quellcode noch Bildschirmabdeckung.",
   "designGenerationTargets.save": "Generierungsziele speichern",
