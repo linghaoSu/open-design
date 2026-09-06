@@ -3178,10 +3178,11 @@
   color: var(--text);
 }
 
-/* Two runtime-choice buttons ("local CLI" or "your own key") on one row,
-   centered as a unit under the full-width primary CTA above. */
+/* BYOK and third-party Cloud are secondary to local setup. Longer localized
+   labels can wrap without narrowing or overflowing the primary action. */
 .onboarding-cloud__alts {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   align-self: stretch;
@@ -3192,6 +3193,8 @@
 /* Double-class selector to out-specificity the shared Button module's
    `.button`/`.subtle` rules (same 0-1-0 specificity) without `!important`. */
 .onboarding-cloud__alts .onboarding-cloud__alt-btn {
+  max-width: 100%;
+  white-space: normal;
   border-radius: var(--radius-pill);
   color: var(--text-muted);
   font-size: 14px;

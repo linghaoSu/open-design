@@ -527,13 +527,12 @@ export const zhTW: Dict = {
     "在信箱裡收到產品更新、新模版、設計系統與大使活動。選填——可以跳過。",
   "settings.onboardingConnectTitle": "選擇執行方式",
   "settings.onboardingConnectBody": "",
-  "settings.onboardingCloudTitle": "登入 OpenDesign",
-  "settings.onboardingCloudBody":
-    "登入後可直接用雲端 AI 開始設計，無需任何複雜設定。",
-  "settings.onboardingCloudSignIn": "登入 OpenDesign 雲端",
-  "settings.onboardingCloudContinue": "繼續（已登入）",
+  "settings.onboardingCloudTitle": "歡迎使用 Design Loom",
+  "settings.onboardingCloudBody": "一款獨立的本機設計工具。可使用本機代理、自己的 API 金鑰，或第三方 OpenDesign Cloud。",
+  "settings.onboardingCloudSignIn": "登入 OpenDesign Cloud",
+  "settings.onboardingCloudContinue": "OpenDesign Cloud · 繼續（已登入）",
   "settings.onboardingCloudAlternative": "使用本機 CLI 或自己的 API Key",
-  "settings.onboardingCloudRights": "保留所有權利。",
+  "settings.onboardingCloudRights": "基於 OpenDesign",
   "settings.onboardingCloudOr": "或",
   "settings.onboardingGateTooltipNoRuntime":
     "後續流程由 AI 執行，請先選擇一種執行方式。",

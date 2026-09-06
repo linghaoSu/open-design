@@ -73,6 +73,65 @@ describe('DesignRuntimePanel', () => {
     expect(provider.compileProjectDesignRuntime).not.toHaveBeenCalled();
   });
 
+  it.each(['components', 'empty registry', 'unlocked authoring baseline', 'exact lock'] as const)(
+    'does not re-offer legacy migration for %s even when all original HTML assets remain',
+    async (kind) => {
+      const state = kind === 'components' ? designRuntimeState() : {
+        ...emptyDesignRuntimeState(4),
+        registry: { schemaVersion: 1 as const, id: 'test', components: [] },
+      };
+      const exactVersion = {
+        designSystemId: 'test', version: '1.0.0', digest: `sha256:${'a'.repeat(64)}`,
+        source: { type: 'bundle' as const, digest: `sha256:${'b'.repeat(64)}` },
+      };
+      if (kind === 'unlocked authoring baseline') state.authoringBase = exactVersion;
+      if (kind === 'exact lock') {
+        state.lock.dependencies = [exactVersion];
+        state.dependencies.dependencies = [{ designSystemId: 'test', version: '1.0.0' }];
+      }
+      vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state });
+      render(<DesignRuntimePanel {...panelProps} files={[{ name: 'components.html' }, { name: 'tokens.css' }, { name: 'DESIGN.md' }]} />);
+
+      await openCode();
+      expect(screen.queryByTestId('design-runtime-legacy-html')).toBeNull();
+      expect(screen.queryByTestId('design-runtime-migrate-html')).toBeNull();
+      fireEvent.click(screen.getByTestId('design-runtime-overview-tab'));
+      expect(screen.queryByTestId('design-runtime-start-migration')).toBeNull();
+      const migrationTab = control('design-runtime-migration-tab');
+      expect(migrationTab).toBeDisabled();
+      fireEvent.click(migrationTab);
+      expect(screen.getByTestId('design-runtime-overview-tab')).toHaveAttribute('aria-selected', 'true');
+      expect(screen.queryByTestId('design-runtime-legacy-migration')).toBeNull();
+      expect(provider.compileProjectDesignRuntime).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([false, true])('waits for authoritative state before honoring a migration deep link (structured: %s)', async (structured) => {
+    const read = deferred<ProjectDesignRuntimeResponse>();
+    vi.mocked(provider.getProjectDesignRuntime).mockReturnValue(read.promise);
+    const onState = vi.fn();
+    render(<DesignRuntimePanel {...panelProps} initialTab="migration" onState={onState} files={[{ name: 'components.html' }, { name: 'tokens.css' }]} />);
+    expect(screen.queryByTestId('design-runtime-legacy-migration')).toBeNull();
+    expect(control('design-runtime-migration-tab')).toBeDisabled();
+
+    // A migrated token-only system remains structured after its lock is cleared.
+    const state = emptyDesignRuntimeState(structured ? 4 : 0);
+    if (structured) state.registry = { schemaVersion: 1, id: 'test', components: [] };
+    await act(async () => { read.resolve({ state }); await read.promise; });
+    expect(onState).toHaveBeenCalledWith(state);
+    if (structured) {
+      expect(screen.getByTestId('design-runtime-overview-tab')).toHaveAttribute('aria-selected', 'true');
+      expect(screen.queryByTestId('design-runtime-legacy-migration')).toBeNull();
+      expect(screen.queryByTestId('design-runtime-start-migration')).toBeNull();
+      expect(control('design-runtime-migration-tab')).toBeDisabled();
+    } else {
+      expect(screen.getByTestId('design-runtime-migration-tab')).toHaveAttribute('aria-selected', 'true');
+      expect(screen.getByTestId('legacy-step-name')).toBeVisible();
+      expect(screen.queryByTestId('legacy-review-result')).toBeNull();
+    }
+    expect(provider.compileProjectDesignRuntime).not.toHaveBeenCalled();
+  });
+
   it('starts on the overview with setup choices and keeps advanced tools out of the initial view', async () => {
     vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state: emptyDesignRuntimeState() });
     render(<DesignRuntimePanel {...panelProps} />);
@@ -199,7 +258,7 @@ describe('DesignRuntimePanel', () => {
     render(<DesignRuntimePanel {...panelProps} />);
     await waitFor(() => expect(screen.getByTestId('design-runtime-code-tab')).toHaveAttribute('aria-selected', 'true'));
     expect(screen.getByText('No components yet. Choose component files above to add your first.')).toBeVisible();
-    expect(screen.getByTestId('design-runtime-start-migration')).not.toBeVisible();
+    expect(screen.queryByTestId('design-runtime-start-migration')).toBeNull();
   });
 
   it('explains an active token-only version and disables registration until its dependency is managed', async () => {

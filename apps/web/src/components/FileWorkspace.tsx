@@ -111,6 +111,7 @@ import {
   type LocalizedText,
   type WorkspaceCollabContext,
   type WorkspaceContextItem,
+  type ProjectDesignRuntimeState,
 } from '@open-design/contracts';
 import {
   notifyTeamProjectsChanged,
@@ -121,7 +122,8 @@ import { createTerminal, killTerminal, listPlugins, moveWorkspaceProject } from 
 import { MoveToTeamConfirmDialog, moveConfirmSkipped } from './MoveToTeamConfirmDialog';
 import { DesignFilesPanel, type DesignFilesNavState } from './DesignFilesPanel';
 import { DesignRuntimePanel } from './DesignRuntimePanel';
-import { legacyHtmlDesignSources } from './DesignRuntimeLegacyMigration';
+import { hasStructuredDesignSystem, legacyHtmlDesignSources } from './DesignRuntimeLegacyMigration';
+import { getProjectDesignRuntime } from '../providers/design-runtime';
 import {
   DesignBrowserPanel,
   labelFromUrl,
@@ -1517,6 +1519,29 @@ export function FileWorkspace({
   const openFileRef = useRef<(name: string) => void>(() => {});
   const componentPreviewScope = JSON.stringify([projectId, workspaceAccountScopedCacheKey(workspaceContext)]);
   const legacyHtmlSources = useMemo(() => legacyHtmlDesignSources(files), [files]);
+  const runtimeStatusScope = JSON.stringify([componentPreviewScope, viewerOnly]);
+  const runtimeStatusScopeRef = useRef({ key: runtimeStatusScope, generation: 0 });
+  if (runtimeStatusScopeRef.current.key !== runtimeStatusScope) runtimeStatusScopeRef.current = { key: runtimeStatusScope, generation: runtimeStatusScopeRef.current.generation + 1 };
+  const runtimeStatusGeneration = runtimeStatusScopeRef.current.generation;
+  const [runtimeStatus, setRuntimeStatus] = useState<{ generation: number; structured: boolean } | null>(null);
+  const runtimeStatusSequence = useRef(0);
+  const hasLegacyHtmlSources = legacyHtmlSources.length > 0;
+  const adoptRuntimeStatus = (next: ProjectDesignRuntimeState) => {
+    if (runtimeStatusScopeRef.current.generation !== runtimeStatusGeneration) return;
+    ++runtimeStatusSequence.current;
+    setRuntimeStatus({ generation: runtimeStatusGeneration, structured: hasStructuredDesignSystem(next) });
+  };
+  useEffect(() => {
+    if (!hasLegacyHtmlSources) return;
+    setRuntimeStatus(null);
+    const abort = new AbortController(); const sequence = ++runtimeStatusSequence.current;
+    void getProjectDesignRuntime({ projectId, workspaceContext, signal: abort.signal }).then(({ state }) => {
+      if (!abort.signal.aborted && sequence === runtimeStatusSequence.current && runtimeStatusScopeRef.current.generation === runtimeStatusGeneration) {
+        setRuntimeStatus({ generation: runtimeStatusGeneration, structured: hasStructuredDesignSystem(state) });
+      }
+    }).catch(() => { /* The normal Design system entry retains its explicit retry/error surface. */ });
+    return () => abort.abort();
+  }, [runtimeStatusScope, hasLegacyHtmlSources]);
   const componentPreviewSequence = useRef(0);
   const [componentPreviewRequest, setComponentPreviewRequest] = useState<{
     scope: string; name: string; request: { exportName?: string; nonce: number };
@@ -3363,9 +3388,9 @@ export function FileWorkspace({
   const stableOpenFileReplacing = useStableHandler(openFileReplacing);
   const renderFileViewer = (file: ProjectFile, workspaceActive: boolean) => (
     <>
-    {workspaceActive && legacyHtmlSources.includes(file.name) ? <aside data-testid="file-legacy-design-migration" style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-      <span style={{ flex: '1 1 240px', fontSize: 12, color: 'var(--text-muted)' }}>{t('designWorkspace.legacyHtmlHint')}</span>
-      <Button onClick={() => { setMigrationEntryScope(componentPreviewScope); setDesignRuntimeOpen(true); }}>{t('designWorkspace.openMigration')}</Button>
+    {workspaceActive && legacyHtmlSources.includes(file.name) && runtimeStatus?.generation === runtimeStatusGeneration ? <aside data-testid={runtimeStatus.structured ? 'file-structured-design-system' : 'file-legacy-design-migration'} style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+      <span style={{ flex: '1 1 240px', fontSize: 12, color: 'var(--text-muted)' }}>{t(runtimeStatus.structured ? 'designWorkspace.existingHint' : 'designWorkspace.legacyHtmlHint')}</span>
+      <Button onClick={() => { setMigrationEntryScope(runtimeStatus.structured ? null : componentPreviewScope); setDesignRuntimeOpen(true); }}>{t(runtimeStatus.structured ? 'designRuntime.title' : 'designWorkspace.openMigration')}</Button>
     </aside> : null}
     <FileViewer
       projectId={projectId}
@@ -4162,6 +4187,7 @@ export function FileWorkspace({
         onClose={() => { setDesignRuntimeOpen(false); setMigrationEntryScope(null); }}
         onOpenSource={openComponentSource}
         initialTab={migrationEntryScope === componentPreviewScope ? 'migration' : undefined}
+        onState={adoptRuntimeStatus}
       /> : null}
       {!initialMaterializationPending && launcherOpen ? (
         <TabLauncherMenu

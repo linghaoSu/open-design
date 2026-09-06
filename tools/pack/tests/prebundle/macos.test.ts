@@ -1,7 +1,10 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
@@ -21,6 +24,39 @@ import {
   shouldInstallInternalPackageForMacPrebundle,
   shouldUseMacStandalonePrebundle,
 } from "@/mac/prebundle.js";
+
+// Materialize the installed runtime closure into an OS temp directory. No
+// workspace symlinks or NODE_PATH fallback can make the preview probe pass.
+async function copyInstalledPackageClosure(appRoot: string, packageNames: string[], importer: string): Promise<void> {
+  const copied = new Set<string>();
+  async function copyPackage(name: string, from: string, nodeModules = join(appRoot, "node_modules"), optional = false): Promise<void> {
+    const require = createRequire(from);
+    let manifestPath: string | null = null;
+    for (const directory of require.resolve.paths(name) ?? []) {
+      const candidate = join(directory, name, "package.json");
+      if (await readFile(candidate).then(() => true, () => false)) { manifestPath = await realpath(candidate); break; }
+    }
+    if (!manifestPath) { if (optional) return; throw new Error(`Missing installed runtime package ${name}`); }
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+      version: string; dependencies?: Record<string, string>; optionalDependencies?: Record<string, string>;
+    };
+    const identity = `${encodeURIComponent(name)}@${manifest.version}`;
+    const packageModules = join(appRoot, "node_modules", ".runtime", identity, "node_modules");
+    const target = join(packageModules, name);
+    const link = join(nodeModules, name);
+    await mkdir(dirname(link), { recursive: true });
+    await symlink(relative(dirname(link), target), link).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'EEXIST') throw error; });
+    if (copied.has(identity)) return;
+    copied.add(identity);
+    await mkdir(dirname(target), { recursive: true });
+    await cp(dirname(manifestPath), target, { dereference: true, recursive: true });
+    for (const dependency of Object.keys(manifest.dependencies ?? {})) {
+      await copyPackage(dependency, manifestPath, packageModules, Object.hasOwn(manifest.optionalDependencies ?? {}, dependency));
+    }
+    for (const dependency of Object.keys(manifest.optionalDependencies ?? {})) await copyPackage(dependency, manifestPath, packageModules, true);
+  }
+  for (const name of packageNames) await copyPackage(name, importer);
+}
 
 describe("mac standalone prebundle policy", () => {
   it("is enabled only for standalone web output", () => {
@@ -192,6 +228,60 @@ describe("mac standalone prebundle policy", () => {
       ).toBe(false);
     },
   );
+
+  it("builds React and Vue previews from real runtime packages beside an isolated split daemon chunk", async () => {
+    const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
+    const root = await mkdtemp(join(tmpdir(), "design-loom-preview-runtime-"));
+    const appRoot = join(root, "app");
+    const outdir = join(appRoot, "prebundled", "daemon");
+    const previewModule = join(workspaceRoot, "apps/daemon/src/services/design-runtime/preview-bundler.ts");
+    const runtimeNames = ["@vue/compiler-sfc", "esbuild", "react", "react-dom", "vue"] as const;
+    try {
+      const daemonManifest = JSON.parse(await readFile(join(workspaceRoot, "apps/daemon/package.json"), "utf8"));
+      for (const name of runtimeNames) expect(MAC_PREBUNDLE_RUNTIME_DEPENDENCIES[name]).toBe(daemonManifest.dependencies[name]);
+      await copyInstalledPackageClosure(appRoot, [...runtimeNames], join(workspaceRoot, "apps/daemon/package.json"));
+      await writeFile(join(root, "first.ts"), `export { bundleComponentPreview, bundleDesignPreview } from ${JSON.stringify(previewModule)};`);
+      await writeFile(join(root, "second.ts"), `export { bundleComponentPreview } from ${JSON.stringify(previewModule)};`);
+      const built = await build({
+        entryPoints: [join(root, "first.ts"), join(root, "second.ts")],
+        outdir, entryNames: "[name]", chunkNames: "chunks/[name]-[hash]", outExtension: { ".js": ".mjs" },
+        bundle: true, splitting: true, platform: "node", format: "esm", target: MAC_PREBUNDLE_ESBUILD_TARGET,
+        banner: { js: MAC_DAEMON_PREBUNDLE_ESM_REQUIRE_BANNER },
+        external: [...MAC_PREBUNDLE_POLICIES.daemonSidecar.externals], metafile: true, logLevel: "silent",
+      });
+      const previewOutput = Object.entries(built.metafile.outputs).find(([, output]) =>
+        Object.keys(output.inputs).some((input) => input.endsWith("/preview-bundler.ts")))?.[0];
+      expect(previewOutput).toContain("/prebundled/daemon/chunks/");
+      const probe = join(root, "probe.mjs");
+      await writeFile(probe, `
+        import { bundleComponentPreview, bundleDesignPreview } from './app/prebundled/daemon/first.mjs';
+        const authority = { readProjectSource: async () => { throw new Error('No project imports'); } };
+        const react = await bundleComponentPreview({sourcePath:'Card.tsx', exportName:'Card', sourceText:'export function Card(){return <button>Isolated React</button>}',props:{},callbacks:[]}, authority);
+        const vue = await bundleDesignPreview({sourcePath:'Card.vue',exportName:'default',language:'vue',content:'<script setup>const label="Isolated Vue"</script><template><button>{{label}}</button></template><style scoped>button{color:red}</style>'},
+          {versions:[],projectSources:[],projectCodeIndex:{components:[]},baseCodeIndex:{components:[]},targetPackages:[]}, 'semantic-design', authority);
+        const summarize = async (result) => ({bundle:!!result.bundle,css:result.bundle?.css,diagnostics:result.diagnostics,packages:[...new Set(result.sourceEvidence.map(e=>e.packageName).filter(Boolean))],verified:await result.verifyInstalledSources()});
+        console.log(JSON.stringify({react:await summarize(react),vue:await summarize(vue)}));
+      `);
+      const { stdout } = await promisify(execFile)(process.execPath, [probe], {
+        cwd: root, env: { ...process.env, NODE_PATH: "" }, timeout: 30_000,
+      });
+      const result = JSON.parse(stdout);
+      expect(result.react).toMatchObject({ bundle: true, diagnostics: [], verified: true });
+      expect(result.react.packages).toEqual(expect.arrayContaining(["react", "react-dom", "scheduler"]));
+      expect(result.vue).toMatchObject({ bundle: true, diagnostics: [], verified: true });
+      expect(result.vue.packages).toEqual(expect.arrayContaining(["vue", "@vue/runtime-dom", "@vue/runtime-core"]));
+      expect(result.vue.css).toContain("color:red");
+      // Removing an installed framework must fail, rather than finding the
+      // developer checkout's copy and hiding an incomplete app payload.
+      await rm(join(appRoot, "node_modules", "react"));
+      const missing = await promisify(execFile)(process.execPath, [probe], {
+        cwd: root, env: { ...process.env, NODE_PATH: "" }, timeout: 30_000,
+      });
+      const missingReact = JSON.parse(missing.stdout).react;
+      expect(missingReact.bundle).toBe(false);
+      expect(missingReact.diagnostics.some((entry: { message: string }) => entry.message.includes("react is not installed"))).toBe(true);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  }, 45_000);
 });
 
 describe("findForbiddenMacPrebundleInputs", () => {

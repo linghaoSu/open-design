@@ -1363,6 +1363,63 @@ describe('FileWorkspace upload input', () => {
 });
 
 describe('FileWorkspace launcher tab creation', () => {
+  it('opens the existing system after an unlocked migration state is adopted and reloaded', async () => {
+    const html = workspaceFile('components.html');
+    mockedFetchProjectFileText.mockResolvedValue('<html><body>Original inventory</body></html>');
+    const read = vi.spyOn(designRuntimeProvider, 'getProjectDesignRuntime').mockResolvedValue({ state: emptyDesignRuntimeState() });
+    function Harness() {
+      const [tabsState, setTabsState] = useState<OpenTabsState>({ tabs: [html.name], active: html.name });
+      return <FileWorkspace projectId="project-1" projectKind="prototype" files={[html, workspaceFile('tokens.css')]} liveArtifacts={[]}
+        onRefreshFiles={vi.fn()} isDeck={false} tabsState={tabsState} onTabsStateChange={setTabsState} />;
+    }
+    const view = render(<Harness />);
+    fireEvent.click(within(await screen.findByTestId('file-legacy-design-migration')).getByRole('button', { name: 'Review existing files' }));
+    await waitFor(() => expect(screen.getByTestId('legacy-step-name')).toBeVisible());
+    const existing = designRuntimeState(4); expect(existing.lock.dependencies).toEqual([]);
+    read.mockResolvedValue({ state: existing });
+    fireEvent.click(within(screen.getByTestId('design-runtime-panel')).getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(screen.getByTestId('design-runtime-overview-tab')).toHaveAttribute('aria-selected', 'true'));
+    expect(screen.queryByTestId('legacy-step-name')).toBeNull();
+    fireEvent.click(within(screen.getByTestId('design-runtime-panel')).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByTestId('file-legacy-design-migration')).toBeNull();
+    expect(screen.getByTestId('file-structured-design-system')).toBeVisible();
+    view.unmount(); render(<Harness />);
+    const notice = await screen.findByTestId('file-structured-design-system');
+    expect(screen.queryByTestId('file-legacy-design-migration')).toBeNull();
+    fireEvent.click(within(notice).getByRole('button', { name: 'Design system' }));
+    await waitFor(() => expect(screen.getByTestId('design-runtime-code-tab')).toHaveAttribute('aria-selected', 'true'));
+    expect(screen.queryByTestId('legacy-step-name')).toBeNull();
+  });
+
+  it('aborts legacy eligibility reads at a permission boundary and ignores an old empty-state response', async () => {
+    const html = workspaceFile('components.html');
+    mockedFetchProjectFileText.mockResolvedValue('<html><body>Original inventory</body></html>');
+    let finishOld!: (value: Awaited<ReturnType<typeof designRuntimeProvider.getProjectDesignRuntime>>) => void;
+    const read = vi.spyOn(designRuntimeProvider, 'getProjectDesignRuntime')
+      .mockImplementationOnce(() => new Promise((resolve) => { finishOld = resolve; }))
+      .mockRejectedValueOnce(new Error('Permission denied'))
+      .mockResolvedValue({ state: designRuntimeState() });
+    const owner = teamContext('workspace-a', 'member-a');
+    const viewer: WorkspaceCollabContext = { ...owner, role: 'member', permissions: { ...buildWorkspacePermissions({ role: 'member', lifecycleState: 'active' }), canWriteSyncedFiles: false } };
+    const surface = (context: WorkspaceCollabContext, viewerOnly = false) => <CollabProvider value={collabValue(context)}><FileWorkspace
+      projectId="project-1" projectKind="prototype" files={[html, workspaceFile('tokens.css')]} liveArtifacts={[]} viewerOnly={viewerOnly}
+      onRefreshFiles={vi.fn()} isDeck={false} tabsState={{ tabs: [html.name], active: html.name }} onTabsStateChange={vi.fn()} /></CollabProvider>;
+    const view = render(surface(owner));
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+    const oldSignal = read.mock.calls[0]![0].signal;
+    expect(screen.queryByTestId('file-legacy-design-migration')).toBeNull();
+    view.rerender(surface(viewer, true));
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    expect(oldSignal?.aborted).toBe(true);
+    expect(read.mock.calls[1]![0].workspaceContext).toEqual(viewer);
+    await act(async () => { finishOld({ state: emptyDesignRuntimeState() }); });
+    expect(screen.queryByTestId('file-legacy-design-migration')).toBeNull();
+    expect(screen.queryByTestId('file-structured-design-system')).toBeNull();
+    view.rerender(surface(owner));
+    expect(await screen.findByTestId('file-structured-design-system')).toBeVisible();
+    expect(screen.queryByTestId('file-legacy-design-migration')).toBeNull();
+  });
+
   it('offers migration while viewing a legacy design inventory and preserves the actual HTML frame', async () => {
     const html = workspaceFile('components.html');
     mockedFetchProjectFileText.mockResolvedValue('<html><body>Original component inventory</body></html>');

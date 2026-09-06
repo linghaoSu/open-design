@@ -626,13 +626,12 @@ export const zhCN: Dict = {
     "留下邮箱，接收产品更新、新模板、设计系统资源和社区活动。",
   "settings.onboardingConnectTitle": "选择运行方式",
   "settings.onboardingConnectBody": "",
-  "settings.onboardingCloudTitle": "登录 OpenDesign",
-  "settings.onboardingCloudBody":
-    "登录后可直接用云端 AI 开始设计，无需任何复杂配置。",
-  "settings.onboardingCloudSignIn": "登录 OpenDesign",
-  "settings.onboardingCloudContinue": "继续（已登录）",
+  "settings.onboardingCloudTitle": "欢迎使用 Design Loom",
+  "settings.onboardingCloudBody": "一款独立的本地设计工具。可使用本地智能体、自己的 API 密钥，或第三方 OpenDesign Cloud。",
+  "settings.onboardingCloudSignIn": "登录 OpenDesign Cloud",
+  "settings.onboardingCloudContinue": "OpenDesign Cloud · 继续（已登录）",
   "settings.onboardingCloudAlternative": "使用本地 CLI 或自己的 API Key",
-  "settings.onboardingCloudRights": "保留所有权利。",
+  "settings.onboardingCloudRights": "基于 OpenDesign",
   "settings.onboardingCloudOr": "或",
   "settings.onboardingGateTooltipNoRuntime":
     "后续流程由 AI 运行，请先选择一种运行方式。",

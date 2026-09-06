@@ -748,7 +748,7 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
     const props = renderHome({ config, amrLoggedIn: false });
 
     expect(
-      await screen.findByRole('heading', { name: 'Sign in to OpenDesign' }),
+      await screen.findByRole('heading', { name: 'Welcome to Design Loom' }),
     ).toBeTruthy();
     expect(window.location.pathname).toBe('/onboarding');
     expect(props.onConfigPersist).not.toHaveBeenCalled();
@@ -773,7 +773,7 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
     expect(await screen.findByTestId('home-hero-input')).toBeTruthy();
     expect(window.location.pathname).toBe('/');
     expect(
-      screen.queryByRole('heading', { name: 'Sign in to OpenDesign' }),
+      screen.queryByRole('heading', { name: 'Welcome to Design Loom' }),
     ).toBeNull();
   });
 
@@ -1497,7 +1497,7 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
       onRefreshAgents: vi.fn(() => [cliAgent()]),
     });
 
-    expect(await screen.findByRole('heading', { name: 'Sign in to OpenDesign' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Welcome to Design Loom' })).toBeTruthy();
     expect(await findCloudSignInButton()).toBeTruthy();
     expect(screen.queryByRole('button', { name: /OpenDesign AMR/i })).toBeNull();
 
@@ -1513,20 +1513,28 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
     expect(screen.queryByText('Sign in to continue')).toBeNull();
   });
 
-  it('shows OpenDesign Cloud as the default connect surface when AMR is available', async () => {
+  it('welcomes users to Design Loom with Local Agent primary and optional third-party Cloud', async () => {
     globalThis.fetch = vi.fn(async () =>
       jsonResponse({ loggedIn: false, profile: 'prod', user: null, configPath: '/x' }),
     ) as typeof fetch;
     renderOnboarding();
 
-    expect(screen.getByRole('heading', { name: 'Sign in to OpenDesign' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Welcome to Design Loom' })).toBeTruthy();
     expect(await findCloudSignInButton()).toBeTruthy();
     // No runtime card, no AMR version text, no "Sign in to continue" CTA.
     expect(screen.queryByRole('button', { name: /OpenDesign AMR/i })).toBeNull();
     expect(screen.queryByText('AMR v0.1.0')).toBeNull();
     expect(screen.queryByRole('button', { name: /Sign in to continue/i })).toBeNull();
     expect(screen.queryByRole('link', { name: /Authorize AMR/i })).toBeNull();
-    // Cloud stays primary while identity-independent setup paths remain available.
+    // Local setup is the first and only primary action; the original Cloud login
+    // and BYOK handlers remain explicit alternatives.
+    const local = screen.getByRole('button', { name: /^Local Agent$/i });
+    expect(document.querySelectorAll('.onboarding-cloud__primary')).toHaveLength(1);
+    expect(document.querySelector('.onboarding-cloud__primary')).toBe(local);
+    expect(screen.getByText(/independent local design tool/i)).toHaveTextContent('third-party OpenDesign Cloud');
+    expect(screen.getByText('Design Loom · Based on OpenDesign')).toBeTruthy();
+    expect(screen.queryByText(/All rights reserved/i)).toBeNull();
+    expect(await screen.findByRole('button', { name: 'Sign in to OpenDesign Cloud' })).toBeTruthy();
     expect(
       (screen.getByRole('button', { name: /Local Agent/i }) as HTMLButtonElement).disabled,
     ).toBe(false);
@@ -1537,6 +1545,22 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
     expect(screen.queryByRole('link', { name: /Authorize AMR/i })).toBeNull();
     expect(screen.queryByText('Not signed in')).toBeNull();
     expect(screen.queryByRole('button', { name: /^Sign in$/i })).toBeNull();
+  });
+
+  it('opens BYOK directly from the welcome page without starting Cloud authentication', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) => jsonResponse({
+      loggedIn: false, profile: 'prod', user: null, configPath: '/x',
+    }));
+    globalThis.fetch = fetchMock as typeof fetch;
+    const props = renderOnboarding();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Bring Your Own Key$/i }));
+
+    expect(await screen.findByRole('heading', { name: 'Bring Your Own Key' })).toBeTruthy();
+    expect(screen.getByLabelText('API key')).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/api/integrations/vela/login'))).toBe(false);
+    expect(props.onCompleteOnboarding).not.toHaveBeenCalled();
+    expect(props.onConfigPersist).not.toHaveBeenCalled();
   });
 
   it('keeps direct Local CLI setup active when delayed status discovers a Cloud login', async () => {
@@ -1786,8 +1810,9 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
     await act(async () => {});
     expect(screen.getByText('Signing in…')).toBeTruthy();
     expect(signIn.hasAttribute('disabled')).toBe(true);
-    expect(screen.queryByRole('button', { name: /Local Agent/i })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Bring Your Own Key/i })).toBeNull();
+    // Keep the three connections visible while login owns the active attempt.
+    expect(screen.getByRole('button', { name: /Local Agent/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Bring Your Own Key/i })).toBeDisabled();
 
     fireEvent.click(screen.getByRole('button', { name: /Cancel sign-in/i }));
     await act(async () => {});
@@ -2476,11 +2501,11 @@ describe('EntryShell onboarding OpenDesign AMR runtime', () => {
       onRefreshAgents: vi.fn(() => [cliAgent()]),
     });
 
-    expect(screen.getByRole('heading', { name: 'Sign in to OpenDesign' })).toBeTruthy();
-    const primary = screen.getByRole('button', { name: /Loading/i });
-    expect(primary).toBeTruthy();
-    expect(primary.getAttribute('aria-busy')).toBe('true');
-    expect((primary as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('heading', { name: 'Welcome to Design Loom' })).toBeTruthy();
+    const cloudSignIn = screen.getByRole('button', { name: /Loading/i });
+    expect(cloudSignIn.getAttribute('aria-busy')).toBe('true');
+    expect(cloudSignIn).toBeDisabled();
+    expect(document.querySelector('.onboarding-cloud__primary')).toHaveTextContent('Local Agent');
     expect(document.querySelector('.onboarding-view__card--skeleton')).toBeNull();
     expect(screen.queryByRole('button', { name: /OpenDesign AMR/i })).toBeNull();
     expect(

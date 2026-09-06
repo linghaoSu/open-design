@@ -29,7 +29,7 @@ import { ProjectStructurePanel } from './ProjectStructurePanel';
 import { DesignRuntimeValidationPanel } from './DesignRuntimeValidationPanel';
 import { DesignSystemVersionsPanel } from './DesignSystemVersionsPanel';
 import { DesignRuntimeSourceSelections } from './DesignRuntimeSourceSelections';
-import { DesignRuntimeLegacyMigration, isLegacyDesignSource, legacyHtmlDesignSources } from './DesignRuntimeLegacyMigration';
+import { DesignRuntimeLegacyMigration, hasStructuredDesignSystem, isLegacyDesignSource, legacyHtmlDesignSources } from './DesignRuntimeLegacyMigration';
 import { DesignHandoffPanel } from './DesignHandoffPanel';
 import { DesignPreviewPanel, type DesignPreviewSelection } from './DesignPreviewPanel';
 import { Icon } from './Icon';
@@ -44,6 +44,7 @@ interface Props {
   onClose(): void;
   onOpenSource?(sourcePath: string, exportName?: string): void;
   initialTab?: 'migration';
+  onState?(state: ProjectDesignRuntimeState): void;
 }
 
 type SourceSelection = ProjectDesignRuntimeCompileRequest['selections'][number];
@@ -109,7 +110,7 @@ export function DesignRuntimePanel(props: Props) {
   return <DesignRuntimePanelContent key={scopeKey} {...props} />;
 }
 
-function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerOnly, onClose, onOpenSource, initialTab }: Props) {
+function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerOnly, onClose, onOpenSource, initialTab, onState }: Props) {
   const t = useT();
   const inputId = useId();
   const sourceFiles = files.map(({ name }) => name).filter((name) => /\.(tsx|ts|vue)$/.test(name) && !name.endsWith('.d.ts')).sort();
@@ -132,7 +133,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
   const detailHeading = useRef<HTMLHeadingElement>(null);
   const componentList = useRef<HTMLDivElement>(null);
   const moreMenu = useRef<HTMLDetailsElement>(null);
-  const [migrationOpened, setMigrationOpened] = useState(initialTab === 'migration');
+  const [migrationOpened, setMigrationOpened] = useState(false);
   const [previewOpened, setPreviewOpened] = useState(false);
   const [previewSelection, setPreviewSelection] = useState<DesignPreviewSelection>();
   const openPreview = (selection: DesignPreviewSelection) => { setPreviewSelection(selection); setPreviewOpened(true); setTab('preview'); };
@@ -140,6 +141,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
   const [versionsOpened, setVersionsOpened] = useState(false);
   const [validationOpened, setValidationOpened] = useState(false);
   function navigate(next: RuntimeTab) {
+    if (next === 'migration' && (!state || hasStructuredDesignSystem(state))) next = 'overview';
     if (next === 'migration') setMigrationOpened(true);
     if (next === 'versions') setVersionsOpened(true);
     if (next === 'validation') setValidationOpened(true);
@@ -166,6 +168,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
   const visibleComponents = state?.registry?.components.filter((component) =>
     `${component.name} ${component.source?.exportName ?? ''} ${component.id}`.toLowerCase().includes(searchQuery)) ?? [];
   const registryLocked = !!state?.lock.dependencies.length;
+  const canMigrate = !!state && !hasStructuredDesignSystem(state);
   const legacyHtmlSources = legacyHtmlDesignSources(files, state?.registry?.components.flatMap((component) => component.source?.sourcePath ? [component.source.sourcePath] : []) ?? []);
   const hasLegacyFiles = legacyHtmlSources.length > 0 || files.some((file) => file.type !== 'dir' && !/\.html?$/i.test(file.name) && isLegacyDesignSource(file.name));
   const previewSource = selectedComponent?.source?.exportName && /\.[jt]sx$/.test(selectedComponent.source.sourcePath ?? '')
@@ -199,12 +202,16 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
 
   function adoptState(nextState: ProjectDesignRuntimeState, initialize = false) {
     setState(nextState);
+    onState?.(nextState);
     if (initialize) {
-      setTab(initialTab ?? (nextState.registry ? 'code' : 'overview'));
+      const startMigration = initialTab === 'migration' && !hasStructuredDesignSystem(nextState);
+      setTab(initialTab === 'migration' ? startMigration ? 'migration' : 'overview' : nextState.registry ? 'code' : 'overview');
+      setMigrationOpened(startMigration);
       if (nextState.registry) setDesignSystemId(nextState.registry.id);
       const nextSelections = sourceSelections(nextState);
       if (nextSelections.length) setSelections(nextSelections);
     }
+    if (tab === 'migration' && hasStructuredDesignSystem(nextState)) { setTab('overview'); setMigrationOpened(false); }
     if (initialize || !nextState.registry?.components.some((component) => component.id === componentId)) {
       selectComponent(nextState.registry?.components[0]?.id ?? '', nextState);
     }
@@ -350,7 +357,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
         <details ref={moreMenu} className={styles.more} data-testid="design-runtime-more">
           <summary className={styles.moreTrigger} data-active={!['overview', 'code', 'preview'].includes(tab)}>{t('designWorkspace.more')}<Icon name="chevron-down" size={12} /></summary>
           <div className={styles.moreMenu}>
-            {(['migration', 'versions', 'structure', 'validation', 'handoff'] as const).map((id) => <Button key={id} variant="ghost" className={styles.tab} role="tab" id={`${inputId}-${id}-tab`} aria-controls={`${inputId}-${id}`} aria-selected={tab === id} disabled={busy || structureBusy} data-testid={`design-runtime-${id}-tab`} onClick={() => navigate(id)}>{id === 'migration' ? t('designWorkspace.migrateTitle') : id === 'versions' ? t('designVersions.title') : id === 'structure' ? t('projectStructure.title') : id === 'validation' ? t('designValidation.title') : t('designHandoff.title')}</Button>)}
+            {(['migration', 'versions', 'structure', 'validation', 'handoff'] as const).map((id) => <Button key={id} variant="ghost" className={styles.tab} role="tab" id={`${inputId}-${id}-tab`} aria-controls={`${inputId}-${id}`} aria-selected={tab === id} disabled={busy || structureBusy || id === 'migration' && !canMigrate} data-testid={`design-runtime-${id}-tab`} onClick={() => navigate(id)}>{id === 'migration' ? t('designWorkspace.migrateTitle') : id === 'versions' ? t('designVersions.title') : id === 'structure' ? t('projectStructure.title') : id === 'validation' ? t('designValidation.title') : t('designHandoff.title')}</Button>)}
           </div>
         </details>
       </div>
@@ -359,7 +366,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
       {busy ? <p role="status">{t('common.loading')}</p> : null}
       {error ? <p className={styles.error} role="alert">{error}</p> : null}
       {message ? <p className={styles.notice} role="status">{message}</p> : null}
-      {state && !registryLocked && legacyHtmlSources.length > 0 && (tab === 'overview' || tab === 'code') ? <div className={styles.repair} data-testid="design-runtime-legacy-html">
+      {canMigrate && legacyHtmlSources.length > 0 && (tab === 'overview' || tab === 'code') ? <div className={styles.repair} data-testid="design-runtime-legacy-html">
         <Icon name="folder-transfer" size={18} /><div><strong>{t('designWorkspace.legacyHtmlTitle')}</strong><p>{t('designWorkspace.legacyHtmlHint')}</p><p><code>{legacyHtmlSources.join(', ')}</code></p></div>
         <Button disabled={busy || structureBusy} data-testid="design-runtime-migrate-html" onClick={() => navigate('migration')}>{t('designWorkspace.openMigration')}</Button>
       </div> : null}
@@ -531,7 +538,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
         {handoffOpened && state ? <DesignHandoffPanel scope={scope} state={state} files={files} viewerOnly={viewerOnly} externalBusy={busy} onState={(next) => adoptState(next)} onBusyChange={setStructureBusy} /> : null}
       </div>
       <div id={`${inputId}-migration`} role="tabpanel" aria-labelledby={`${inputId}-migration-tab`} hidden={tab !== 'migration'}>
-        {migrationOpened ? <DesignRuntimeLegacyMigration scope={scope} state={state} files={files} viewerOnly={viewerOnly} externalBusy={busy} onState={(next) => { adoptState(next); setError(''); setDiagnostics(null); }} onBusyChange={setStructureBusy} /> : null}
+        {migrationOpened && canMigrate ? <DesignRuntimeLegacyMigration scope={scope} state={state} files={files} viewerOnly={viewerOnly} externalBusy={busy} onState={(next) => { adoptState(next); setError(''); setDiagnostics(null); }} onBusyChange={setStructureBusy} /> : null}
       </div>
       <div id={`${inputId}-versions`} role="tabpanel" aria-labelledby={`${inputId}-versions-tab`} hidden={tab !== 'versions'}>
         {versionsOpened ? <DesignSystemVersionsPanel scope={scope} state={state} files={files} viewerOnly={viewerOnly} externalBusy={busy} onState={(next) => { adoptState(next); setError(''); setDiagnostics(null); }} onBusyChange={setStructureBusy} onPreview={openPreview} /> : null}
@@ -557,7 +564,7 @@ function DesignSystemOverview({ state, hasLegacyFiles, hasSourceFiles, disabled,
   onRepair(componentId: string, binding: ComponentBinding): void;
 }) {
   const t = useT();
-  const hasSystem = !!state.registry;
+  const hasSystem = hasStructuredDesignSystem(state);
   const componentRefs = new Map((state.registry?.components ?? []).map((component) => [`ds:${state.registry!.id}/${component.id}`, component.id]));
   const connectionIssues = state.bindings.bindings.filter((binding) => binding.status !== 'bound' && componentRefs.has(binding.componentRef));
   return <div className={styles.overview}>
@@ -567,7 +574,7 @@ function DesignSystemOverview({ state, hasLegacyFiles, hasSourceFiles, disabled,
     </div>
     {hasSystem ? <>
       <div className={styles.stats}>
-        <Button variant="ghost" disabled={disabled} onClick={() => onNavigate('code')}><Icon name="blocks" size={18} />{t('designWorkspace.componentsCount', { count: state.registry!.components.length })}<Icon name="chevron-right" size={14} /></Button>
+        <Button variant="ghost" disabled={disabled} onClick={() => onNavigate('code')}><Icon name="blocks" size={18} />{t('designWorkspace.componentsCount', { count: state.registry?.components.length ?? 0 })}<Icon name="chevron-right" size={14} /></Button>
         <Button variant="ghost" disabled={disabled} onClick={() => onNavigate('preview')}><Icon name="layout" size={18} />{t('designWorkspace.screensCount', { count: state.document?.screens.length ?? 0 })}<Icon name="chevron-right" size={14} /></Button>
       </div>
       {connectionIssues.length ? <div className={styles.repair}>
@@ -578,12 +585,12 @@ function DesignSystemOverview({ state, hasLegacyFiles, hasSourceFiles, disabled,
     </> : null}
     {!hasSystem && hasLegacyFiles ? <p className={styles.detected}><Icon name="check" size={16} />{t('designWorkspace.legacyDetected')}</p> : null}
     <div className={styles.choices}>
-      <section className={styles.choice}>
+      {!hasSystem ? <section className={styles.choice}>
         <Icon name="folder-transfer" size={22} />
         <h4>{t('designWorkspace.migrateTitle')}</h4>
         <p>{t('designWorkspace.migrateHint')}</p>
         <Button data-testid="design-runtime-start-migration" variant={!hasSystem && hasLegacyFiles ? 'primary' : 'default'} disabled={disabled} onClick={() => onNavigate('migration')}>{t('designWorkspace.openMigration')}<Icon name="arrow-right" size={14} /></Button>
-      </section>
+      </section> : null}
       <section className={styles.choice}>
         <Icon name="blocks" size={22} />
         <h4>{t('designWorkspace.createTitle')}</h4>

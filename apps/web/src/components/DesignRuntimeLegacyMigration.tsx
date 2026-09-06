@@ -27,6 +27,8 @@ interface Props {
 }
 
 export const isLegacyDesignSource = (name: string) => /(^|\/)(DESIGN\.md|tokens\.css|components\.html)$/i.test(name) || /^system\/variables\.css$/i.test(name);
+export const hasStructuredDesignSystem = (state: ProjectDesignRuntimeState): boolean => state.registry !== null
+  || !!state.authoringBase || state.lock.dependencies.length > 0 || state.dependencies.dependencies.length > 0;
 /** HTML pages alone are not evidence of a design system. Require its inventory
  * name plus adjacent design facts, or an explicit registered component source. */
 export function legacyHtmlDesignSources(files: Props['files'], registeredSources: readonly string[] = []): string[] {
