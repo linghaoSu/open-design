@@ -99,7 +99,18 @@ function generateFiles(count: number): ProjectFile[] {
   });
 }
 
-function renderPanel(
+function categorizedNavState(nav?: DesignFilesNavState): DesignFilesNavState {
+  return {
+    kindFilter: new Set(),
+    currentDir: "",
+    page: 0,
+    pageSize: 30,
+    ...nav,
+    viewMode: "categories",
+  };
+}
+
+function renderCategorizedPanel(
   files: ProjectFile[],
   overrides: Partial<ComponentProps<typeof DesignFilesPanel>> = {},
 ) {
@@ -124,6 +135,7 @@ function renderPanel(
       onNewSketch={vi.fn()}
       onClearUploadError={onClearUploadError}
       {...overrides}
+      navState={categorizedNavState(overrides.navState)}
     />,
   );
   return { ...result, onDeleteFiles, onOpenFile, onClearUploadError };
@@ -148,7 +160,7 @@ describe("DesignFilesPanel sections", () => {
   });
 
   it("does not show grouping, sort, filter, or pagination chrome", () => {
-    renderPanel(generateFiles(60));
+    renderCategorizedPanel(generateFiles(60));
 
     expect(screen.queryByRole("group", { name: "Group by" })).toBeNull();
     expect(document.querySelector(".df-table")).toBeNull();
@@ -159,7 +171,7 @@ describe("DesignFilesPanel sections", () => {
   });
 
   it("renders a single-line toolbar with no up/refresh buttons, and no new-document/upload actions once files exist", () => {
-    renderPanel([file({ name: "page.html", kind: "html" })]);
+    renderCategorizedPanel([file({ name: "page.html", kind: "html" })]);
 
     expect(document.querySelector(".df-topbar")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Up" })).toBeNull();
@@ -178,7 +190,7 @@ describe("DesignFilesPanel sections", () => {
     const onPaste = vi.fn();
     const onUpload = vi.fn();
 
-    renderPanel([], {
+    renderCategorizedPanel([], {
       onNewSketch,
       onOpenBrowser,
       onCreateDesignSystem,
@@ -206,7 +218,7 @@ describe("DesignFilesPanel sections", () => {
     const onPaste = vi.fn();
     const onUpload = vi.fn();
 
-    renderPanel([], {
+    renderCategorizedPanel([], {
       viewerOnly: true,
       onNewSketch,
       onOpenBrowser,
@@ -242,7 +254,7 @@ describe("DesignFilesPanel sections", () => {
   });
 
   it("groups files into category tabs and shows one group at a time", () => {
-    renderPanel([
+    renderCategorizedPanel([
       file({ name: "page.html", kind: "html", mime: "text/html" }),
       file({ name: "chart.png", kind: "image", mime: "image/png" }),
     ]);
@@ -259,7 +271,7 @@ describe("DesignFilesPanel sections", () => {
   });
 
   it("splits stylesheets into their own tab with a Stylesheet subtitle", () => {
-    renderPanel([
+    renderCategorizedPanel([
       file({ name: "styles.css", kind: "code", mime: "text/css" }),
       file({ name: "app.ts", kind: "code", mime: "text/typescript" }),
     ]);
@@ -280,7 +292,7 @@ describe("DesignFilesPanel sections", () => {
     // Images now render as bare masonry cards without a meta strip, so the
     // list-row size/subtitle contract is asserted on a stylesheet file, which
     // still renders as a compact row.
-    renderPanel([
+    renderCategorizedPanel([
       file({ name: 'styles.css', kind: 'code', mime: 'text/css', size: 4096 }),
     ]);
 
@@ -293,7 +305,7 @@ describe("DesignFilesPanel sections", () => {
   // useful-info tip; drag & drop still works via the df-drop-overlay, which
   // the drag-and-drop suite above covers.
   it("renders no footer info strip", () => {
-    renderPanel([file({ name: "page.html", kind: "html" })]);
+    renderCategorizedPanel([file({ name: "page.html", kind: "html" })]);
 
     expect(document.querySelector(".df-footer-info")).toBeNull();
     expect(document.querySelector(".df-drop-hint")).toBeNull();
@@ -304,7 +316,7 @@ describe("DesignFilesPanel large list", () => {
   afterEach(() => cleanup());
 
   it("renders every entry of the active tab at once (no pagination)", () => {
-    const { container } = renderPanel(generateFiles(500));
+    const { container } = renderCategorizedPanel(generateFiles(500));
     // 500 files cycle through 6 kinds; the default Pages tab holds the
     // ⌈500/6⌉ = 84 html files, all rendered as page cards without pagination.
     expect(container.querySelectorAll(".df-card-grid .df-card").length).toBe(84);
@@ -314,7 +326,7 @@ describe("DesignFilesPanel large list", () => {
   it("renders 500 files within a reasonable time", () => {
     const files = generateFiles(500);
     const start = performance.now();
-    renderPanel(files);
+    renderCategorizedPanel(files);
     const elapsed = performance.now() - start;
     expect(elapsed).toBeLessThan(2000);
   });
@@ -325,7 +337,7 @@ describe("DesignFilesPanel selection", () => {
 
   it("shows the batch bar and passes every selected file to batch delete", () => {
     const files = generateFiles(3);
-    const { container, onDeleteFiles } = renderPanel(files);
+    const { container, onDeleteFiles } = renderCategorizedPanel(files);
 
     // Selection spans category tabs: pick one file on the default Pages tab
     // and a second one behind the Images tab. Both categories render as cards
@@ -403,6 +415,7 @@ describe("DesignFilesPanel selection", () => {
       >
         <DesignFilesPanel
           projectId="test-project"
+          navState={categorizedNavState()}
           projectKind="prototype"
           files={files}
           liveArtifacts={[]}
@@ -448,7 +461,7 @@ describe("DesignFilesPanel selection", () => {
 
   it("does not open files from card controls", () => {
     const files = generateFiles(1);
-    const { container, onOpenFile } = renderPanel(files);
+    const { container, onOpenFile } = renderCategorizedPanel(files);
     const card = container.querySelector(".df-card")!;
 
     fireEvent.click(card.querySelector(".df-card-check")!);
@@ -469,7 +482,7 @@ describe("DesignFilesPanel selection", () => {
       value: { writeText },
     });
     try {
-      const { container } = renderPanel([
+      const { container } = renderCategorizedPanel([
         file({
           name: "alpha.html",
           localPath: "/tmp/open-design/projects/test-project/alpha.html",
@@ -502,7 +515,7 @@ describe("DesignFilesPanel selection", () => {
   // double-click step.
   it("opens the file from a single click on the card thumb", () => {
     const files = generateFiles(1);
-    const { container, onOpenFile } = renderPanel(files);
+    const { container, onOpenFile } = renderCategorizedPanel(files);
     const card = container.querySelector(".df-card")!;
 
     fireEvent.click(card.querySelector(".df-card-thumb")!);
@@ -511,7 +524,7 @@ describe("DesignFilesPanel selection", () => {
   });
 
   it("opens the image from a single click on its masonry card", () => {
-    const { container, onOpenFile } = renderPanel([
+    const { container, onOpenFile } = renderCategorizedPanel([
       file({ name: "shot.png", kind: "image", mime: "image/png" }),
     ]);
     clickTab("cat:image");
@@ -522,7 +535,7 @@ describe("DesignFilesPanel selection", () => {
   });
 
   it("reserves a full thumbnail skeleton until masonry image bytes load", () => {
-    const { container } = renderPanel([
+    const { container } = renderCategorizedPanel([
       file({ name: "slow-shot.png", kind: "image", mime: "image/png" }),
     ]);
     clickTab("cat:image");
@@ -540,7 +553,7 @@ describe("DesignFilesPanel selection", () => {
   });
 
   it("opens the file from a single click on a list row's name", () => {
-    const { container, onOpenFile } = renderPanel([
+    const { container, onOpenFile } = renderCategorizedPanel([
       file({ name: "notes.txt", kind: "text", mime: "text/plain" }),
     ]);
 
@@ -553,7 +566,7 @@ describe("DesignFilesPanel selection", () => {
   // stays a plain open target for read-only viewers (who have no rename path).
   it("starts an inline rename from the card name for editors", () => {
     const files = generateFiles(1);
-    const { container, onOpenFile } = renderPanel(files);
+    const { container, onOpenFile } = renderCategorizedPanel(files);
 
     fireEvent.click(container.querySelector(".df-card-name-btn")!);
     expect(container.querySelector(".df-rename-input")).toBeTruthy();
@@ -562,7 +575,7 @@ describe("DesignFilesPanel selection", () => {
 
   it("opens instead of renaming from the card name for read-only viewers", () => {
     const files = generateFiles(1);
-    const { container, onOpenFile } = renderPanel(files, { viewerOnly: true });
+    const { container, onOpenFile } = renderCategorizedPanel(files, { viewerOnly: true });
 
     fireEvent.click(container.querySelector(".df-card-name-btn")!);
     expect(container.querySelector(".df-rename-input")).toBeNull();
@@ -576,7 +589,7 @@ describe("DesignFilesPanel page thumbnails", () => {
   it("does not fetch or iframe large HTML files for the Design Files thumbnail", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    const { container } = renderPanel([
+    const { container } = renderCategorizedPanel([
       file({
         name: "large.html",
         kind: "html",
@@ -601,7 +614,7 @@ describe("DesignFilesPanel page thumbnails", () => {
         }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    const { container } = renderPanel([
+    const { container } = renderCategorizedPanel([
       file({
         name: "small.html",
         kind: "html",
@@ -640,21 +653,21 @@ describe("DesignFilesPanel page thumbnails", () => {
       mtime: 1700000000000,
     });
 
-    const first = renderPanel([cachedFile]);
+    const first = renderCategorizedPanel([cachedFile]);
     await waitFor(() => {
       expect(first.container.querySelector(".df-card-thumb iframe")).toBeTruthy();
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     first.unmount();
 
-    const second = renderPanel([cachedFile]);
+    const second = renderCategorizedPanel([cachedFile]);
     await waitFor(() => {
       expect(second.container.querySelector(".df-card-thumb iframe")).toBeTruthy();
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     second.unmount();
 
-    const changed = renderPanel([{ ...cachedFile, mtime: cachedFile.mtime + 1 }]);
+    const changed = renderCategorizedPanel([{ ...cachedFile, mtime: cachedFile.mtime + 1 }]);
     await waitFor(() => {
       expect(changed.container.querySelector(".df-card-thumb iframe")).toBeTruthy();
     });
@@ -679,7 +692,7 @@ describe("DesignFilesPanel page thumbnails", () => {
       source: "<!doctype html><html><body><main>Already loaded</main></body></html>",
     });
 
-    const { container } = renderPanel([currentFile], { filesRefreshKey: 7 });
+    const { container } = renderCategorizedPanel([currentFile], { filesRefreshKey: 7 });
 
     await waitFor(() => {
       const iframe = container.querySelector<HTMLIFrameElement>(".df-card-thumb iframe");
@@ -705,7 +718,7 @@ describe("DesignFilesPanel page thumbnails", () => {
       source: "<!doctype html><html><body><main>Deck</main></body></html>",
     });
 
-    const { container } = renderPanel([cachedFile], { filesRefreshKey: 8 });
+    const { container } = renderCategorizedPanel([cachedFile], { filesRefreshKey: 8 });
     const iframe = container.querySelector<HTMLIFrameElement>(".df-card-thumb iframe");
 
     expect(iframe).toBeTruthy();
@@ -720,7 +733,7 @@ describe("DesignFilesPanel directory navigation", () => {
   });
 
   it("collapses nested files into a single folder row at root with correct descendant count", () => {
-    renderPanel([
+    renderCategorizedPanel([
       file({ name: "assets/logo.png", kind: "image" }),
       file({ name: "assets/icons/star.svg", kind: "image" }),
     ]);
@@ -732,7 +745,7 @@ describe("DesignFilesPanel directory navigation", () => {
   });
 
   it("pins folders behind a Folders tab", () => {
-    renderPanel([
+    renderCategorizedPanel([
       file({ name: "assets/logo.png", kind: "image" }),
       file({ name: "top.html", kind: "html" }),
     ]);
@@ -745,7 +758,7 @@ describe("DesignFilesPanel directory navigation", () => {
   it("clicking a folder row navigates into it and shows only basenames and nested dirs", () => {
     // Text files keep the list-row shell (images are bare masonry cards with
     // no visible name), so the basename contract is asserted on rows.
-    renderPanel([
+    renderCategorizedPanel([
       file({ name: "assets/notes.txt", kind: "text", mime: "text/plain" }),
       file({ name: "assets/icons/readme.txt", kind: "text", mime: "text/plain" }),
     ]);
@@ -776,7 +789,7 @@ describe("DesignFilesPanel directory navigation", () => {
     // and left the toolbar blank on the left for the most common path. The root
     // crumb must always render, falling back to the t('designFiles.crumbs')
     // label when no rootDirName exists.
-    renderPanel([file({ name: "top.html", kind: "html" })]);
+    renderCategorizedPanel([file({ name: "top.html", kind: "html" })]);
 
     expect(document.querySelector(".df-breadcrumbs")).toBeTruthy();
     expect(document.querySelector(".df-breadcrumb-current")?.textContent).toBe(
@@ -785,7 +798,7 @@ describe("DesignFilesPanel directory navigation", () => {
   });
 
   it("shows rootDirName as the root breadcrumb when one is provided", () => {
-    renderPanel([file({ name: "top.html", kind: "html" })], {
+    renderCategorizedPanel([file({ name: "top.html", kind: "html" })], {
       rootDirName: "my-folder",
     });
 
@@ -795,7 +808,7 @@ describe("DesignFilesPanel directory navigation", () => {
   });
 
   it("clicking the root breadcrumb navigates back to root", () => {
-    renderPanel([
+    renderCategorizedPanel([
       file({ name: "assets/logo.png", kind: "image" }),
       file({ name: "top.html", kind: "html" }),
     ]);
@@ -816,7 +829,7 @@ describe("DesignFilesPanel directory navigation", () => {
   });
 
   it("includes subdirectory files in the flat root-level list", () => {
-    renderPanel([
+    renderCategorizedPanel([
       file({ name: "assets/logo.png", kind: "image" }),
       file({ name: "top.html", kind: "html" }),
     ]);
@@ -842,7 +855,7 @@ describe("DesignFilesPanel directory navigation", () => {
             file({ name: "top.html", kind: "html" }),
           ]}
           liveArtifacts={[]}
-          navState={nav}
+          navState={categorizedNavState(nav)}
           onNavStateChange={(state) => {
             saved = state;
           }}
@@ -878,7 +891,7 @@ describe("DesignFilesPanel directory navigation", () => {
   });
 
   it("navigates up one level via the parent breadcrumb", () => {
-    renderPanel([file({ name: "assets/icons/star.svg", kind: "image" })]);
+    renderCategorizedPanel([file({ name: "assets/icons/star.svg", kind: "image" })]);
 
     fireEvent.click(document.querySelector(".df-dir-row .df-row-name-btn")!);
     fireEvent.click(document.querySelector(".df-dir-row .df-row-name-btn")!);
@@ -894,7 +907,7 @@ describe("DesignFilesPanel directory navigation", () => {
   });
 
   it("clears selection when navigating into or out of a directory", () => {
-    renderPanel([
+    renderCategorizedPanel([
       file({ name: "assets/logo.png", kind: "image" }),
       file({ name: "top.html", kind: "html" }),
     ]);
@@ -920,6 +933,7 @@ describe("DesignFilesPanel directory navigation", () => {
       return (
         <DesignFilesPanel
           projectId="test-project"
+          navState={categorizedNavState()}
           projectKind="prototype"
           files={files}
           liveArtifacts={[]}
@@ -964,7 +978,7 @@ describe("DesignFilesPanel current-directory sync", () => {
 
   it("reports the active folder so new files are created under it, not the root", () => {
     const onCurrentDirChange = vi.fn();
-    renderPanel(
+    renderCategorizedPanel(
       [
         file({ name: "top.html", kind: "html" }),
         file({ name: "assets/logo.png", kind: "image" }),
@@ -987,7 +1001,7 @@ describe("DesignFilesPanel persisted (empty) folders", () => {
   it("shows an empty persisted folder that has no files under it", () => {
     // Only a root file + an empty persisted folder; the folder must still
     // appear (it would vanish if we derived dirs from file paths alone).
-    renderPanel([file({ name: "top.html", kind: "html" })], {
+    renderCategorizedPanel([file({ name: "top.html", kind: "html" })], {
       folders: [folder("assets")],
     });
     clickTab("folders");
@@ -996,7 +1010,7 @@ describe("DesignFilesPanel persisted (empty) folders", () => {
   });
 
   it("surfaces a nested empty persisted folder after navigating into its parent", () => {
-    renderPanel([], { folders: [folder("assets"), folder("assets/icons")] });
+    renderCategorizedPanel([], { folders: [folder("assets"), folder("assets/icons")] });
     // Zero files, but the persisted folder still renders the tree (not the
     // empty state), so 'assets' is navigable at the root.
     const rootDirs = [
@@ -1020,7 +1034,7 @@ describe("DesignFilesPanel pending sync (downloadPending)", () => {
   afterEach(() => cleanup());
 
   it("keeps an existing non-html file visible and openable while a newer version downloads", () => {
-    const { onOpenFile } = renderPanel(
+    const { onOpenFile } = renderCategorizedPanel(
       [file({ name: "notes.txt", kind: "text", mime: "text/plain" })],
       { downloadPending: true },
     );
@@ -1035,7 +1049,7 @@ describe("DesignFilesPanel pending sync (downloadPending)", () => {
   });
 
   it("keeps an existing HTML page card visible and openable while a newer version downloads", () => {
-    const { onOpenFile } = renderPanel(
+    const { onOpenFile } = renderCategorizedPanel(
       [file({ name: "page.html", kind: "html", mime: "text/html" })],
       { downloadPending: true },
     );
@@ -1050,7 +1064,7 @@ describe("DesignFilesPanel pending sync (downloadPending)", () => {
   });
 
   it("keeps an existing image card visible and openable while a newer version downloads", () => {
-    const { onOpenFile } = renderPanel(
+    const { onOpenFile } = renderCategorizedPanel(
       [file({ name: "photo.png", kind: "image", mime: "image/png" })],
       { downloadPending: true },
     );
@@ -1065,7 +1079,7 @@ describe("DesignFilesPanel pending sync (downloadPending)", () => {
   });
 
   it("still reports the correct per-category file counts in the tab bar while pending", () => {
-    renderPanel(
+    renderCategorizedPanel(
       [
         file({ name: "a.txt", kind: "text", mime: "text/plain" }),
         file({ name: "b.txt", kind: "text", mime: "text/plain" }),
@@ -1076,7 +1090,7 @@ describe("DesignFilesPanel pending sync (downloadPending)", () => {
   });
 
   it("uses the syncing empty state only when no local content is available", () => {
-    renderPanel([], { downloadPending: true, viewerOnly: true });
+    renderCategorizedPanel([], { downloadPending: true, viewerOnly: true });
 
     expect(screen.getByTestId("design-files-syncing")).toBeTruthy();
     expect(screen.queryByTestId("design-files-empty")).toBeNull();
@@ -1098,6 +1112,7 @@ describe("DesignFilesPanel pending sync (downloadPending)", () => {
       onPaste: vi.fn(),
       onNewSketch: vi.fn(),
       viewerOnly: true,
+      navState: categorizedNavState(),
     };
     const { rerender } = render(
       <DesignFilesPanel

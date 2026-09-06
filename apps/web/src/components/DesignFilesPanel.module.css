@@ -1,0 +1,28 @@
+.views {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.views button {
+  min-height: 28px;
+  padding: 4px 9px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.views button[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.sectionTitle {
+  margin: 16px 0 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}

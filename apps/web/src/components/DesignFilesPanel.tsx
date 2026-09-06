@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Button } from '@open-design/components';
 import type { TrackingProjectKind } from '@open-design/contracts/analytics';
 import { useAnalytics } from '../analytics/provider';
 import { trackFileManagerClick } from '../analytics/events';
@@ -27,6 +28,8 @@ import { FileSyncBadge } from '../collab/FileSyncBadge';
 import { Icon } from './Icon';
 import { LiveArtifactBadges } from './LiveArtifactBadges';
 import { RemixIcon } from './RemixIcon';
+import { ProjectFileTree } from './ProjectFileTree';
+import styles from './DesignFilesPanel.module.css';
 import {
   getHtmlSourceSnapshot,
   htmlSourceSnapshotRefreshKey,
@@ -43,6 +46,8 @@ export interface DesignFilesNavState {
   currentDir: string;
   page: number;
   pageSize: number | 'all';
+  viewMode?: 'tree' | 'categories';
+  treeCollapsedPaths?: string[];
 }
 
 interface Props {
@@ -433,14 +438,11 @@ function RotatingTip({ auxiliary = false }: { auxiliary?: boolean }) {
 }
 
 /**
- * Full-panel browser for a project's `.od/projects/<id>/` folder. Mirrors
- * Claude Design's "Design Files" surface: a single-line toolbar (up / refresh
- * / breadcrumbs + actions), semantic sections (Folders, Stylesheets, Scripts,
- * Documents, Images …), hover-revealed row checkbox + menu, and a static
- * "useful info" footer. Triggered as a sticky first tab in FileWorkspace.
+ * Project-wide file tree with an optional category/thumbnail view. Triggered
+ * as a sticky first tab in FileWorkspace. Expanding the tree preserves the
+ * project overview; category navigation can select a folder as a creation target.
  *
- * There is no detail/preview pane: the card grid IS the preview surface, so
- * every non-control click target (row name, card thumb, plugin-folder row)
+ * Every non-control click target (row name, card thumb, plugin-folder row)
  * opens the file in a workspace tab through `onOpenFile`.
  */
 export function DesignFilesPanel({
@@ -497,13 +499,14 @@ export function DesignFilesPanel({
   const [installNotice, setInstallNotice] = useState<ActionNotice | null>(null);
   const [renaming, setRenaming] = useState<{ name: string; draft: string; saving: boolean } | null>(null);
   const [copiedLocalPath, setCopiedLocalPath] = useState<string | null>(null);
-  const [currentDir, setCurrentDir] = useState<string>(() => navState?.currentDir ?? '');
+  const [viewMode, setViewMode] = useState<'tree' | 'categories'>(() => navState?.viewMode ?? 'tree');
+  const [currentDir, setCurrentDir] = useState<string>(() => navState?.viewMode === 'categories' ? navState.currentDir : '');
+  const [treeCollapsedPaths, setTreeCollapsedPaths] = useState<string[] | undefined>(() => navState?.treeCollapsedPaths);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const projectMenuRef = useRef<HTMLDivElement | null>(null);
 
-  // Keep the parent's create-target in sync with the folder being viewed, so
-  // uploads / pastes / new sketches / dropped files land in the open folder
-  // rather than the project root.
+  // Category navigation chooses a creation target; the project-wide tree
+  // stays rooted even when branches expand or collapse.
   useEffect(() => {
     onCurrentDirChange?.(currentDir);
   }, [currentDir, onCurrentDirChange]);
@@ -514,8 +517,19 @@ export function DesignFilesPanel({
       currentDir,
       page: 0,
       pageSize: 30,
+      viewMode,
+      treeCollapsedPaths,
     });
-  }, [currentDir, navState?.kindFilter, onNavStateChange]);
+  }, [currentDir, navState?.kindFilter, onNavStateChange, viewMode, treeCollapsedPaths]);
+
+  function changeView(next: 'tree' | 'categories') {
+    if (next === viewMode) return;
+    setViewMode(next);
+    if (next === 'tree') setCurrentDir('');
+    setSelected(new Set());
+    setRenaming(null);
+    setMenuPos(null);
+  }
 
   // Derive immediate subdirectories and files at the current directory level
   // from the flat files list. Files with names like "a/b/c.html" contribute
@@ -815,7 +829,7 @@ export function DesignFilesPanel({
 
   function startRename(name: string) {
     setMenuPos(null);
-    const draft = currentDir === '' ? name : name.slice(currentDir.length + 1);
+    const draft = viewMode === 'tree' ? name.split('/').pop()! : currentDir === '' ? name : name.slice(currentDir.length + 1);
     setRenaming({ name, draft, saving: false });
   }
 
@@ -825,7 +839,8 @@ export function DesignFilesPanel({
       setRenaming(null);
       return;
     }
-    const nextName = currentDir === '' ? nextBasename : `${currentDir}/${nextBasename}`;
+    const parentDir = viewMode === 'tree' ? name.split('/').slice(0, -1).join('/') : currentDir;
+    const nextName = parentDir === '' ? nextBasename : `${parentDir}/${nextBasename}`;
     if (nextName === name) {
       setRenaming(null);
       return;
@@ -868,6 +883,7 @@ export function DesignFilesPanel({
     const isSelected = selected.has(f.name);
     const isHovered = hover === f.name;
     const renameState = renaming?.name === f.name ? renaming : null;
+    const displayName = viewMode === 'tree' ? f.name.split('/').pop()! : currentDir === '' ? f.name : f.name.slice(currentDir.length + 1);
     return (
       <div
         key={f.name}
@@ -949,9 +965,9 @@ export function DesignFilesPanel({
               <span className="df-row-name-wrap">
                 <span
                   className="df-row-name"
-                  title={currentDir === '' ? f.name : f.name.slice(currentDir.length + 1)}
+                  title={f.name}
                 >
-                  {currentDir === '' ? f.name : f.name.slice(currentDir.length + 1)}
+                  {displayName}
                 </span>
                 <span className="df-row-sub">{categoryLabel(category, t)}</span>
               </span>
@@ -1453,7 +1469,13 @@ export function DesignFilesPanel({
       <div className="df-main">
         <div className="df-topbar">
           <div className="df-topbar-left">{breadcrumbs}</div>
-          <div className="df-topbar-right">{fileActions}</div>
+          <div className="df-topbar-right">
+            <div className={styles.views}>
+              <Button variant="ghost" aria-pressed={viewMode === 'tree'} data-testid="design-files-view-tree" onClick={() => changeView('tree')}>{t('designFiles.fileTree')}</Button>
+              <Button variant="ghost" aria-pressed={viewMode === 'categories'} data-testid="design-files-view-categories" onClick={() => changeView('categories')}>{t('designFiles.categories')}</Button>
+            </div>
+            {fileActions}
+          </div>
         </div>
         <div
           className="df-body"
@@ -1637,7 +1659,18 @@ export function DesignFilesPanel({
             )
           ) : (
             <>
-              {availableTabs.length > 0 ? (
+              {viewMode === 'tree' && (files.length > 0 || (folders?.length ?? 0) > 0) ? (
+                <ProjectFileTree
+                  key={`${projectId}:${workspaceIdentityCacheKey(workspaceContext)}`}
+                  files={files}
+                  folders={folders}
+                  label={rootDirName ?? t('designFiles.crumbs')}
+                  renderFile={(file) => renderFileRow(file, fileCategory(file))}
+                  initialCollapsedPaths={treeCollapsedPaths}
+                  onCollapsedPathsChange={setTreeCollapsedPaths}
+                />
+              ) : null}
+              {viewMode === 'categories' && availableTabs.length > 0 ? (
                 <div className="df-tabs" role="tablist" data-testid="design-files-tabs">
                   {availableTabs.map((tab) => (
                     <button
@@ -1655,8 +1688,9 @@ export function DesignFilesPanel({
                   ))}
                 </div>
               ) : null}
-              {resolvedTab === 'live-artifacts' ? (
+              {(viewMode === 'tree' || resolvedTab === 'live-artifacts') && liveArtifacts.length > 0 ? (
                 <div className="df-section" key="live-artifacts">
+                  {viewMode === 'tree' ? <h3 className={styles.sectionTitle}>{t('designFiles.sectionLiveArtifacts')}</h3> : null}
                   {liveArtifacts.map((artifact) => (
                     <button
                       key={artifact.artifactId}
@@ -1689,7 +1723,7 @@ export function DesignFilesPanel({
                   ))}
                 </div>
               ) : null}
-              {resolvedTab === 'plugin-folders' ? (
+              {(viewMode === 'tree' || resolvedTab === 'plugin-folders') && pluginFolders.length > 0 ? (
                 <div className="df-section" key="plugin-folders">
                   {installNotice ? (
                     <div className="df-inline-notice" role="status">
@@ -1761,13 +1795,13 @@ export function DesignFilesPanel({
                   )})}
                 </div>
               ) : null}
-              {resolvedTab === 'folders' ? (
+              {viewMode === 'categories' && resolvedTab === 'folders' ? (
                 <div className="df-section" key="folders">
                   {dirsAtCurrentDir.map((d) => renderDirRow(d))}
                 </div>
               ) : null}
               {sections.map(([category, sectionFiles]) =>
-                resolvedTab === `cat:${category}` ? (
+                viewMode === 'categories' && resolvedTab === `cat:${category}` ? (
                   <div className="df-section" key={`cat:${category}`}>
                     {category === 'html' ? (
                       // Page cards are self-describing — a straight grid

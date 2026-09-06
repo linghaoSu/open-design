@@ -132,7 +132,7 @@ function imageFile(name: string, index: number): ProjectFile {
   };
 }
 
-function renderPanel(
+function renderCategorizedPanel(
   files: ProjectFile[],
   overrides: Partial<ComponentProps<typeof DesignFilesPanel>> = {},
 ) {
@@ -153,6 +153,14 @@ function renderPanel(
       onPaste={vi.fn()}
       onNewSketch={vi.fn()}
       {...overrides}
+      navState={{
+        kindFilter: new Set(),
+        currentDir: "",
+        page: 0,
+        pageSize: 30,
+        ...overrides.navState,
+        viewMode: "categories",
+      }}
     />,
   );
 }
@@ -223,7 +231,7 @@ describe("DesignFilesPanel thumbnail fetch viewport gating", () => {
     const { fetchMock } = pendingFetchMock();
     vi.stubGlobal("fetch", fetchMock);
 
-    renderPanel(nestedHtmlFiles(200));
+    renderCategorizedPanel(nestedHtmlFiles(200));
 
     // The root view lists all 200 nested pages, but not a single content
     // fetch may start until a card actually intersects the viewport.
@@ -234,7 +242,7 @@ describe("DesignFilesPanel thumbnail fetch viewport gating", () => {
     const { fetchMock, releases } = pendingFetchMock();
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container } = renderPanel(nestedHtmlFiles(50));
+    const { container } = renderCategorizedPanel(nestedHtmlFiles(50));
 
     // Reveal every card: the initial batch plus the sentinel (which appends
     // the remaining cards), then the freshly appended cards' hosts.
@@ -256,7 +264,7 @@ describe("DesignFilesPanel thumbnail fetch viewport gating", () => {
     const { fetchMock, releases } = pendingFetchMock();
     vi.stubGlobal("fetch", fetchMock);
 
-    const first = renderPanel(nestedHtmlFiles(10, "ja"));
+    const first = renderCategorizedPanel(nestedHtmlFiles(10, "ja"));
     intersectAll(".df-thumb-scale-host");
     expect(fetchMock).toHaveBeenCalledTimes(6);
 
@@ -270,7 +278,7 @@ describe("DesignFilesPanel thumbnail fetch viewport gating", () => {
     // flight (the directory-switch scenario from the incident). Its cards
     // must queue behind them: releasing slots at unmount would start 6 new
     // fetches here and push real network concurrency to 12.
-    const second = renderPanel(nestedHtmlFiles(10, "de"));
+    const second = renderCategorizedPanel(nestedHtmlFiles(10, "de"));
     intersectAll(".df-thumb-scale-host");
     expect(fetchMock).toHaveBeenCalledTimes(6);
 
@@ -296,7 +304,7 @@ describe("DesignFilesPanel incremental grid rendering", () => {
     const { fetchMock } = pendingFetchMock();
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container } = renderPanel(nestedHtmlFiles(500));
+    const { container } = renderCategorizedPanel(nestedHtmlFiles(500));
 
     expect(container.querySelectorAll(".df-card-grid .df-card").length).toBe(48);
 
@@ -308,7 +316,7 @@ describe("DesignFilesPanel incremental grid rendering", () => {
   it("renders the image masonry incrementally behind the same sentinel", () => {
     // Root-level names: with no folders and no pages, Images is the sole tab
     // and the masonry is the default view.
-    const { container } = renderPanel(
+    const { container } = renderCategorizedPanel(
       Array.from({ length: 120 }, (_, i) => imageFile(`img-${i + 1}.png`, i)),
     );
 
@@ -327,7 +335,7 @@ describe("DesignFilesPanel incremental grid rendering", () => {
     const { fetchMock } = pendingFetchMock();
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container } = renderPanel(nestedHtmlFiles(500));
+    const { container } = renderCategorizedPanel(nestedHtmlFiles(500));
 
     const sentinel = screen.getByTestId("design-files-grid-sentinel");
     expect(sentinel.textContent).toBe("");
@@ -347,7 +355,7 @@ describe("DesignFilesPanel root recursive listing (guard)", () => {
     const { fetchMock } = pendingFetchMock();
     vi.stubGlobal("fetch", fetchMock);
 
-    const { container } = renderPanel(nestedHtmlFiles(200));
+    const { container } = renderCategorizedPanel(nestedHtmlFiles(200));
 
     // The Pages tab counts every nested page, not just the rendered batch.
     expect(

@@ -977,7 +977,7 @@ describe('FileWorkspace upload input', () => {
     expect(dialogScope.queryByRole('button', { name: /^Audio\b/i })).toBeNull();
   });
 
-  it('reports an upload failure until dismissed, and opens a file on a single card click', async () => {
+  it('reports an upload failure until dismissed, and opens a file on a single tree row click', async () => {
     mockedUploadProjectFiles.mockRejectedValueOnce(new Error('storage offline'));
     const onTabsStateChange = vi.fn();
 
@@ -1007,12 +1007,10 @@ describe('FileWorkspace upload input', () => {
     fireEvent.click(screen.getByTestId('upload-error-dismiss'));
     expect(screen.queryByTestId('upload-error-banner')).toBeNull();
 
-    // Images render as masonry cards; a single click on the thumb opens the
-    // file in a workspace tab (there is no in-panel preview pane to land in).
+    // The default file tree opens a file directly from its name, with no
+    // intermediate in-panel preview. Upload error behavior is independent of view.
     const row = screen.getByTestId('design-file-row-mock.png');
-    const thumbButton = row.querySelector<HTMLButtonElement>('.df-card-thumb');
-    if (!thumbButton) throw new Error('Could not find file thumb button');
-    fireEvent.click(thumbButton);
+    fireEvent.click(within(row).getByRole('button', { name: /mock\.png/ }));
 
     await waitFor(() =>
       expect(onTabsStateChange).toHaveBeenCalledWith(
@@ -1081,8 +1079,9 @@ describe('FileWorkspace upload input', () => {
 
     const { container, rerender } = render(<FileWorkspace {...baseProps} />);
 
-    // Folder rows live behind the Folders category tab (the default tab is
-    // Pages whenever HTML files exist at the current level).
+    // Exercise preserved category navigation explicitly; a new project should
+    // return to the default file tree without the previous directory or view.
+    fireEvent.click(screen.getByTestId('design-files-view-categories'));
     fireEvent.click(screen.getByTestId('design-files-tab-folders'));
     fireEvent.click(container.querySelector('.df-dir-row .df-row-name-btn')!);
     expect(container.querySelector('.df-breadcrumb-current')?.textContent).toBe('assets');
@@ -1101,6 +1100,7 @@ describe('FileWorkspace upload input', () => {
     // #5517: the breadcrumb root falls back to designFiles.crumbs ("Project")
     // instead of the removed workspace.allProjectFiles label.
     expect(container.querySelector('.df-breadcrumb-current')?.textContent).toBe('Project');
+    expect(screen.getByTestId('design-files-view-tree')).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByTestId('design-file-row-home.html')).toBeTruthy();
   });
 
@@ -1129,26 +1129,16 @@ describe('FileWorkspace upload input', () => {
       tabsState: { tabs: [], active: null },
       onTabsStateChange: vi.fn(),
     };
-    const { container, rerender } = render(<FileWorkspace {...baseProps} />);
+    const { rerender } = render(<FileWorkspace {...baseProps} />);
     // project-a's empty folder shows once its fetch resolves.
-    await waitFor(() => {
-      expect(
-        [...container.querySelectorAll('.df-dir-row .df-row-name')].some(
-          (e) => e.textContent === 'assets',
-        ),
-      ).toBe(true);
-    });
+    expect(await screen.findByTestId('project-file-tree-folder-assets')).toBeTruthy();
 
     // Switch to project-b; its folder fetch is still pending. The previous
     // project's 'assets' folder must be gone immediately (reset synchronously),
     // not linger and suppress the new project's empty state.
     designFilesPanelRenders.length = 0;
     rerender(<FileWorkspace {...baseProps} projectId="project-b" files={[]} />);
-    expect(
-      [...container.querySelectorAll('.df-dir-row .df-row-name')].some(
-        (e) => e.textContent === 'assets',
-      ),
-    ).toBe(false);
+    expect(screen.queryByTestId('project-file-tree-folder-assets')).toBeNull();
 
     // The reset happens during render, not in an effect — so the new panel's
     // FIRST render (and every render thereafter) already sees zero folders.

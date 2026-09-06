@@ -4030,6 +4030,10 @@ export interface Dict {
   'designFiles.expandGroup': string;
   'designFiles.collapseGroup': string;
   'designFiles.sectionPages': string;
+  "designFiles.fileTree": string;
+  "designFiles.categories": string;
+  "designFiles.expandAll": string;
+  "designFiles.collapseAll": string;
   'designFiles.sectionScripts': string;
   'designFiles.sectionImages': string;
   'designFiles.sectionSketches': string;

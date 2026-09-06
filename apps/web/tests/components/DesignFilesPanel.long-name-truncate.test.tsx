@@ -41,11 +41,12 @@ function file(overrides: Partial<ProjectFile> & Pick<ProjectFile, 'name'>): Proj
   };
 }
 
-function renderPanel(files: ProjectFile[]) {
+function renderCategorizedPanel(files: ProjectFile[]) {
   return render(
     <DesignFilesPanel
       projectId="test-project"
       projectKind="prototype"
+      navState={{ viewMode: 'categories', kindFilter: new Set(), currentDir: '', page: 0, pageSize: 30 }}
       files={files}
       liveArtifacts={[]}
       onRefreshFiles={vi.fn()}
@@ -78,13 +79,13 @@ const LONG_ROW_NAME = LONG_NAME.replace(/\.jpeg$/, '.txt');
 
 describe('DesignFilesPanel long filename truncation (#3260)', () => {
   it('renders the image card for a long filename without crashing', () => {
-    const { container } = renderPanel([file({ name: LONG_NAME })]);
+    const { container } = renderCategorizedPanel([file({ name: LONG_NAME })]);
     const card = container.querySelector(`[data-testid="design-file-row-${LONG_NAME}"]`);
     expect(card).toBeTruthy();
   });
 
   it('exposes the full filename via a `title` attribute on the image card thumb (hover tooltip)', () => {
-    const { container } = renderPanel([file({ name: LONG_NAME })]);
+    const { container } = renderCategorizedPanel([file({ name: LONG_NAME })]);
     const thumb = container.querySelector('.df-card-thumb') as HTMLElement | null;
     expect(thumb).toBeTruthy();
     // The tooltip contract: an image card has no visible name line, so the
@@ -93,7 +94,7 @@ describe('DesignFilesPanel long filename truncation (#3260)', () => {
   });
 
   it('exposes the full filename via a `title` attribute on the row name span (hover tooltip)', () => {
-    const { container } = renderPanel([
+    const { container } = renderCategorizedPanel([
       file({ name: LONG_ROW_NAME, kind: 'text', mime: 'text/plain' }),
     ]);
     const nameSpan = container.querySelector('.df-row-name') as HTMLElement | null;
@@ -105,7 +106,7 @@ describe('DesignFilesPanel long filename truncation (#3260)', () => {
   });
 
   it('keeps the truncate-friendly DOM structure (.df-row-name-wrap > .df-row-name-btn > .df-row-name-wrap > .df-row-name)', () => {
-    const { container } = renderPanel([
+    const { container } = renderCategorizedPanel([
       file({ name: LONG_ROW_NAME, kind: 'text', mime: 'text/plain' }),
     ]);
     // The CSS fix relies on this nesting: the outer `.df-row-name-wrap`
