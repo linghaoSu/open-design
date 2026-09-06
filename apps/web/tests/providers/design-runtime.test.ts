@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   compileProjectDesignRuntime,
+  createProjectDesignRuntimePreview,
   listProjectDesignRuntimeVersions, getProjectDesignRuntimeVersion,
   importProjectDesignRuntimeVersion, publishProjectDesignRuntimeVersion,
   activateProjectDesignRuntimeDependency, clearProjectDesignRuntimeDependency, resolveProjectDesignRuntimeDependency,
@@ -31,11 +32,47 @@ import {
 } from '../../src/providers/design-runtime';
 import { DesignSystemPackageSchema } from '@open-design/contracts';
 import { designRuntimeState } from '../helpers/design-runtime-fixtures';
+import { previewUiFixture } from '../helpers/design-preview-fixtures';
 import { workspaceContextFixture } from '../helpers/workspace-context';
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe('project design runtime provider', () => {
+  it('preserves JSON and workspace authority through the analytics fetch header wrapper', async () => {
+    const { result } = previewUiFixture();
+    const scope: ProjectDesignRuntimeScope = {
+      projectId: 'project',
+      workspaceContext: workspaceContextFixture({ workspaceId: 'team-a', workspaceMemberId: 'member-a' }),
+    };
+    const underlyingFetch = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify(result)));
+    // The analytics provider merges request headers by spreading them into a record.
+    const analyticsFetch: typeof fetch = (input, init) => underlyingFetch(input, {
+      ...init,
+      headers: { 'x-od-analytics-request-id': 'request-a', ...(init?.headers ?? {}) },
+    });
+    vi.stubGlobal('fetch', analyticsFetch);
+
+    await expect(createProjectDesignRuntimePreview(scope, result.request)).resolves.toEqual(result);
+
+    expect(underlyingFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = underlyingFetch.mock.calls[0]!;
+    expect(url).toBe('/api/projects/project/design-runtime/previews');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(String(init?.body))).toEqual(result.request);
+    expect(Object.fromEntries(new Headers(init?.headers))).toEqual({
+      'content-type': 'application/json',
+      'x-od-analytics-request-id': 'request-a',
+      'x-od-workspace-id': 'team-a',
+      'x-od-workspace-member-id': 'member-a',
+      'x-od-workspace-type': 'team',
+      'x-od-workspace-role': 'member',
+      'x-od-workspace-lifecycle-state': 'active',
+      'x-od-workspace-member-status': 'active',
+      'x-od-workspace-can-share-projects': 'true',
+      'x-od-workspace-can-write-synced-files': 'true',
+    });
+  });
+
   it('carries exact workspace authority, revision bodies, encoded paths, and cancellation on every operation', async () => {
     const state = designRuntimeState();
     const scope: ProjectDesignRuntimeScope = {

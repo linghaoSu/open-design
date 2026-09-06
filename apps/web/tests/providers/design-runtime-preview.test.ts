@@ -11,7 +11,8 @@ describe('preview HTTP provider', () => {
     expect(await createProjectDesignRuntimePreview(scope, result.request)).toEqual(result);
     expect(fetchMock.mock.calls[0]![0]).toBe('/api/projects/project%20%2F%20one/design-runtime/previews');
     const options = fetchMock.mock.calls[0]![1]; expect(options.method).toBe('POST'); expect(options.signal).toBe(signal); expect(JSON.parse(options.body)).toEqual(result.request);
-    expect(options.headers.get('x-od-workspace-id')).toBe('team'); expect(options.headers.get('x-od-workspace-member-id')).toBe('member');
+    const headers = new Headers(options.headers);
+    expect(headers.get('x-od-workspace-id')).toBe('team'); expect(headers.get('x-od-workspace-member-id')).toBe('member');
   });
   it('preserves conflict diagnostics and rejects malformed response identities', async () => {
     const { result } = previewUiFixture(); const scope = { projectId: 'project', workspaceContext: null };

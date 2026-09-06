@@ -97,8 +97,10 @@ async function request<T>(
   method = 'GET',
   body?: unknown,
 ): Promise<T> {
-  const headers = new Headers(scope.workspaceContext ? workspaceProjectHeaders(scope.workspaceContext) : undefined);
-  if (body !== undefined) headers.set('Content-Type', 'application/json');
+  const headers: Record<string, string> = Object.fromEntries(
+    new Headers(scope.workspaceContext ? workspaceProjectHeaders(scope.workspaceContext) : undefined),
+  );
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
   const response = await fetch(`/api/projects/${encodeURIComponent(scope.projectId)}/design-runtime${path}`, {
     method,
     headers,
