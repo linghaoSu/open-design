@@ -184,6 +184,7 @@ import { ConnectorsBrowser } from './ConnectorsBrowser';
 import { MemoryModelInline } from './MemoryModelInline';
 import { MemorySection } from './MemorySection';
 import { ByokConnectionTestControl } from './byok/ByokConnectionTestControl';
+import { ByokRuntimeStatus } from './byok/ByokRuntimeStatus';
 import { ByokKeyField } from './byok/ByokKeyField';
 import { ByokModelField } from './byok/ByokModelField';
 import { ByokProviderBaseUrl } from './byok/ByokProviderBaseUrl';
@@ -2124,12 +2125,10 @@ export function SettingsDialog({
     agentChoiceForTest?.reasoning,
     cfg.agentCliEnv,
   ]);
-  // Rescan notices are list-level feedback for a one-shot action and
-  // shouldn't linger in the content stream. After 6s, fade them out so
-  // repeated Rescan clicks don't pile up; the next click resets the
-  // notice immediately, so this only affects "user moved on" cases.
+  // Successful scans may dismiss their confirmation. A failed scan must
+  // remain visible until retry so absent metadata cannot become "missing".
   useEffect(() => {
-    if (!agentRescanNotice) return;
+    if (agentRescanNotice?.kind !== 'success') return;
     const id = window.setTimeout(() => setAgentRescanNotice(null), 6000);
     return () => window.clearTimeout(id);
   }, [agentRescanNotice]);
@@ -3935,6 +3934,12 @@ export function SettingsDialog({
   };
   const activeHeader = sectionHeader[activeSection];
   const visibleAgents = agents.filter(isVisibleLocalCliAgent);
+  const byokRuntime = agents.find((agent) => agent.id === 'byok-opencode');
+  // Recovery links belong to the existing OpenCode catalog entry. Its
+  // availability must not substitute for the hidden BYOK runtime's proof.
+  const openCodeRecovery = agents.find((agent) => agent.id === 'opencode');
+  const byokInstallUrl = sanitizeHttpsUrl(byokRuntime?.installUrl ?? openCodeRecovery?.installUrl);
+  const byokDocsUrl = sanitizeHttpsUrl(byokRuntime?.docsUrl ?? openCodeRecovery?.docsUrl);
   const installedAgents = orderAgentsWithOpenDesignFirst(
     visibleAgents.filter((agent) => agent.available || deepSeekHarnessNeedsSetup(agent)),
   );
@@ -5476,25 +5481,6 @@ export function SettingsDialog({
                 <div>
                   <div className="settings-byok-title">
                     <h3>{API_PROTOCOL_LABELS[apiProtocol]}</h3>
-                    <span className="settings-byok-info-wrap">
-                      <button
-                        type="button"
-                        className="settings-byok-info-button"
-                        aria-label={t('settings.byokNoFileToolsNotice')}
-                        aria-describedby="settings-byok-no-file-tools-tooltip"
-                        data-testid="settings-byok-no-file-tools-trigger"
-                      >
-                        <Icon name="info" size={13} />
-                      </button>
-                      <span
-                        id="settings-byok-no-file-tools-tooltip"
-                        className="settings-byok-info-tooltip"
-                        role="tooltip"
-                        data-testid="settings-byok-no-file-tools-notice"
-                      >
-                        {t('settings.byokNoFileToolsNotice')}
-                      </span>
-                    </span>
                   </div>
                 </div>
                 <ByokConnectionTestControl
@@ -5526,6 +5512,15 @@ export function SettingsDialog({
                   onTestProvider={() => handleTestProvider()}
                 />
               </div>
+              <ByokRuntimeStatus
+                runtime={byokRuntime}
+                loading={agentsLoading === true || agentRescanRunning}
+                daemonLive={daemonLive}
+                refreshFailed={agentRescanNotice?.kind === 'error'}
+                onRefresh={() => void handleRefreshAgents()}
+                onInstall={byokInstallUrl ? () => openAgentFixUrl(byokInstallUrl) : undefined}
+                onOpenDocs={byokDocsUrl ? () => openAgentFixUrl(byokDocsUrl) : undefined}
+              />
               {byokActivationPreflightReason ? (
                 <p
                   className="settings-test-status warn"

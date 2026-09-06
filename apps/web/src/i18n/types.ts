@@ -5951,4 +5951,30 @@ export interface Dict {
   'designGenerationTargets.save': string;
   'designGenerationTargets.dirty': string;
   'designGenerationTargets.conflict': string;
+  "designOverview.lockedVersion": string;
+  "designOverview.editingVersion": string;
+  "designOverview.unpublished": string;
+  "designOverview.lockedHint": string;
+  "designOverview.editingHint": string;
+  "designOverview.unpublishedHint": string;
+  "designOverview.foundations": string;
+  "designOverview.codeComponents": string;
+  "designOverview.pages": string;
+  "designOverview.sources": string;
+  "designOverview.versionContents": string;
+  "designOverview.manageVersion": string;
+  "designOverview.continueEditing": string;
+  "designOverview.lockedNext": string;
+  "designOverview.loading": string;
+  "designOverview.unavailable": string;
+  "designOverview.notPublished": string;
+  "designOverview.metadataOnly": string;
+
+  "settings.byokRuntimeMissing": string;
+  "settings.byokRuntimeMissingHint": string;
+  "settings.byokRuntimeReady": string;
+  "settings.byokRuntimeConnectionHint": string;
+
+  "settings.byokRuntimeUnknown": string;
+
 }

@@ -62,8 +62,14 @@ function PropsList({ props }: { props: Record<string, ComponentPropDefinition> }
 }
 
 /** Read-only authoring evidence; source file contents are deliberately absent from this view. */
-export function DesignSystemVersionDetails({ value }: { value: DesignSystemPackage }) {
+export function DesignSystemVersionDetails({ value, section }: { value: DesignSystemPackage; section?: 'tokens' | 'sources' }) {
   const t = useT();
+  const tokens = <ul>{value.tokens.tokens.map((token) => <li key={token.id}><strong>{token.name}</strong> · <code>{token.id}</code> · {token.type} · <code>{JSON.stringify(token.value)}</code>{'unit' in token ? token.unit : ''} · <code>{token.cssVariable}</code></li>)}</ul>;
+  const sources = <ul>{value.source.files.map((file) => <li key={file.path}><code>{file.path}</code> · {file.encoding}</li>)}</ul>;
+  if (section) return <div className={styles.details} data-testid="versions-contents">
+    <h4>{t(section === 'tokens' ? 'designVersions.tokens' : 'designVersions.sourceEvidence')}</h4>
+    {section === 'tokens' ? tokens : sources}
+  </div>;
   return <div className={styles.details} data-testid="versions-contents">
     <h4>{t('designVersions.metadata')}</h4>
     <details><summary>{t('designRuntime.components')} ({value.registry.components.length})</summary>
@@ -94,7 +100,7 @@ export function DesignSystemVersionDetails({ value }: { value: DesignSystemPacka
       </li>)}</ul>
     </details>
     <details><summary>{t('designVersions.tokens')} ({value.tokens.tokens.length})</summary>
-      <ul>{value.tokens.tokens.map((token) => <li key={token.id}><strong>{token.name}</strong> · <code>{token.id}</code> · {token.type} · <code>{JSON.stringify(token.value)}</code>{'unit' in token ? token.unit : ''} · <code>{token.cssVariable}</code></li>)}</ul>
+      {tokens}
     </details>
     <details><summary>{t('designVersions.patterns')} ({value.patterns.patterns.length})</summary>
       {value.patterns.patterns.map((pattern) => <article key={pattern.id}><h5>{pattern.name} · <code>{pattern.id}</code></h5><PropsList props={pattern.props} />
@@ -103,6 +109,6 @@ export function DesignSystemVersionDetails({ value }: { value: DesignSystemPacka
     </details>
     <details><summary>{t('designVersions.constraints')}</summary><VersionConstraintFields value={value.constraints} /></details>
     <details><summary>{t('designVersions.codeCompatibility')}</summary><ul>{value.codeCompatibility.map((entry) => <li key={`${entry.framework}:${entry.packageName}`}>{entry.framework} · {entry.packageName} · {entry.version}</li>)}</ul></details>
-    <details><summary>{t('designVersions.sourceEvidence')} ({value.source.files.length})</summary><ul>{value.source.files.map((file) => <li key={file.path}><code>{file.path}</code> · {file.encoding}</li>)}</ul></details>
+    <details><summary>{t('designVersions.sourceEvidence')} ({value.source.files.length})</summary>{sources}</details>
   </div>;
 }

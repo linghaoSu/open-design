@@ -251,13 +251,13 @@ describe('DesignRuntimePanel', () => {
     expect(screen.queryByTestId('inline-component-preview')).toBeNull();
   });
 
-  it('opens an existing token-only system on the component empty state', async () => {
+  it('opens an existing token-only system on the overview instead of an empty component catalog', async () => {
     const state = designRuntimeState();
     state.registry!.components = [];
     vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state });
     render(<DesignRuntimePanel {...panelProps} />);
-    await waitFor(() => expect(screen.getByTestId('design-runtime-code-tab')).toHaveAttribute('aria-selected', 'true'));
-    expect(screen.getByText('No components yet. Choose component files above to add your first.')).toBeVisible();
+    await waitFor(() => expect(screen.getByTestId('design-runtime-overview-tab')).toHaveAttribute('aria-selected', 'true'));
+    expect(screen.getByText('No components yet. Choose component files above to add your first.')).not.toBeVisible();
     expect(screen.queryByTestId('design-runtime-start-migration')).toBeNull();
   });
 

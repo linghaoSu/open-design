@@ -34,6 +34,7 @@ import { DesignHandoffPanel } from './DesignHandoffPanel';
 import { DesignPreviewPanel, type DesignPreviewSelection } from './DesignPreviewPanel';
 import { Icon } from './Icon';
 import { ReactComponentPreview } from './ReactComponentPreview';
+import { DesignSystemOverview } from './DesignSystemOverview';
 import styles from './DesignRuntimePanel.module.css';
 
 interface Props {
@@ -205,7 +206,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
     onState?.(nextState);
     if (initialize) {
       const startMigration = initialTab === 'migration' && !hasStructuredDesignSystem(nextState);
-      setTab(initialTab === 'migration' ? startMigration ? 'migration' : 'overview' : nextState.registry ? 'code' : 'overview');
+      setTab(initialTab === 'migration' ? startMigration ? 'migration' : 'overview' : nextState.registry?.components.length ? 'code' : 'overview');
       setMigrationOpened(startMigration);
       if (nextState.registry) setDesignSystemId(nextState.registry.id);
       const nextSelections = sourceSelections(nextState);
@@ -378,7 +379,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
         </li>)}
       </ul> : null}
       <div id={`${inputId}-overview`} role="tabpanel" aria-labelledby={`${inputId}-overview-tab`} hidden={tab !== 'overview'}>
-        {state ? <DesignSystemOverview state={state} hasLegacyFiles={hasLegacyFiles} hasSourceFiles={sourceFiles.length > 0} disabled={busy || structureBusy} onNavigate={navigate} onRepair={(id, target) => { selectComponent(id, state, target); setComponentView('detail'); setConnectionsOpen(true); navigate('code'); }} /> : null}
+        {state ? <DesignSystemOverview state={state} scope={scope} viewerOnly={viewerOnly} hasLegacyFiles={hasLegacyFiles} hasSourceFiles={sourceFiles.length > 0} disabled={busy || structureBusy} onNavigate={navigate} onRefresh={() => void perform(getProjectDesignRuntime, ({ state: nextState }) => adoptState(nextState))} onRepair={(id, target) => { selectComponent(id, state, target); setComponentView('detail'); setConnectionsOpen(true); navigate('code'); }} /> : null}
       </div>
       <div id={`${inputId}-code`} role="tabpanel" aria-labelledby={`${inputId}-code-tab`} hidden={tab !== 'code'}>
       {!state?.registry ? <p className={styles.sectionIntro}>{t('designWorkspace.componentsHint')}</p> : null}
@@ -553,56 +554,6 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
       </div>
     </section>
   );
-}
-
-function DesignSystemOverview({ state, hasLegacyFiles, hasSourceFiles, disabled, onNavigate, onRepair }: {
-  state: ProjectDesignRuntimeState;
-  hasLegacyFiles: boolean;
-  hasSourceFiles: boolean;
-  disabled: boolean;
-  onNavigate(tab: RuntimeTab): void;
-  onRepair(componentId: string, binding: ComponentBinding): void;
-}) {
-  const t = useT();
-  const hasSystem = hasStructuredDesignSystem(state);
-  const componentRefs = new Map((state.registry?.components ?? []).map((component) => [`ds:${state.registry!.id}/${component.id}`, component.id]));
-  const connectionIssues = state.bindings.bindings.filter((binding) => binding.status !== 'bound' && componentRefs.has(binding.componentRef));
-  return <div className={styles.overview}>
-    <div className={styles.overviewHeading}>
-      <h3>{t(hasSystem ? 'designRuntime.components' : 'designWorkspace.startTitle')}</h3>
-      <p>{t(hasSystem ? 'designWorkspace.existingHint' : 'designWorkspace.startHint')}</p>
-    </div>
-    {hasSystem ? <>
-      <div className={styles.stats}>
-        <Button variant="ghost" disabled={disabled} onClick={() => onNavigate('code')}><Icon name="blocks" size={18} />{t('designWorkspace.componentsCount', { count: state.registry?.components.length ?? 0 })}<Icon name="chevron-right" size={14} /></Button>
-        <Button variant="ghost" disabled={disabled} onClick={() => onNavigate('preview')}><Icon name="layout" size={18} />{t('designWorkspace.screensCount', { count: state.document?.screens.length ?? 0 })}<Icon name="chevron-right" size={14} /></Button>
-      </div>
-      {connectionIssues.length ? <div className={styles.repair}>
-        <Icon name="alert-triangle" size={18} />
-        <div><strong>{t('designWorkspace.repairTitle')}</strong><p>{t('designWorkspace.repairHint', { count: connectionIssues.length })}</p></div>
-        <Button disabled={disabled} data-testid="design-runtime-repair-connections" onClick={() => onRepair(componentRefs.get(connectionIssues[0]!.componentRef)!, connectionIssues[0]!)}>{t('designWorkspace.connections')}</Button>
-      </div> : null}
-    </> : null}
-    {!hasSystem && hasLegacyFiles ? <p className={styles.detected}><Icon name="check" size={16} />{t('designWorkspace.legacyDetected')}</p> : null}
-    <div className={styles.choices}>
-      {!hasSystem ? <section className={styles.choice}>
-        <Icon name="folder-transfer" size={22} />
-        <h4>{t('designWorkspace.migrateTitle')}</h4>
-        <p>{t('designWorkspace.migrateHint')}</p>
-        <Button data-testid="design-runtime-start-migration" variant={!hasSystem && hasLegacyFiles ? 'primary' : 'default'} disabled={disabled} onClick={() => onNavigate('migration')}>{t('designWorkspace.openMigration')}<Icon name="arrow-right" size={14} /></Button>
-      </section> : null}
-      <section className={styles.choice}>
-        <Icon name="blocks" size={22} />
-        <h4>{t('designWorkspace.createTitle')}</h4>
-        <p>{t(hasSourceFiles ? 'designWorkspace.createHint' : 'designWorkspace.noSourceFiles')}</p>
-        <Button data-testid="design-runtime-start-code" variant={!hasLegacyFiles ? 'primary' : 'default'} disabled={disabled} onClick={() => onNavigate('code')}>{t('designWorkspace.openSources')}<Icon name="arrow-right" size={14} /></Button>
-      </section>
-    </div>
-    <div className={styles.importPackage}>
-      <p>{t('designWorkspace.importHint')}</p>
-      <Button variant="ghost" disabled={disabled} data-testid="design-runtime-import-version" onClick={() => onNavigate('versions')}><Icon name="import" size={15} />{t('designWorkspace.importVersion')}</Button>
-    </div>
-  </div>;
 }
 
 function ComponentMetadata({ component, hideName = false }: { component: ComponentDefinition | CodeComponentDefinition; hideName?: boolean }) {

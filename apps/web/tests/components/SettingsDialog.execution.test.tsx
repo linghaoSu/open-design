@@ -355,6 +355,7 @@ function renderSettingsDialog(
   initial: Partial<AppConfig> = {},
   options: {
     agents?: AgentInfo[];
+    agentsLoading?: boolean;
     daemonLive?: boolean;
     onRefreshAgents?: OnRefreshAgents;
     initialSection?: SettingsSection;
@@ -374,10 +375,11 @@ function renderSettingsDialog(
   const onClose = vi.fn();
   const onRefreshAgents = options.onRefreshAgents ?? vi.fn<OnRefreshAgents>();
 
-  const dialog = (
+  const dialogForAgents = (agents = options.agents ?? availableAgents, agentsLoading = options.agentsLoading) => (
     <SettingsDialog
       initial={{ ...baseConfig, ...initial }}
-      agents={options.agents ?? availableAgents}
+      agents={agents}
+      agentsLoading={agentsLoading}
       daemonLive={options.daemonLive ?? true}
       appVersionInfo={options.appVersionInfo ?? null}
       initialSection={options.initialSection ?? 'execution'}
@@ -391,6 +393,7 @@ function renderSettingsDialog(
       onRefreshAgents={onRefreshAgents}
     />
   );
+  const dialog = dialogForAgents();
   const view = render(
     options.locale
       ? <I18nProvider initial={options.locale}>{dialog}</I18nProvider>
@@ -403,6 +406,9 @@ function renderSettingsDialog(
     onPersistComposioKey,
     onClose,
     onRefreshAgents,
+    rerenderAgents: (agents: AgentInfo[], agentsLoading = false) => view.rerender(options.locale
+      ? <I18nProvider initial={options.locale}>{dialogForAgents(agents, agentsLoading)}</I18nProvider>
+      : dialogForAgents(agents, agentsLoading)),
     ...view,
   };
 }
@@ -813,31 +819,113 @@ describe('SettingsDialog execution settings BYOK interactions', () => {
     expect(screen.getByRole('combobox', { name: 'Model' }).textContent).toContain('gpt-4o');
   });
 
-  it('keeps BYOK file-editing limits discoverable from the provider heading (issue #1106)', () => {
-    // Regression cover: switching from Local CLI to BYOK previously gave no
-    // signal that file-editing tools (`Read`/`Write`/`Edit`) are absent on the
-    // API path. Users typed "continue adjusting the design" expecting edits
-    // and got an HTML monologue back. The notice now sits behind a heading
-    // info icon so it stays discoverable without competing with setup fields.
+  it('explains BYOK OpenCode file support independently of the provider connection test', () => {
     renderSettingsDialog();
-
-    const trigger = screen.getByTestId('settings-byok-no-file-tools-trigger');
-    expect(trigger).toBeTruthy();
-    const notice = screen.getByRole('tooltip');
-    expect(notice.textContent).toContain("BYOK can't read, write, or edit project files");
-    expect(notice.textContent).toContain('Local CLI');
-
+    expect(screen.getByTestId('settings-byok-runtime').textContent).toContain('read, create, and modify project files');
+    expect(screen.getByTestId('settings-byok-runtime').textContent).toContain('Connection tests check the API provider only');
+    expect(screen.queryByTestId('settings-byok-no-file-tools-trigger')).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: 'OpenAI' }));
-    expect(screen.getByTestId('settings-byok-no-file-tools-trigger')).toBeTruthy();
-
+    expect(screen.getByTestId('settings-byok-runtime')).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: 'Google Gemini' }));
-    expect(screen.getByTestId('settings-byok-no-file-tools-trigger')).toBeTruthy();
+    expect(screen.getByTestId('settings-byok-runtime')).toBeTruthy();
   });
 
-  it('hides the BYOK no-file-tools notice when Local CLI mode is selected', () => {
+  it('hides the BYOK OpenCode runtime notice in Local CLI mode', () => {
     renderSettingsDialog({ mode: 'daemon' });
+    expect(screen.queryByTestId('settings-byok-runtime')).toBeNull();
+  });
 
-    expect(screen.queryByTestId('settings-byok-no-file-tools-notice')).toBeNull();
+  it('uses the BYOK OpenCode runtime fact rather than a different available CLI', () => {
+    renderSettingsDialog({}, { agents: [
+      { id: 'opencode', name: 'OpenCode', bin: 'opencode', available: true },
+      { id: 'byok-opencode', name: 'BYOK OpenCode', bin: 'opencode', available: false },
+    ] });
+    expect(screen.getByTestId('settings-byok-runtime').getAttribute('data-status')).toBe('missing');
+    expect(screen.getByText('No available OpenCode detected')).toBeTruthy();
+  });
+
+  it('keeps BYOK OpenCode unknown during metadata loading or a daemon disconnect', () => {
+    const view = renderSettingsDialog({}, { agents: [], agentsLoading: true });
+    expect(screen.getByTestId('settings-byok-runtime').getAttribute('data-status')).toBe('loading');
+    expect(screen.queryByText('No available OpenCode detected')).toBeNull();
+    view.rerenderAgents([]);
+    expect(screen.getByTestId('settings-byok-runtime').getAttribute('data-status')).toBe('unknown');
+    expect(screen.queryByText('No available OpenCode detected')).toBeNull();
+    view.unmount();
+    renderSettingsDialog({}, { daemonLive: false });
+    expect(screen.getByTestId('settings-byok-runtime').getAttribute('data-status')).toBe('offline');
+    expect(screen.queryByText('No available OpenCode detected')).toBeNull();
+  });
+
+  it('shows BYOK OpenCode availability without exposing binary paths or provider secrets', () => {
+    renderSettingsDialog({ apiKey: 'secret-runtime-fixture' }, { agents: [
+      { id: 'byok-opencode', name: 'BYOK OpenCode', bin: 'opencode', available: true, version: '1.18.5', path: '/private/fixture/opencode' },
+    ] });
+    const card = screen.getByTestId('settings-byok-runtime');
+    expect(card.getAttribute('data-status')).toBe('available');
+    expect(card.textContent).toContain('OpenCode available');
+    expect(card.textContent).not.toMatch(/secret-runtime-fixture|private\/fixture/);
+  });
+
+  it('recovers BYOK OpenCode through the existing rescan without changing API mode or credentials', async () => {
+    const scan = deferred<AgentInfo[]>();
+    const onRefreshAgents = vi.fn<OnRefreshAgents>(() => scan.promise);
+    const view = renderSettingsDialog({ apiKey: 'secret-rescan-fixture' }, { agents: [
+      { id: 'byok-opencode', name: 'BYOK OpenCode', bin: 'opencode', available: false },
+    ], onRefreshAgents });
+    fireEvent.click(within(screen.getByTestId('settings-byok-runtime')).getByRole('button', { name: en['settings.rescan'] }));
+    expect(onRefreshAgents).toHaveBeenCalledOnce();
+    expect(screen.getByTestId('settings-byok-runtime').getAttribute('data-status')).toBe('loading');
+    const refreshed: AgentInfo[] = [{ id: 'byok-opencode', name: 'BYOK OpenCode', bin: 'opencode', available: true }];
+    await act(async () => { scan.resolve(refreshed); await scan.promise; });
+    view.rerenderAgents(refreshed);
+    expect(screen.getByTestId('settings-byok-runtime').getAttribute('data-status')).toBe('available');
+    expect((screen.getByLabelText('API key') as HTMLInputElement).value).toBe('secret-rescan-fixture');
+    expect(view.onPersist.mock.calls.every(([cfg]) => cfg.mode === 'api')).toBe(true);
+    expect(screen.queryByTestId('settings-cli-env')).toBeNull();
+  });
+
+  it('opens the existing safe OpenCode install link without selecting Local CLI', () => {
+    const view = renderSettingsDialog({ apiKey: 'secret-install-fixture' }, { agents: [
+      { id: 'byok-opencode', name: 'BYOK OpenCode', bin: 'opencode', available: false },
+      { id: 'opencode', name: 'OpenCode', bin: 'opencode', available: false, installUrl: 'https://opencode.ai/docs', docsUrl: 'javascript:alert(1)' },
+    ] });
+    const card = within(screen.getByTestId('settings-byok-runtime'));
+    fireEvent.click(card.getByRole('button', { name: 'Install' }));
+    expect(openExternalUrlMock).toHaveBeenCalledWith('https://opencode.ai/docs');
+    expect(card.queryByRole('button', { name: en['settings.agentInstall.docs'] })).toBeNull();
+    expect((screen.getByLabelText('API key') as HTMLInputElement).value).toBe('secret-install-fixture');
+    expect(view.onPersist.mock.calls.every(([cfg]) => cfg.mode === 'api')).toBe(true);
+  });
+
+  it('uses Design Loom branding for Labs while retaining its settings section', () => {
+    renderSettingsDialog({}, { initialSection: 'labs' });
+    expect(screen.getAllByText('Design Loom Labs').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Open Design Labs')).toBeNull();
+  });
+
+  it('reports a failed BYOK OpenCode rescan without changing runtime facts or API mode', async () => {
+    vi.useFakeTimers();
+    try {
+      const onRefreshAgents = vi.fn<OnRefreshAgents>().mockRejectedValue(new Error('scan unavailable'));
+      const view = renderSettingsDialog({ apiKey: 'secret-rescan-failure' }, { agents: [], onRefreshAgents });
+      const card = screen.getByTestId('settings-byok-runtime');
+      await act(async () => { fireEvent.click(within(card).getByRole('button', { name: en['settings.rescan'] })); });
+      expect(within(card).getByRole('alert').textContent).toBe(en['settings.rescanFailed']);
+      await act(async () => { await vi.advanceTimersByTimeAsync(6_001); });
+      expect(card.getAttribute('data-status')).toBe('error');
+      expect(within(card).getByRole('alert').textContent).toBe(en['settings.rescanFailed']);
+      expect(screen.queryByText('No available OpenCode detected')).toBeNull();
+      expect(view.onPersist.mock.calls.every(([cfg]) => cfg.mode === 'api')).toBe(true);
+      const refreshed: AgentInfo[] = [{ id: 'byok-opencode', name: 'BYOK OpenCode', bin: 'opencode', available: true }];
+      onRefreshAgents.mockResolvedValueOnce(refreshed);
+      await act(async () => { fireEvent.click(within(card).getByRole('button', { name: en['settings.rescan'] })); });
+      view.rerenderAgents(refreshed);
+      expect(card.getAttribute('data-status')).toBe('available');
+      expect(within(card).queryByRole('alert')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('only persists Max tokens overrides within the supported BYOK range', async () => {
@@ -1863,6 +1951,9 @@ describe('SettingsDialog execution settings BYOK interactions', () => {
     renderSettingsDialog({ apiKey: 'sk-ant-test-provider' });
 
     expect(await screen.findByText(/Connected\. Replied in 21 ms/)).toBeTruthy();
+    // HTTP connectivity does not prove that the required local runtime exists.
+    expect(screen.getByTestId('settings-byok-runtime').getAttribute('data-status')).toBe('unknown');
+    expect(screen.getByTestId('settings-byok-runtime').textContent).toContain('Connection tests check the API provider only');
 
     const testConnectionCalls = fetchMock.mock.calls.filter(
       ([input]) => input.toString() === '/api/test/connection',
