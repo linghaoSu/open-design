@@ -9,11 +9,13 @@
 // `ChatRun`, so a caller can hand over any object that carries those fields.
 
 import type {
+  ChatMessage,
   ChatRunStatus,
   ChatRunStatusResponse,
   ProjectMetadata as ContractProjectMetadata,
   StrategyTaskProjectionV2,
 } from '@open-design/contracts';
+import { DesignGenerationReportSchema, DesignGenerationTaskProjectionSchema } from '@open-design/contracts';
 import type { AnalyticsContext } from '../analytics.js';
 import type { RunArtifactBaseline } from '../run-artifact-fs.js';
 import type {
@@ -39,6 +41,31 @@ import {
 
 export type JsonRecord = Record<string, unknown>;
 export type ProjectMetadata = (Partial<ContractProjectMetadata> & JsonRecord) | null | undefined;
+
+/** Read-only message overlay from the owned physical Run and current logical state. */
+export function projectDesignGenerationMessageFields(
+  run: Pick<ChatRun, 'id' | 'projectId' | 'conversationId' | 'assistantMessageId' | 'designGenerationExecutionId' | 'designGenerationAttempt'>,
+  status: ChatRunStatusResponse,
+  message: { id: string; role: unknown; runId: unknown },
+  projectId: string,
+  conversationId: string,
+): Pick<ChatMessage, 'designGenerationExecutionId' | 'designGenerationAttempt' | 'designGeneration' | 'designGenerationTask'> {
+  if (message.role !== 'assistant' || run.id !== message.runId || run.assistantMessageId !== message.id
+    || run.projectId !== projectId || run.conversationId !== conversationId
+    || status.id !== run.id || status.projectId !== projectId || status.conversationId !== conversationId) return {};
+  const task = DesignGenerationTaskProjectionSchema.safeParse(status.designGenerationTask);
+  if (!task.success || task.data.projectId !== projectId || task.data.conversationId !== conversationId
+    || task.data.executionId !== run.designGenerationExecutionId
+    || run.designGenerationAttempt !== 0 && run.designGenerationAttempt !== 1) return {};
+  const report = DesignGenerationReportSchema.safeParse(status.designGeneration);
+  return {
+    designGenerationExecutionId: run.designGenerationExecutionId,
+    designGenerationAttempt: run.designGenerationAttempt,
+    designGenerationTask: task.data,
+    ...(report.success && report.data.runId === run.id && report.data.executionId === run.designGenerationExecutionId
+      && report.data.attempt === run.designGenerationAttempt ? { designGeneration: report.data } : {}),
+  };
+}
 
 export interface ProjectRecord {
   id: string;
@@ -177,6 +204,10 @@ export interface ChatRun {
     | 'unknown';
   artifactVersionId?: string;
   deliverableValid?: boolean;
+  /** Durable physical identity; the logical projection may advance to another Run. */
+  designGenerationExecutionId?: string;
+  designGenerationAttempt?: 0 | 1;
+  designGenerationTask?: ChatRunStatusResponse['designGenerationTask'];
   designGeneration?: ChatRunStatusResponse['designGeneration'];
   deliverableValidation?: ChatRunStatusResponse['deliverableValidation'];
   deliverableEntryFile?: string;

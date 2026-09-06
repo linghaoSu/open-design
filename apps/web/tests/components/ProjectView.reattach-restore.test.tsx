@@ -13,6 +13,7 @@ import {
 } from '../../src/components/ProjectView';
 import { resolvePersistedArtifactHtml } from '../../src/artifacts/recover';
 import type { ChatMessage } from '../../src/types';
+import { generationReport, generationTask, generationStrategy } from '../helpers/design-generation-fixtures';
 
 const listConversations = vi.fn();
 const listMessages = vi.fn();
@@ -781,6 +782,59 @@ describe('ProjectView daemon reattach restore', () => {
       expect(lastWithProduced?.producedFiles?.map((f) => f.name)).toEqual(['new.pptx']);
       expect(lastWithProduced?.runStatus).toBe('succeeded');
     });
+  });
+
+  it('restores a failed predecessor onto its authenticated design repair and persists live reports', async () => {
+    const startedAt = Date.now();
+    const report = generationReport('initial', 0, 'repair_required');
+    const task = generationTask({ projectId: 'project-1', conversationId: 'conv-1', activeRunId: 'repair', nextRunId: 'repair', attempt: 1, status: 'repairing', latestReport: report });
+    listConversations.mockResolvedValue([{ id: 'conv-1', title: 'Conversation' }]);
+    listMessages.mockResolvedValue([{ id: 'design-initial', role: 'assistant', agentId: 'codex', content: 'Initial output.',
+      createdAt: startedAt, startedAt, runId: 'initial', runStatus: 'failed', lastRunEventId: '41',
+      designGenerationExecutionId: 'execution', designGenerationAttempt: 0, designGeneration: report } satisfies ChatMessage]);
+    fetchPreviewComments.mockResolvedValue([]); loadTabs.mockResolvedValue({ tabs: [], activeTabId: null });
+    fetchProjectFiles.mockResolvedValue([]); fetchLiveArtifacts.mockResolvedValue([]);
+    fetchSkill.mockResolvedValue(null); fetchDesignSystem.mockResolvedValue(null); getTemplate.mockResolvedValue(null);
+    listActiveChatRuns.mockResolvedValue([]);
+    fetchChatRunStatus.mockImplementation(async (id: string) => ({ id, projectId: 'project-1', conversationId: 'conv-1',
+      status: id === 'initial' ? 'failed' : 'running', createdAt: startedAt, updatedAt: startedAt + 1,
+      designGenerationTask: id === 'initial' ? task : { ...task, nextRunId: null },
+      ...(id === 'initial' ? { designGeneration: report } : {}) }));
+    reattachDaemonRun.mockImplementation(async () => new Promise<void>(() => {}));
+    renderProjectView();
+    await waitFor(() => expect(reattachDaemonRun).toHaveBeenCalledTimes(1));
+    expect(fetchChatRunStatus).toHaveBeenCalledWith('repair', null);
+    expect(reattachDaemonRun).toHaveBeenCalledWith(expect.objectContaining({ runId: 'repair', initialLastEventId: null }));
+    const options = reattachDaemonRun.mock.calls[0]![0];
+    const final = { ...task, nextRunId: null, status: 'blocked' as const, latestReport: generationReport('repair', 1, 'blocked') };
+    options.onDesignGeneration({ task: final, report: final.latestReport });
+    await waitFor(() => {
+      const saved = saveMessage.mock.calls.map(call => call[2] as ChatMessage).filter(message => message.id === 'design-initial').at(-1);
+      expect(saved).toMatchObject({ runId: 'repair', content: 'Initial output.', designGenerationAttempt: 0,
+        designGenerationTask: { status: 'blocked', attempt: 1 }, designGeneration: { runId: 'repair', attempt: 1 } });
+    });
+  });
+
+  it('restores an authenticated waiting question without reopening its completed stream', async () => {
+    const startedAt = Date.now();
+    const task = generationTask({ projectId: 'project-1', conversationId: 'conv-1', status: 'awaiting_input', latestReport: generationReport() });
+    listConversations.mockResolvedValue([{ id: 'conv-1', title: 'Conversation' }]);
+    listMessages.mockResolvedValue([{ id: 'waiting-question', role: 'assistant', agentId: 'codex', content: 'Which layout?',
+      createdAt: startedAt, startedAt, endedAt: startedAt + 1, runId: 'initial', runStatus: 'succeeded', lastRunEventId: '41',
+      designGenerationExecutionId: 'execution', designGenerationAttempt: 0, designGenerationTask: task } satisfies ChatMessage]);
+    fetchPreviewComments.mockResolvedValue([]); loadTabs.mockResolvedValue({ tabs: [], activeTabId: null });
+    fetchProjectFiles.mockResolvedValue([]); fetchLiveArtifacts.mockResolvedValue([]);
+    fetchSkill.mockResolvedValue(null); fetchDesignSystem.mockResolvedValue(null); getTemplate.mockResolvedValue(null);
+    listActiveChatRuns.mockResolvedValue([]);
+    fetchChatRunStatus.mockResolvedValue({ id: 'initial', projectId: 'project-1', conversationId: 'conv-1', status: 'succeeded',
+      createdAt: startedAt, updatedAt: startedAt + 1, designGenerationTask: task,
+      strategyTask: { ...generationStrategy('initial'), outcome: 'clarification_required' } });
+    renderProjectView();
+    await waitFor(() => {
+      const saved = saveMessage.mock.calls.map(call => call[2] as ChatMessage).find(message => message.id === 'waiting-question');
+      expect(saved).toMatchObject({ runStatus: 'succeeded', designGenerationTask: { status: 'awaiting_input' } });
+    });
+    expect(reattachDaemonRun).not.toHaveBeenCalled();
   });
 
   it('claims the projected active task Run once and drops the predecessor cursor', async () => {

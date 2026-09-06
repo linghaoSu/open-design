@@ -72,6 +72,7 @@ export * from './sse/collab.js';
 export * from './sse/proxy.js';
 export * from './prompts/system.js';
 export * from './prompts/design-generation.js';
+export * from './prompts/design-repair.js';
 export * from './prompts/deck-framework.js';
 export * from './prompts/od-next-device-frame.js';
 export * from './prompts/od-next-strategy.js';

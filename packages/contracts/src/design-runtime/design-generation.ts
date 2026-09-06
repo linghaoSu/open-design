@@ -69,17 +69,26 @@ export interface DesignGenerationExecution {
   schemaVersion: 1; id: string; projectId: string; conversationId: string | null; authorityKey: string;
   initialRunId: string; latestRunId: string; policy: DesignGenerationPolicy; targets: DesignGenerationTargets;
   baselineStatus: 'pending' | 'ready'; baseline: DesignGenerationInventory; semanticDigest: string; attempt: 0 | 1; revision: number;
+  awaitingContinuation?: boolean | undefined;
   status: 'active' | 'terminal'; report: DesignGenerationReport | null;
+  repair?: { schemaVersion: 1; sourceRunId: string; runId: string; finalText: string; finalTextDigest: string; sourceReport: DesignGenerationReport } | undefined;
 }
 export const DesignGenerationExecutionSchema: z.ZodType<DesignGenerationExecution> = z.object({
   schemaVersion: DesignRuntimeSchemaVersionSchema, id: DesignEntityIdSchema, projectId: DesignEntityIdSchema,
   conversationId: DesignEntityIdSchema.nullable(), authorityKey: DesignSystemDigestSchema,
   initialRunId: DesignEntityIdSchema, latestRunId: DesignEntityIdSchema, policy: DesignGenerationPolicySchema,
   targets: DesignGenerationTargetsSchema, baselineStatus: z.enum(['pending', 'ready']), baseline: DesignGenerationInventorySchema, semanticDigest: DesignSystemDigestSchema,
+  awaitingContinuation: z.boolean().optional(),
   attempt: z.union([z.literal(0), z.literal(1)]), revision: count, status: z.enum(['active', 'terminal']), report: DesignGenerationReportSchema.nullable(),
+  repair: z.object({ schemaVersion: DesignRuntimeSchemaVersionSchema, sourceRunId: DesignEntityIdSchema, runId: DesignEntityIdSchema,
+    finalText: z.string().min(1), finalTextDigest: DesignSystemDigestSchema, sourceReport: DesignGenerationReportSchema }).strict().optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.baselineStatus === 'pending' && (value.baseline.complete || value.report?.decision === 'accepted')) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['baselineStatus'], message: 'A pending baseline cannot certify source identity or delivery.' });
   if (value.policy.lock.id !== value.projectId || value.policy.dependencies.id !== value.projectId) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['policy'], message: 'Generation policy belongs to one project.' });
   if (value.report && (value.report.executionId !== value.id || value.report.runId !== value.latestRunId || value.report.policyDigest !== value.policy.digest || value.report.mode !== value.policy.mode || value.report.inventory.baselineDigest !== value.baseline.digest || value.report.attempt !== value.attempt)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['report'], message: 'A report must match its execution, current Run, policy, baseline and attempt.' });
   if (value.status === 'terminal' && !value.report) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['report'], message: 'Terminal design executions require a durable report.' });
+  if (value.attempt === 1 && !value.repair || value.repair && (value.attempt !== 1 || value.repair.runId === value.repair.sourceRunId
+    || value.repair.sourceReport.executionId !== value.id || value.repair.sourceReport.runId !== value.repair.sourceRunId || value.repair.sourceReport.attempt !== 0
+    || value.repair.sourceReport.decision !== 'repair_required' || value.repair.sourceReport.policyDigest !== value.policy.digest
+    || value.repair.sourceReport.inventory.baselineDigest !== value.baseline.digest)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['repair'], message: 'Attempt one requires its immutable initial failure and authorized repair identity.' });
 });

@@ -13,6 +13,7 @@ import { getSnapshot } from '../../plugins/snapshots.js';
 import { countRenderableQuestionForms, scanQuestionForms } from '../../question-form-detect.js';
 import {
   compareAndTransitionStrategyTaskExecution,
+  beginStrategyDesignRepair,
   getStrategyTaskExecution,
   strategyPlanContractHash,
   type StrategyTaskExecutionRecord,
@@ -73,6 +74,7 @@ export interface OdNextCoordinatorResult {
     | 'running'
     | 'awaiting_clarification'
     | 'contract_repair'
+    | 'design_repair'
     | 'plan_ready'
     | 'completed'
     | 'blocked'
@@ -302,6 +304,8 @@ export function finalizeStrategyPlanningResult(db: SqliteDb, input: {
   runId: string;
   parsed: ReturnType<OdNextMachineProtocolStream['finish']>;
   repairRun?: { runId: string; sourceRunId: string; finalText: string };
+  /** Created by the host completion gate; never parsed from agent Runtime State. */
+  designRepairRun?: { runId: string; sourceRunId: string; finalText: string };
   toolUseCount?: number;
   executionPreflight?: OdNextExecutionPreflightInput;
   completionEvidence?: {
@@ -401,6 +405,13 @@ export function finalizeStrategyPlanningResult(db: SqliteDb, input: {
   if (reasonCodes.length > 0) {
     logOdNextMachineContractGap(current, input.runId, parsed, reasonCodes);
     return blockTask(db, current, parsed.visibleText, reasonCodes, input.updatedAt);
+  }
+
+  if (input.designRepairRun) {
+    const task = beginStrategyDesignRepair(db, { taskExecutionId: current.taskExecutionId, expectedRevision: current.revision,
+      ...input.designRepairRun, acceptedState: { route: state.route, inputStage: state.inputStage, outcome: state.outcome, executionMode: state.executionMode },
+      ...(parsed.planContract ? { planContract: parsed.planContract } : {}), ...(input.updatedAt === undefined ? {} : { updatedAt: input.updatedAt }) });
+    return { action: 'design_repair', task, visibleText: parsed.visibleText, reasonCodes: [] };
   }
 
   if (current.route === null) {

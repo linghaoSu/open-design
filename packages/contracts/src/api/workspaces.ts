@@ -1,5 +1,7 @@
 import type { ArtifactManifest } from './artifacts.js';
 import type { StrategyTaskProjectionV2 } from '../plugins/strategy-v2.js';
+import type { DesignGenerationReport } from '../design-runtime/design-generation.js';
+import type { DesignGenerationTaskProjection } from '../design-runtime/generation-task.js';
 
 export type OrchestratorWorkspaceKind = 'scratch';
 export type OrchestratorWorkspaceWriteback = 'external';
@@ -66,6 +68,9 @@ export interface RunResultPackageArtifact {
 }
 
 export interface RunResultPackageResponse {
+  /** Physical validation evidence and logical host repair state for the requested Run. */
+  designGeneration?: DesignGenerationReport;
+  designGenerationTask?: DesignGenerationTaskProjection;
   schema: typeof RUN_RESULT_PACKAGE_SCHEMA;
   run: RunResultPackageRun;
   /** Logical task truth when the requested physical Run belongs to OD Next. */

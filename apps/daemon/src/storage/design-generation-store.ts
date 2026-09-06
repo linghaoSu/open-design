@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
-import { DesignGenerationExecutionSchema, type DesignGenerationExecution } from '@open-design/contracts';
+import { createHash } from 'node:crypto';
+import { DesignGenerationExecutionSchema, parseDesignRepairTurnV1, type DesignGenerationExecution } from '@open-design/contracts';
 
 export class DesignGenerationConflictError extends Error {
   constructor(message = 'Design generation execution changed; a stale Run cannot accept delivery.') { super(message); this.name = 'DesignGenerationConflictError'; }
@@ -25,15 +26,24 @@ export interface DesignGenerationStore {
   create(execution: DesignGenerationExecution): DesignGenerationExecution;
   update(expectedRevision: number, execution: DesignGenerationExecution): DesignGenerationExecution;
   reproveTerminal(expectedRevision: number, execution: DesignGenerationExecution): DesignGenerationExecution;
+  claimRepair(expectedRevision: number, input: { executionId: string; sourceRunId: string; runId: string; finalText: string }): DesignGenerationExecution;
 }
 /** Uses the existing daemon database; no independent data-root or process authority. */
 export function createDesignGenerationStore(db: Database.Database): DesignGenerationStore {
   migrateDesignGenerationStore(db);
   const read = (id: string) => {
     const row = db.prepare('SELECT execution_json FROM design_generation_executions WHERE id = ?').get(id) as { execution_json: string } | undefined;
-    return row ? DesignGenerationExecutionSchema.parse(JSON.parse(row.execution_json)) : null;
+    if (!row) return null;
+    const execution = DesignGenerationExecutionSchema.parse(JSON.parse(row.execution_json));
+    if (execution.repair) {
+      const repair = execution.repair; const envelope = parseDesignRepairTurnV1(repair.finalText);
+      if (repair.finalTextDigest !== `sha256:${createHash('sha256').update(repair.finalText).digest('hex')}` || envelope.executionId !== execution.id
+        || envelope.sourceRunId !== repair.sourceRunId || JSON.stringify(envelope.policy) !== JSON.stringify(execution.policy)
+        || JSON.stringify(envelope.report) !== JSON.stringify(repair.sourceReport)) throw new DesignGenerationConflictError('Persisted repair evidence failed its canonical identity proof.');
+    }
+    return execution;
   };
-  const persist = (expectedRevision: number, input: DesignGenerationExecution, reproveTerminal = false) => {
+  const persist = (expectedRevision: number, input: DesignGenerationExecution, reproveTerminal = false, claimRepair = false) => {
     const execution = DesignGenerationExecutionSchema.parse({ ...input, revision: expectedRevision + 1 });
     return db.transaction(() => {
       const previous = read(execution.id);
@@ -44,7 +54,8 @@ export function createDesignGenerationStore(db: Database.Database): DesignGenera
           || !execution.report || ![previous.report.decision, 'blocked', 'canceled'].includes(execution.report.decision)) throw new DesignGenerationConflictError('Only a terminal success candidate may be re-proved or degraded.');
       } else if (previous.status === 'terminal') throw new DesignGenerationConflictError();
       // No refresh, continuation, or publication reentry may rewrite frozen identity.
-      if (previous.projectId !== execution.projectId || previous.conversationId !== execution.conversationId || previous.authorityKey !== execution.authorityKey || previous.initialRunId !== execution.initialRunId || JSON.stringify(previous.policy) !== JSON.stringify(execution.policy) || (previous.baselineStatus === 'ready' && (execution.baselineStatus !== 'ready' || JSON.stringify(previous.baseline) !== JSON.stringify(execution.baseline))) || previous.semanticDigest !== execution.semanticDigest || previous.attempt !== execution.attempt) throw new DesignGenerationConflictError('Frozen generation identity and attempt cannot be rewritten.');
+      if (claimRepair && (previous.attempt !== 0 || previous.repair || previous.report?.decision !== 'repair_required' || execution.attempt !== 1 || !execution.repair || execution.repair.sourceRunId !== previous.latestRunId || execution.repair.runId !== execution.latestRunId || execution.status !== 'active' || execution.report)) throw new DesignGenerationConflictError('Only one pending initial failure can claim a design repair.');
+      if (previous.projectId !== execution.projectId || previous.conversationId !== execution.conversationId || previous.authorityKey !== execution.authorityKey || previous.initialRunId !== execution.initialRunId || JSON.stringify(previous.policy) !== JSON.stringify(execution.policy) || (previous.baselineStatus === 'ready' && (execution.baselineStatus !== 'ready' || JSON.stringify(previous.baseline) !== JSON.stringify(execution.baseline))) || previous.semanticDigest !== execution.semanticDigest || !claimRepair && (previous.attempt !== execution.attempt || JSON.stringify(previous.repair) !== JSON.stringify(execution.repair))) throw new DesignGenerationConflictError('Frozen generation identity and attempt cannot be rewritten.');
       const changed = db.prepare('UPDATE design_generation_executions SET latest_run_id = ?, revision = ?, execution_json = ? WHERE id = ? AND revision = ?').run(execution.latestRunId, execution.revision, JSON.stringify(execution), execution.id, expectedRevision);
       if (changed.changes !== 1) throw new DesignGenerationConflictError();
       if (execution.latestRunId !== previous.latestRunId) db.prepare('INSERT INTO design_generation_runs (run_id, execution_id) VALUES (?, ?)').run(execution.latestRunId, execution.id);
@@ -75,5 +86,14 @@ export function createDesignGenerationStore(db: Database.Database): DesignGenera
     },
     update: (revision, input) => persist(revision, input),
     reproveTerminal: (revision, input) => persist(revision, input, true),
+    claimRepair(revision, input) {
+      const execution = read(input.executionId);
+      if (!execution || execution.latestRunId !== input.sourceRunId || !execution.report || execution.baselineStatus !== 'ready') throw new DesignGenerationConflictError('Repair requires a current initial source report.');
+      const envelope = parseDesignRepairTurnV1(input.finalText);
+      if (envelope.executionId !== execution.id || envelope.sourceRunId !== input.sourceRunId || JSON.stringify(envelope.policy) !== JSON.stringify(execution.policy) || JSON.stringify(envelope.report) !== JSON.stringify(execution.report)) throw new DesignGenerationConflictError('Repair final text must contain the exact frozen policy and source report.');
+      return persist(revision, { ...execution, latestRunId: input.runId, attempt: 1, status: 'active', report: null,
+        repair: { schemaVersion: 1, sourceRunId: input.sourceRunId, runId: input.runId, finalText: input.finalText,
+          finalTextDigest: `sha256:${createHash('sha256').update(input.finalText).digest('hex')}`, sourceReport: execution.report } }, false, true);
+    },
   };
 }

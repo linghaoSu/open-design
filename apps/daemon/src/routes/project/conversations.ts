@@ -5,6 +5,7 @@ import { backfillBrandExtractionTranscriptForProject } from '../../brands/index.
 import type { RouteDeps } from '../../server-context.js';
 import type { BoundWorkspaceResourceMutationGate } from '../../collab/workspace-resource-mutation.js';
 import type { AuthorizeProjectRequest } from '../../collab/project-request-authority.js';
+import { projectDesignGenerationMessageFields } from '../../runtimes/chat-run-records.js';
 import { TERMINAL_RUN_STATUSES } from '../../runtimes/runs.js';
 import { strategyTaskTurnsForRunIds } from '../../strategies/task-store.js';
 
@@ -72,6 +73,20 @@ export function registerProjectConversationRoutes(app: Express, ctx: RegisterPro
     if (isProjectCommentAnchorConversationId(conversationId)) return null;
     const conversation = getConversation(db, conversationId);
     return conversation?.projectId === projectId ? conversation : null;
+  };
+
+  const withoutGenerationClaims = (message: Record<string, unknown>) => {
+    const clean = { ...message };
+    for (const field of ['designGenerationExecutionId', 'designGenerationAttempt', 'designGeneration', 'designGenerationTask']) delete clean[field];
+    return clean;
+  };
+  const withGenerationProjection = (message: Record<string, unknown>, projectId: string, conversationId: string) => {
+    const clean = withoutGenerationClaims(message);
+    if (message['role'] !== 'assistant' || typeof message['id'] !== 'string' || typeof message['runId'] !== 'string') return clean;
+    const run = design.runs.get(message['runId']);
+    if (!run || typeof design.runs.statusBody !== 'function') return clean;
+    return { ...clean, ...projectDesignGenerationMessageFields(run, design.runs.statusBody(run),
+      { id: message['id'], role: message['role'], runId: message['runId'] }, projectId, conversationId) };
   };
 
   // ---- Conversations --------------------------------------------------------
@@ -305,9 +320,10 @@ export function registerProjectConversationRoutes(app: Express, ctx: RegisterPro
       messages: messages.map((message) => {
         const runId = typeof message['runId'] === 'string' ? message['runId'] : null;
         const turn = runId ? turns.get(runId) : undefined;
-        if (!turn) return message;
+        const projected = withGenerationProjection(message, req.params.id, req.params.cid);
+        if (!turn) return projected;
         return {
-          ...message,
+          ...projected,
           strategyTaskExecutionId: turn.taskExecutionId,
           strategyTaskRunIndex: turn.taskRunIndex,
           ...(turn.delivered ? { strategyTaskDelivered: true } : {}),
@@ -586,13 +602,13 @@ export function registerProjectConversationRoutes(app: Express, ctx: RegisterPro
     // row tells the loser what actually ran instead of leaving it showing an
     // answer no run ever saw.
     if (m.createOnly === true && existing !== null) {
-      return res.json({ message: existing });
+      return res.json({ message: withGenerationProjection(existing, req.params.id, req.params.cid) });
     }
     const normalizedMessage = Array.isArray(m.events)
       ? { ...m, events: compactAdjacentMessageAgentEvents(m.events) }
       : m;
     const saved = upsertMessage(db, req.params.cid, {
-      ...mergeMessageWriteForDaemonBacked(existing, normalizedMessage),
+      ...withoutGenerationClaims(mergeMessageWriteForDaemonBacked(existing, normalizedMessage)),
       id: req.params.mid,
     });
     // Bump the parent project's updatedAt so the project list re-orders.
@@ -602,7 +618,7 @@ export function registerProjectConversationRoutes(app: Express, ctx: RegisterPro
       projectId: req.params.id,
       conversationId: req.params.cid,
     });
-    res.json({ message: saved });
+    res.json({ message: withGenerationProjection(saved, req.params.id, req.params.cid) });
   });
 
   registerProjectCommentRoutes(app, ctx);

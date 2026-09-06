@@ -8,7 +8,9 @@ import {
   OD_NEXT_PROMPT_BUNDLE_SCHEMA_V1,
   OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2,
   OD_NEXT_REQUEST_TURN_SCHEMA_V1,
+  parseDesignRepairTurnV1,
   serializeCanonicalXml,
+  serializeDesignRepairTurnV1,
   serializeOdNextPromptBundleV1,
   type AppliedPluginSnapshot,
   type OpenDesignPlanContractV2,
@@ -22,6 +24,8 @@ import { reconcileDurableRunTerminals } from '../../src/runtimes/run-terminal-re
 import {
   StrategyTaskTransitionConflictError,
   type CompareAndTransitionStrategyTaskInput,
+  type StrategyTaskExecutionRecord,
+  beginStrategyDesignRepair,
   cancelStrategyTaskExecution,
   compareAndTransitionStrategyTaskExecution as compareAndTransitionStrategyTaskExecutionRaw,
   createStrategyTaskExecution,
@@ -34,6 +38,7 @@ import {
   strategyTaskCreateIdentityFixture,
   strategyTaskTurnText,
 } from './strategy-task-test-fixtures.js';
+import { generationExecutionFixture, generationReportFixture } from '../fixtures/design-runtime/design-generation.js';
 
 const AGENT_ID = 'codex';
 
@@ -251,6 +256,25 @@ function createTask(
   });
 }
 
+function designRepairInput(task: StrategyTaskExecutionRecord) {
+  const execution = generationExecutionFixture();
+  execution.latestRunId = task.latestRunId;
+  const finalText = serializeDesignRepairTurnV1({
+    executionId: execution.id, sourceRunId: task.latestRunId, policy: execution.policy,
+    report: { ...generationReportFixture(execution), decision: 'repair_required' },
+    strategy: {
+      taskExecutionId: task.taskExecutionId, inputStage: task.inputStage, taskRunIndex: task.runs.length,
+      planContractHash: task.planContractHash ?? null, frozenInputIdentity: task.frozenInputIdentity,
+      productionContinuation: task.inputStage === 'production' ? task.runs.at(-1)!.finalText.text : null,
+    },
+  });
+  return {
+    taskExecutionId: task.taskExecutionId, expectedRevision: task.revision, sourceRunId: task.latestRunId,
+    runId: `${task.latestRunId}-design-repair`, finalText,
+    acceptedState: { route: task.route ?? 'direct_edit', inputStage: task.inputStage, outcome: 'completed' as const, executionMode: task.executionMode ?? 'simple' },
+  };
+}
+
 describe('durable strategy task store', () => {
   let tempDir: string;
   let db: Database.Database;
@@ -266,6 +290,98 @@ describe('durable strategy task store', () => {
     vi.restoreAllMocks();
     closeDatabase();
     fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  describe('host design repair claim', () => {
+    it('persists Direct Edit request-to-request repair and completes the same task after reopen', () => {
+      const source = createTask(db, snapshot);
+      const input = designRepairInput(source);
+      const repaired = beginStrategyDesignRepair(db, input);
+      expect(repaired).toMatchObject({ revision: source.revision + 1, route: 'direct_edit', inputStage: 'request',
+        outcome: 'running', executionMode: 'simple', initialRunId: source.initialRunId, activeRunId: input.runId, terminalRunId: null });
+      expect(repaired.runs.map(({ inputStage }) => inputStage)).toEqual(['request', 'request']);
+      expect(repaired.runs[1]).toMatchObject({ runId: input.runId, sourceRunId: source.latestRunId, taskRunIndex: 1,
+        finalText: { kind: 'design_repair', ...finalTextColumns(input.finalText) } });
+      expect(repaired.promptBundle).toEqual(source.promptBundle);
+      expect(repaired.frozenInputIdentity).toEqual(source.frozenInputIdentity);
+      closeDatabase();
+      db = openDatabase(tempDir, { dataDir: tempDir });
+      expect(getStrategyTaskExecutionByRunId(db, input.runId)).toEqual(repaired);
+      const completed = compareAndTransitionStrategyTaskExecution(db, {
+        taskExecutionId: repaired.taskExecutionId, expectedRevision: repaired.revision, to: input.acceptedState,
+      });
+      expect(completed).toMatchObject({ outcome: 'completed', terminalRunId: input.runId, latestRunId: input.runId });
+      expect(completed.runs).toHaveLength(2);
+    });
+
+    it('keeps Full Plan production repair bound to the locked plan and frozen inputs', () => {
+      const initial = createTask(db, snapshot);
+      const source = compareAndTransitionStrategyTaskExecution(db, {
+        taskExecutionId: initial.taskExecutionId, expectedRevision: initial.revision,
+        to: { route: 'full_plan', inputStage: 'production', outcome: 'running', executionMode: 'simple' },
+        nextRun: { runId: 'run-production', sourceRunId: initial.latestRunId }, planContract: planContract(snapshot),
+      });
+      const input = designRepairInput(source);
+      const repaired = beginStrategyDesignRepair(db, { ...input, planContract: source.planContract! });
+      expect(repaired.runs.map(({ inputStage }) => inputStage)).toEqual(['request', 'production', 'production']);
+      expect(repaired).toMatchObject({ route: 'full_plan', inputStage: 'production', outcome: 'running',
+        planContract: source.planContract, planContractHash: source.planContractHash, frozenSkillPackage: source.frozenSkillPackage,
+        frozenInputIdentity: source.frozenInputIdentity, promptBundle: source.promptBundle, clarificationCount: 0, planContractRepairAttempts: 0 });
+      expect(parseDesignRepairTurnV1(repaired.runs[2]!.finalText.text).strategy).toMatchObject({
+        taskRunIndex: 2, inputStage: 'production', planContractHash: source.planContractHash,
+        productionContinuation: source.runs[1]!.finalText.text, frozenInputIdentity: source.frozenInputIdentity,
+      });
+      const completed = compareAndTransitionStrategyTaskExecution(db, {
+        taskExecutionId: repaired.taskExecutionId, expectedRevision: repaired.revision, to: input.acceptedState,
+      });
+      expect(completed.terminalRunId).toBe(input.runId);
+      expect(completed.planContractHash).toBe(source.planContractHash);
+    });
+
+    it.each(['source', 'task', 'stage', 'index', 'plan', 'frozen inputs', 'noncanonical text'] as const)(
+      'rejects a changed %s envelope before persisting a child', (kind) => {
+        const source = createTask(db, snapshot);
+        const input = designRepairInput(source);
+        const envelope = parseDesignRepairTurnV1(input.finalText);
+        if (kind === 'source') { envelope.sourceRunId = 'foreign-run'; envelope.report.runId = 'foreign-run'; }
+        if (kind === 'task') envelope.strategy!.taskExecutionId = 'foreign-task';
+        if (kind === 'stage') envelope.strategy!.inputStage = 'production';
+        if (kind === 'index') envelope.strategy!.taskRunIndex = 2;
+        if (kind === 'plan') envelope.strategy!.planContractHash = 'a'.repeat(64);
+        if (kind === 'frozen inputs') envelope.strategy!.frozenInputIdentity.snapshotId = 'foreign-snapshot';
+        const finalText = kind === 'noncanonical text' ? ` ${input.finalText}` : serializeDesignRepairTurnV1(envelope);
+        expect(() => beginStrategyDesignRepair(db, { ...input, finalText })).toThrow(/envelope|canonical/i);
+        expect(getStrategyTaskExecution(db, source.taskExecutionId)).toEqual(source);
+        expect(getStrategyTaskExecutionByRunId(db, input.runId)).toBeNull();
+      },
+    );
+
+    it('rejects replayed claims and a second host repair without changing the first claim', () => {
+      const source = createTask(db, snapshot);
+      const input = designRepairInput(source);
+      const repaired = beginStrategyDesignRepair(db, input);
+      expect(() => beginStrategyDesignRepair(db, input)).toThrow(StrategyTaskTransitionConflictError);
+      const second = designRepairInput(repaired);
+      expect(() => beginStrategyDesignRepair(db, second)).toThrow(/only one host design repair/i);
+      expect(getStrategyTaskExecution(db, source.taskExecutionId)).toEqual(repaired);
+      expect(getStrategyTaskExecutionByRunId(db, second.runId)).toBeNull();
+    });
+
+    it.each(['direct_edit', 'full_plan'] as const)('keeps ordinary repeated %s stages forbidden', (route) => {
+      let source = createTask(db, snapshot);
+      if (route === 'full_plan') source = compareAndTransitionStrategyTaskExecution(db, {
+        taskExecutionId: source.taskExecutionId, expectedRevision: source.revision,
+        to: { route, inputStage: 'production', outcome: 'running', executionMode: 'simple' },
+        nextRun: { runId: 'run-production', sourceRunId: source.latestRunId }, planContract: planContract(snapshot),
+      });
+      const input = designRepairInput(source);
+      expect(() => compareAndTransitionStrategyTaskExecutionRaw(db, {
+        taskExecutionId: source.taskExecutionId, expectedRevision: source.revision,
+        to: { ...input.acceptedState, outcome: 'running' },
+        nextRun: { runId: input.runId, sourceRunId: source.latestRunId, finalText: input.finalText },
+      })).toThrow(/Direct Edit|different physical stage|transition/i);
+      expect(getStrategyTaskExecution(db, source.taskExecutionId)).toEqual(source);
+    });
   });
 
   it('adds nullable/versioned tables without changing ordinary Run queries', () => {

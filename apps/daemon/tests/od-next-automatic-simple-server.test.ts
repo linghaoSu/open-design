@@ -16,6 +16,7 @@ import {
   normalizeAgentObservationV1,
   OD_NEXT_PROMPT_STAGE_CONTRACT_V2,
   parseOdNextPromptBundleV2,
+  parseDesignRepairTurnV1,
 } from '@open-design/contracts';
 
 const uuidControl = vi.hoisted(() => ({ forced: [] as string[] }));
@@ -71,6 +72,7 @@ type RunStatus = {
   error?: string | null;
   errorCode?: string | null;
   designGeneration?: import('@open-design/contracts').DesignGenerationReport;
+  designGenerationTask?: import('@open-design/contracts').DesignGenerationTaskProjection;
   strategyTask?: {
     taskExecutionId: string;
     inputStage: string;
@@ -1734,6 +1736,71 @@ describe('OD Next automatic production through the real server', () => {
     expect(rows).toHaveLength(2); expect(rows[0]?.execution_id).toBe(rows[1]?.execution_id);
   }, 90_000);
 
+  it.each([false, true])('pauses authenticated OD Next clarification without a child (planning edits: %s)', async (edits) => {
+    const fixture = await createFixture('repair');
+    await writeFile(fixture.logPath + '.design-question', 'enabled');
+    if (edits) await writeFile(fixture.logPath + '.design-question-edit', 'enabled');
+    queueFixtureIds(fixture);
+    await postRun(started!.url, createRunRequest(fixture, 'Plan the prototype and ask for the missing audience.'));
+    const task = await waitForTask(fixture.taskExecutionId, 'clarification_required');
+    const run = await waitForRunTerminal(started!.url, fixture.initialRunId);
+    expect(task.runs).toHaveLength(1); expect(run.status).toBe('succeeded');
+    expect(run.designGenerationTask).toMatchObject({ status: 'awaiting_input', attempt: 0, activeRunId: run.id, nextRunId: null });
+    expect(run.designGeneration).toMatchObject({ decision: edits ? 'advisory' : 'not_applicable' });
+    expect(await readProjectInvocations(fixture.logPath, fixture.projectId)).toHaveLength(1);
+  }, 90_000);
+
+  it.each(['simple', 'direct', 'complex'] as const)('keeps exact %s OD Next production authority through one design repair', async (kind) => {
+    const capability = kind === 'complex' ? resolveBundledOdNextRuntimeCapability({ agentId: 'claude', agentCliVersion: '2.1.233 (Claude Code)' }).snapshot : undefined;
+    if (kind === 'complex' && !capability) throw new Error('Expected native Claude capability');
+    const fixture = kind === 'complex' ? await createFixture('complex', { selectedAgentId: 'claude', capability: capability! }) : await createFixture('repair');
+    await writeFile(fixture.logPath + '.design-repair', 'enabled');
+    if (kind === 'direct') {
+      await writeFile(fixture.logPath + '.design-direct', 'enabled');
+      await mkdir(path.join(process.env.OD_DATA_DIR!, 'projects', fixture.projectId), { recursive: true });
+      await writeFile(path.join(process.env.OD_DATA_DIR!, 'projects', fixture.projectId, 'index.html'), '<!doctype html><title>Existing</title>');
+    } else if (kind === 'simple') await writeFile(fixture.logPath + '.generation-simple', 'enabled');
+    const settingsUrl = `${started!.url}/api/projects/${fixture.projectId}/design-runtime/validation/settings`;
+    const initial = await (await fetch(settingsUrl)).json() as any;
+    const settings = initial.settings; settings.mode = 'guided'; settings.projectConstraints.guided.rawCss.colors = 'error';
+    expect((await fetch(settingsUrl, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expectedRevision: initial.revision, settings }) })).status).toBe(200);
+    queueFixtureIds(fixture);
+    await postRun(started!.url, { ...createRunRequest(fixture, kind === 'direct' ? 'Update the existing title only.' : 'Build the operator prototype.'), ...(kind === 'direct' ? { sessionMode: 'chat' } : {}) });
+    let terminal;
+    try { terminal = await waitForTask(fixture.taskExecutionId, 'completed'); }
+    catch {
+      const failed = getStrategyTaskExecution(database(), fixture.taskExecutionId)!;
+      const statuses = await Promise.all(failed.runs.map((mapping) => getRun(started!.url, mapping.runId)));
+      throw new Error(JSON.stringify(statuses.map((run) => ({ id: run.id, status: run.status, error: run.error, errorCode: run.errorCode, report: run.designGeneration?.decision }))));
+    }
+    await waitForRunTerminal(started!.url, terminal.latestRunId);
+    expect(terminal.runs.map((run) => run.inputStage)).toEqual(kind === 'direct' ? ['request', 'request'] : ['request', 'production', 'production']);
+    expect(terminal.runs.at(-1)?.finalText.kind).toBe('design_repair');
+    const statuses = await Promise.all(terminal.runs.map((run) => getRun(started!.url, run.runId)));
+    expect(statuses.map((run) => run.status)).toEqual(terminal.runs.map(() => 'succeeded'));
+    expect(statuses.map((run) => run.designGeneration?.attempt)).toEqual(kind === 'direct' ? [0, 1] : [0, 0, 1]);
+    expect(statuses.at(-1)?.designGeneration).toMatchObject({ decision: 'accepted', attempt: 1 });
+    expect(new Set(statuses.map((run) => run.designGeneration?.policyDigest)).size).toBe(1);
+    expect(new Set(statuses.map((run) => run.designGeneration?.inventory.baselineDigest)).size).toBe(1);
+    const invocations = kind === 'complex' ? await readClaudeInvocations(fixture.logPath, fixture.projectId) : await readProjectInvocations(fixture.logPath, fixture.projectId);
+    expect(invocations).toHaveLength(terminal.runs.length);
+    const repairPrompt = kind === 'complex' ? (JSON.parse(invocations.at(-1)!.stdin) as any).message.content[0].text : invocations.at(-1)!.stdin;
+    expect(repairPrompt).toBe(terminal.runs.at(-1)?.finalText.text);
+    const repair = parseDesignRepairTurnV1(repairPrompt);
+    expect(repair.strategy).toMatchObject({ inputStage: kind === 'direct' ? 'request' : 'production', taskRunIndex: terminal.runs.length - 1,
+      planContractHash: terminal.planContractHash ?? null, frozenInputIdentity: terminal.frozenInputIdentity });
+    expect(invocations.at(-1)!.argv).toContain(kind === 'complex' ? '--resume' : 'resume');
+    const sourceStatus = await getRun(started!.url, fixture.initialRunId);
+    expect(sourceStatus.designGenerationTask).toMatchObject({ status: 'succeeded', nextRunId: terminal.latestRunId, attempt: 1 });
+    expect(sourceStatus.strategyTask).toMatchObject({ activeRunId: terminal.latestRunId, nextRunId: terminal.latestRunId });
+    if (kind === 'complex') {
+      const handles = invocations.slice(1).map((invocation) => Object.keys(JSON.parse(invocation.argv[invocation.argv.indexOf('--agents') + 1]!)));
+      expect(handles[0]).toHaveLength(2); expect(handles[1]).toHaveLength(2); expect(handles[0]).not.toEqual(handles[1]);
+      const facts = await readClaudeChildRuntimeFacts(statuses.at(-1)!.eventsLogPath);
+      expect(facts.filter((fact) => fact.state === 'completed').map((fact) => fact.buildPackageId)).toEqual(['shell', 'flow']);
+    }
+  }, 90_000);
+
   it('runs parsed plan -> serialization repair -> production after each source end and remains exactly-once across restart', async () => {
     const fixture = await createFixture('repair');
     const sourcePdfAttachment = path.join(
@@ -3018,7 +3085,10 @@ function finish() {
     process.exit(2);
   }
   let text;
-  if (mode === 'direct') {
+  if (fs.existsSync(logPath + '.design-question')) {
+    if (fs.existsSync(logPath + '.design-question-edit')) fs.writeFileSync(path.join(process.cwd(), 'planning.html'), '<!doctype html><title>Initial plan</title>');
+    text = ${JSON.stringify('<question-form>{"id":"audience","title":"Audience","questions":[{"id":"audience","type":"text","label":"Who is this for?"}]}</question-form>\n' + machineBlock('open-design-runtime-state', { schema: 'open-design.strategy-state/v2', route: 'full_plan', inputStage: 'request', outcome: 'clarification_required', executionMode: 'simple', reasonCodes: [] }))};
+  } else if (mode === 'direct' || fs.existsSync(logPath + '.design-direct')) {
     fs.writeFileSync(path.join(process.cwd(), 'index.html'), '<!doctype html><title>Direct</title>');
     text = ${JSON.stringify(direct)};
   } else if (mode === 'complex' && stdin.includes('native continuation — production')) {
@@ -3037,6 +3107,9 @@ function finish() {
     text = ${JSON.stringify([machineBlock('open-design-plan-contract', plan), machineBlock('open-design-runtime-state', runtimeState({ outcome: 'plan_ready' }))].join('\n'))};
   } else {
     text = ${JSON.stringify(initialRepair)};
+  }
+  if (fs.existsSync(logPath + '.design-repair') && text.includes('"outcome":"completed"')) {
+    fs.writeFileSync(path.join(process.cwd(), 'index.html'), stdin.includes('open-design.design-repair-turn/v1') ? '<!doctype html><title>Repaired</title>' : '<!doctype html><main style="color:#ff0000">Needs repair</main>');
   }
   const snapshotPath = logPath + '.snapshot';
   // The Bundle publishes the applied snapshot as a <recipe_identity> attribute
@@ -3163,6 +3236,7 @@ function finish() {
       });
     }
     fs.writeFileSync(path.join(process.cwd(), 'index.html'), '<!doctype html><title>Claude Complex</title>');
+    if (fs.existsSync(logPath + '.design-repair')) fs.writeFileSync(path.join(process.cwd(), 'index.html'), stdin.includes('open-design.design-repair-turn/v1') ? '<!doctype html><title>Repaired complex</title>' : '<!doctype html><main style=\"color:#ff0000\">Needs repair</main>');
   }
   w({ type: 'assistant', parent_tool_use_id: null, message: { id: 'final', content: [{ type: 'text', text }], stop_reason: 'end_turn' } });
   w({ type: 'result', subtype: 'success', is_error: false, session_id: 'claude-complex-session', stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 5 }, duration_ms: 30 });

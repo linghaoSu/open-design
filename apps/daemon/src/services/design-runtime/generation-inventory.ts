@@ -15,6 +15,8 @@ export interface GenerationInventoryIO {
 export const generationInventoryIO: GenerationInventoryIO = { realpath, lstat,
   readdir: (target) => readdir(target, { withFileTypes: true }),
   open: (target) => open(target, constants.O_RDONLY | constants.O_NONBLOCK | (constants.O_NOFOLLOW ?? 0)) };
+// The daemon's immutable HTML history is evidence of earlier bytes, not live
+// application source. An output/import into it remains unavailable to analysis.
 const excluded = new Set(['.git', 'node_modules']);
 const unsupported = new Set(['.scss', '.sass', '.less', '.styl', '.svelte', '.astro', '.mdx']);
 export const generationDigest = (value: string | Uint8Array): string => `sha256:${createHash('sha256').update(value).digest('hex')}`;
@@ -52,7 +54,7 @@ export async function captureGenerationInventory(projectRoot: string, limits: Ge
     catch { diagnostics.push(generationInventoryDiagnostic('A project directory could not be read completely.', relative)); return; }
     entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
     for (const entry of entries) {
-      if (entry.isDirectory() && excluded.has(entry.name)) continue;
+      if (entry.isDirectory() && (excluded.has(entry.name) || relative === '' && entry.name === '.file-versions')) continue;
       if (++entriesSeen > maxEntries) {
         if (!capped) diagnostics.push(generationInventoryDiagnostic('Project source inventory exceeded its entry limit.'));
         capped = true; return;

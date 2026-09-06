@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { DesignGenerationReportSchema, strategyTaskProvesDelivery, todoSnapshotHasUnfinishedWork } from '@open-design/contracts';
+import { DesignEntityIdSchema, DesignGenerationReportSchema, strategyTaskProvesDelivery, todoSnapshotHasUnfinishedWork } from '@open-design/contracts';
 import {
   collectProcessTreePids,
   listProcessSnapshots,
@@ -597,6 +597,8 @@ function durableRunState(run) {
     ...(typeof run.artifactVersionId === 'string'
       ? { artifactVersionId: run.artifactVersionId }
       : {}),
+    ...(run.designGenerationExecutionId ? { designGenerationExecutionId: run.designGenerationExecutionId } : {}),
+    ...(run.designGenerationAttempt === 0 || run.designGenerationAttempt === 1 ? { designGenerationAttempt: run.designGenerationAttempt } : {}),
     ...(run.designGeneration ? { designGeneration: run.designGeneration } : {}),
     ...(typeof run.deliverableValid === 'boolean'
       ? { deliverableValid: run.deliverableValid }
@@ -652,6 +654,10 @@ function readDurableRunState(statePath) {
       if (report.success && report.data.runId === value.id) value.designGeneration = report.data;
       else delete value.designGeneration;
     }
+    if (value.designGenerationExecutionId !== undefined && !DesignEntityIdSchema.safeParse(value.designGenerationExecutionId).success) delete value.designGenerationExecutionId;
+    if (value.designGenerationAttempt !== 0 && value.designGenerationAttempt !== 1) delete value.designGenerationAttempt;
+    // This projection is derived from the durable logical task, never a stale run snapshot.
+    delete value.designGenerationTask;
     return value;
   } catch {
     return null;
@@ -699,6 +705,9 @@ export function createChatRunService({
   // hook here covers startup failures and daemon shutdown in addition to the
   // normal child-close path.
   beforeFinish = null,
+  // Refresh daemon-owned logical projections from their durable authority.
+  // The callback reads physical status directly; it must not recurse through statusBody.
+  projectRunState = null,
   // Optional synchronous terminal hook. It runs after the terminal state is
   // durable but before the terminal SSE event is published, so local outbox
   // writes share the exact terminal timestamp without delaying on delivery.
@@ -1307,6 +1316,10 @@ export function createChatRunService({
     // during that bounded window. The termination barrier itself may still
     // publish `termination_failed` evidence before the final `end` event.
     if (run.pendingTerminalFinish && event !== 'diagnostic') return null;
+    if (event === 'start' || event === 'end' || event === 'diagnostic' && data?.type === 'design_generation') {
+      if (projectRunState) projectRunState(run);
+      if (run.designGenerationTask) data = { ...data, designGenerationTask: run.designGenerationTask };
+    }
     if (event === 'error') {
       const details = extractErrorDetails(data);
       if (details.error) run.error = details.error;
@@ -1339,7 +1352,9 @@ export function createChatRunService({
     return record;
   };
 
-  const statusBody = (run) => ({
+  const statusBody = (run) => {
+    if (projectRunState) projectRunState(run);
+    return ({
     id: run.id,
     projectId: run.projectId,
     conversationId: run.conversationId,
@@ -1399,6 +1414,7 @@ export function createChatRunService({
       ? { artifactVersionId: run.artifactVersionId }
       : {}),
     ...(run.designGeneration ? { designGeneration: run.designGeneration } : {}),
+    ...(run.designGenerationTask ? { designGenerationTask: run.designGenerationTask } : {}),
     ...(typeof run.deliverableValid === 'boolean'
       ? { deliverableValid: run.deliverableValid }
       : {}),
@@ -1417,6 +1433,7 @@ export function createChatRunService({
       ? { executionDiagnostics: buildExecutionDiagnostics(run) }
       : {}),
   });
+  };
 
   const commitFinish = (
     run,
@@ -1433,6 +1450,7 @@ export function createChatRunService({
     run.signal = signal;
     run.updatedAt = terminalAt;
     run.terminalAt = terminalAt;
+    if (projectRunState) projectRunState(run);
     // Derive the work-completeness flag once, at the single terminal choke point,
     // from the signals the agent-event handler folded onto the run. Uses the
     // canonical predicate so it can never diverge from the web chat footer
@@ -1466,6 +1484,7 @@ export function createChatRunService({
     // Terminal finalizers can add artifact metadata after the authoritative
     // terminal timestamp snapshot. Persist once more before publishing `end`
     // so restart hydration sees the same artifact result as live clients.
+    if (projectRunState) projectRunState(run);
     persistTerminalState(run);
     emit(run, 'end', {
       code,

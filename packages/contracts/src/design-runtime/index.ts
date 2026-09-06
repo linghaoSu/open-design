@@ -19,6 +19,7 @@ export * from './handoff.js';
 export * from './design-validation.js';
 export * from './generation-targets.js';
 export * from './design-generation.js';
+export * from './generation-task.js';
 export * from './migration-recipes.js';
 export * from './migration-recipe-plan.js';
 export * from './pattern-runtime.js';

@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 
 import {
   AppliedStrategyBindingV2Schema,
+  DESIGN_REPAIR_TURN_SCHEMA_V1,
+  parseDesignRepairTurnV1,
   OD_NEXT_PROMPT_BUNDLE_SCHEMA_V1,
   OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2,
   OD_NEXT_REQUEST_TURN_SCHEMA_V1,
@@ -56,6 +58,7 @@ const COMPOSED_PROMPT_BUNDLE_SCHEMA = OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2;
 const ACCEPTED_FINAL_TEXT_SCHEMAS = {
   bundle: [OD_NEXT_PROMPT_BUNDLE_SCHEMA_V1, OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2],
   turn: [OD_NEXT_REQUEST_TURN_SCHEMA_V1],
+  design_repair: [DESIGN_REPAIR_TURN_SCHEMA_V1],
 } as const satisfies Record<
   StrategyTaskFinalTextKind,
   ReadonlyArray<StrategyTaskFinalTextSchema>
@@ -71,7 +74,7 @@ export interface StrategyTaskRunMapping {
   finalText: StrategyTaskFinalTextIdentity;
 }
 
-export type StrategyTaskFinalTextKind = 'bundle' | 'turn';
+export type StrategyTaskFinalTextKind = 'bundle' | 'turn' | 'design_repair';
 
 /**
  * A stored final text always carries the schema it was written with. Prompt
@@ -81,6 +84,7 @@ export type StrategyTaskFinalTextKind = 'bundle' | 'turn';
 export type StrategyTaskFinalTextSchema =
   | typeof OD_NEXT_PROMPT_BUNDLE_SCHEMA_V1
   | typeof OD_NEXT_PROMPT_BUNDLE_SCHEMA_V2
+  | typeof DESIGN_REPAIR_TURN_SCHEMA_V1
   | typeof OD_NEXT_REQUEST_TURN_SCHEMA_V1;
 
 export interface StrategyTaskFinalTextIdentity {
@@ -649,6 +653,37 @@ export function compareAndTransitionStrategyTaskExecution(
   return requireTask(db, input.taskExecutionId);
 }
 
+/** Host-only same-stage repair; the ordinary agent-authored stage grammar is unchanged. */
+export function beginStrategyDesignRepair(db: SqliteDb, input: {
+  taskExecutionId: string; expectedRevision: number; sourceRunId: string; runId: string; finalText: string;
+  acceptedState: StrategyTaskTransitionState; planContract?: OpenDesignPlanContractV2; updatedAt?: number;
+}): StrategyTaskExecutionRecord {
+  const claim = db.transaction(() => {
+    const current = requireTask(db, input.taskExecutionId);
+    if (current.revision !== input.expectedRevision || current.latestRunId !== input.sourceRunId || current.outcome !== 'running') throw new StrategyTaskTransitionConflictError('A stale or terminal strategy Run cannot claim design repair.');
+    if (current.runs.some((mapping) => mapping.finalText.kind === 'design_repair')) throw new InvalidStrategyTaskTransitionError('A strategy task permits only one host design repair.');
+    if (input.acceptedState.outcome !== 'completed' || input.acceptedState.inputStage !== current.inputStage) throw new InvalidStrategyTaskTransitionError('Design repair requires validated completion of this same production stage.');
+    const accepted = validateTransition(current, { taskExecutionId: current.taskExecutionId, expectedRevision: current.revision, to: input.acceptedState });
+    if (!(accepted.route === 'direct_edit' && accepted.inputStage === 'request' || accepted.route === 'full_plan' && accepted.inputStage === 'production')) throw new InvalidStrategyTaskTransitionError('Design repair is restricted to production or Direct Edit completion.');
+    const plan = resolvePlanContract(current, input.planContract, accepted);
+    const envelope = parseDesignRepairTurnV1(input.finalText);
+    if (!envelope.strategy || envelope.sourceRunId !== input.sourceRunId || envelope.strategy.taskExecutionId !== current.taskExecutionId
+      || envelope.strategy.inputStage !== current.inputStage || envelope.strategy.taskRunIndex !== current.runs.length
+      || envelope.strategy.planContractHash !== plan.hash || JSON.stringify(envelope.strategy.frozenInputIdentity) !== JSON.stringify(current.frozenInputIdentity)) throw new InvalidStrategyTaskTransitionError('Host repair envelope must retain exact task, plan, source and frozen inputs.');
+    const identity = finalTextIdentity({ kind: 'design_repair', schema: DESIGN_REPAIR_TURN_SCHEMA_V1, text: input.finalText });
+    const at = normalizeTimestamp(input.updatedAt ?? Date.now(), 'updatedAt');
+    if (at < current.updatedAt) throw new InvalidStrategyTaskTransitionError('Repair timestamp cannot move backward.');
+    const changed = db.prepare(`UPDATE strategy_task_executions SET revision=revision+1, route=?, execution_mode=?, outcome='running',
+      plan_contract_json=?, plan_contract_hash=?, latest_run_id=?, updated_at=? WHERE task_execution_id=? AND revision=?`).run(
+      accepted.route, accepted.executionMode, plan.json, plan.hash, input.runId, at, current.taskExecutionId, current.revision);
+    if (changed.changes !== 1) throw new StrategyTaskTransitionConflictError('Strategy repair claim lost its revision.');
+    db.prepare(`INSERT INTO strategy_task_runs(task_execution_id,run_id,input_stage,task_run_index,source_run_id,final_text_kind,final_text_schema,final_text,final_text_utf8_bytes,final_text_sha256,created_at)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(current.taskExecutionId, input.runId, current.inputStage, current.runs.length, input.sourceRunId, identity.kind, identity.schema, identity.text, identity.utf8Bytes, identity.sha256, at);
+    return requireTask(db, current.taskExecutionId);
+  });
+  return claim.immediate();
+}
+
 export function cancelStrategyTaskExecution(
   db: SqliteDb,
   input: {
@@ -943,6 +978,10 @@ function rowToTask(db: SqliteDb, row: DbRow): StrategyTaskExecutionRecord {
       frozenSkillPackageIdentity: frozenSkillPackage.identity,
     },
   );
+  for (const mapping of mappings) if (mapping.finalText.kind === 'design_repair') {
+    const envelope = parseDesignRepairTurnV1(mapping.finalText.text);
+    if (JSON.stringify(envelope.strategy?.frozenInputIdentity) !== JSON.stringify(frozenInputIdentity) || envelope.strategy?.planContractHash !== (plan.hash ?? null)) throw new InvalidStrategyTaskRecordError('Persisted design repair changed the frozen inputs or locked plan.');
+  }
   return {
     schemaVersion: TASK_STORE_SCHEMA_VERSION,
     revision: requireNonNegativeInteger(row['revision'], 'revision'),
@@ -1166,7 +1205,7 @@ function parseStoredFinalText(input: {
   utf8Bytes: unknown;
   sha256: unknown;
 }): StrategyTaskFinalTextIdentity {
-  if (input.kind !== 'bundle' && input.kind !== 'turn') {
+  if (input.kind !== 'bundle' && input.kind !== 'turn' && input.kind !== 'design_repair') {
     throw new InvalidStrategyTaskRecordError(
       'Mapped OD Next task Run is missing its final text kind.',
     );
@@ -1204,6 +1243,11 @@ function validateMappedFinalText(
       );
     }
     parseStoredPromptBundle(identity);
+    return;
+  }
+  if (identity.kind === 'design_repair') {
+    const envelope = parseDesignRepairTurnV1(identity.text);
+    if (envelope.strategy?.taskExecutionId !== mapping.taskExecutionId || envelope.strategy.inputStage !== mapping.inputStage || envelope.strategy.taskRunIndex !== mapping.taskRunIndex) throw new InvalidStrategyTaskRecordError('Persisted host repair text does not match its same-stage task Run.');
     return;
   }
   if (identity.kind !== 'turn' || mapping.inputStage === 'request') {
@@ -1336,12 +1380,16 @@ function validateRunChain(
         'Each strategy task Run must source the immediately preceding Run.',
       );
     }
-    if (!allowed.has(`${previous.inputStage}:${current.inputStage}`)) {
+    const designRepair = current.finalText.kind === 'design_repair';
+    if (designRepair && (current.inputStage !== previous.inputStage || parseDesignRepairTurnV1(current.finalText.text).sourceRunId !== previous.runId)) throw new InvalidStrategyTaskRecordError('Host design repair must follow its exact same-stage source Run.');
+    if (!designRepair && !allowed.has(`${previous.inputStage}:${current.inputStage}`)) {
       throw new InvalidStrategyTaskRecordError(
         'Strategy task Run stages must be ordered and cannot repeat or move backward.',
       );
     }
   }
+  const designRepairCount = mappings.filter((mapping) => mapping.finalText.kind === 'design_repair').length;
+  if (designRepairCount > 1) throw new InvalidStrategyTaskRecordError('A strategy Run chain cannot reset its host design repair budget.');
   const clarificationMappings = mappings.filter(
     (mapping) => mapping.inputStage === 'clarification',
   ).length;
@@ -1362,7 +1410,7 @@ function validateRunChain(
     );
   }
   if (route === 'direct_edit' && (
-    mappings.length !== 1
+    mappings.length !== 1 + designRepairCount
     || mappings[0]?.inputStage !== 'request'
   )) {
     throw new InvalidStrategyTaskRecordError(

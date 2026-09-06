@@ -1,4 +1,5 @@
 import type { DesignGenerationReport } from '../design-runtime/design-generation.js';
+import type { DesignGenerationTaskProjection } from '../design-runtime/generation-task.js';
 import type { ProjectFile, ProjectFileKind } from './files';
 import type { RunResultPackageResponse, RunWorkspace } from './workspaces.js';
 import type {
@@ -679,6 +680,7 @@ export interface ChatRunExecutionDiagnostics {
 }
 
 export interface ChatRunStatusResponse {
+  designGenerationTask?: DesignGenerationTaskProjection;
   id: string;
   projectId: string | null;
   conversationId: string | null;
@@ -948,6 +950,11 @@ export type PersistedAgentEvent =
   | { kind: 'raw'; line: string };
 
 export interface ChatMessage {
+  /** Immutable daemon-stamped identity and physical attempt of this assistant row. */
+  designGenerationExecutionId?: string;
+  designGenerationAttempt?: 0 | 1;
+  designGeneration?: DesignGenerationReport;
+  designGenerationTask?: DesignGenerationTaskProjection;
   id: string;
   role: ChatRole;
   content: string;

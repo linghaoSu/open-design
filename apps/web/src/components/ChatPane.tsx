@@ -1,3 +1,4 @@
+import { logicalMessagePosition, designGenerationRunStatus, designGenerationAllowsDelivery } from '../runtime/design-generation';
 import {
   Fragment,
   memo,
@@ -838,14 +839,15 @@ const ANCHOR_TOP_PADDING = 12;
  * is duplicated.
  */
 export function foldStrategyTaskTurns(messages: ChatMessage[]): ChatMessage[] {
-  if (!messages.some((message) => (message.strategyTaskRunIndex ?? 0) > 0)) {
+  if (!messages.some((message) => (logicalMessagePosition(message)?.index ?? 0) > 0)) {
     return messages;
   }
   const folded: ChatMessage[] = [];
   const turnHeadIndexByTask = new Map<string, number>();
   for (const message of messages) {
-    const taskId = message.strategyTaskExecutionId;
-    const runIndex = message.strategyTaskRunIndex ?? 0;
+    const position = logicalMessagePosition(message);
+    const taskId = position?.id;
+    const runIndex = position?.index ?? 0;
     if (message.role !== 'assistant' || !taskId) {
       folded.push(message);
       continue;
@@ -869,7 +871,10 @@ export function foldStrategyTaskTurns(messages: ChatMessage[]): ChatMessage[] {
       // The turn's status is the latest Run's: the earlier Runs finishing is an
       // internal step, not the turn ending.
       runId: message.runId ?? head.runId,
-      runStatus: message.runStatus ?? head.runStatus,
+      runStatus: message.designGenerationTask ? designGenerationRunStatus(message.designGenerationTask) : message.runStatus ?? head.runStatus,
+      ...(message.designGenerationTask ? { designGenerationTask: message.designGenerationTask } : {}),
+      ...(message.designGeneration ? { designGeneration: message.designGeneration } : {}),
+      ...(message.designGenerationExecutionId ? { designGenerationExecutionId: message.designGenerationExecutionId } : {}),
       // Likewise the task verdict: only the final Run of the chain carries it,
       // and the folded turn is what the pinned todo card reads.
       ...(message.strategyTaskDelivered
@@ -4128,7 +4133,7 @@ function PinnedTodoSlot({
       <TodoCard
         input={input}
         runStreaming={streaming}
-        runSucceeded={!streaming}
+        runSucceeded={!streaming && (!owner || designGenerationAllowsDelivery(owner))}
         onContinue={
           owner && snapshotKey && unfinishedTodos.length > 0 && onContinueRemainingTasks
             ? () => {

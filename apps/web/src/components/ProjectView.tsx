@@ -19,6 +19,7 @@ import { validateHtmlArtifact } from '../artifacts/validate';
 import { recoverHtmlDocumentFromMarkdownFence, recoverStandaloneHtmlDocument, resolvePersistedArtifactHtml } from '../artifacts/recover';
 import { createArtifactParser } from '../artifacts/parser';
 import { useI18n } from '../i18n';
+import { designGenerationMessageFields, readDesignGenerationRunStatus, designGenerationRunStatus, designGenerationSuccessor, logicalMessagePosition, readDesignGenerationUpdate, type DesignGenerationUpdate } from '../runtime/design-generation';
 import {
   fetchChatRunStatus,
   GENERIC_DAEMON_DISCONNECT_CODE,
@@ -491,16 +492,17 @@ function messagesThatAbsorbedASuccessorRun(
 ): Set<string> {
   const lastRunIndexByTask = new Map<string, number>();
   for (const message of serverMessages) {
-    const task = message.strategyTaskExecutionId;
-    if (!task) continue;
-    const runIndex = message.strategyTaskRunIndex ?? 0;
+    const position = logicalMessagePosition(message);
+    if (!position) continue;
+    const { id: task, index: runIndex } = position;
     lastRunIndexByTask.set(task, Math.max(lastRunIndexByTask.get(task) ?? 0, runIndex));
   }
   const absorbed = new Set<string>();
   for (const message of serverMessages) {
-    const task = message.strategyTaskExecutionId;
-    if (!task) continue;
-    if ((message.strategyTaskRunIndex ?? 0) < (lastRunIndexByTask.get(task) ?? 0)) {
+    const position = logicalMessagePosition(message);
+    if (!position) continue;
+    const task = position.id;
+    if (position.index < (lastRunIndexByTask.get(task) ?? 0)) {
       absorbed.add(message.id);
     }
   }
@@ -5336,9 +5338,8 @@ export function ProjectView({
         // this row otherwise looks terminal; completed task rows bail out
         // below without replaying their final Run again.
         const needsTaskProjectionProbe = Boolean(
-          message.strategyTaskExecutionId
-          && message.runId
-          && message.runStatus === 'succeeded',
+          message.runId && (message.designGenerationExecutionId
+            || message.strategyTaskExecutionId && message.runStatus === 'succeeded'),
         );
         const needsFullReplay = needsReplayForMessage || needsTaskProjectionProbe;
         if (!needsFullReplay) continue;
@@ -5428,7 +5429,36 @@ export function ProjectView({
           }
           continue;
         }
-        const projectedActiveRunId = physicalStatus.strategyTask?.activeRunId;
+        let generationUpdate: DesignGenerationUpdate;
+        let generationSuccessor: string | undefined;
+        try {
+          generationUpdate = physicalStatus.designGenerationTask || message.designGenerationExecutionId
+            ? readDesignGenerationRunStatus(physicalStatus, runId, { projectId: project.id,
+              conversationId: reattachConversationId, previousTask: message.designGenerationTask })
+            : readDesignGenerationUpdate({ report: physicalStatus.designGeneration, runId });
+          if (generationUpdate.task) {
+            generationSuccessor = designGenerationSuccessor(generationUpdate.task, runId, physicalStatus.strategyTask);
+            if (generationSuccessor) {
+              const child = await fetchChatRunStatus(generationSuccessor, projectRunWorkspaceContext);
+              if (cancelled) return;
+              readDesignGenerationRunStatus(child, generationSuccessor, { projectId: project.id,
+                conversationId: reattachConversationId, previousTask: generationUpdate.task });
+              if (physicalStatus.strategyTask && child?.strategyTask?.taskExecutionId !== physicalStatus.strategyTask.taskExecutionId) {
+                throw new Error('The successor strategy execution changed.');
+              }
+            }
+          }
+        } catch (error) {
+          setError(error instanceof Error ? error.message : String(error));
+          updateMessageById(message.id, prev => ({ ...prev, runStatus: 'failed', resumable: false }), true);
+          completedReattachRunsRef.current.add(runId);
+          continue;
+        }
+        if (generationUpdate.task || generationUpdate.report) {
+          updateMessageById(message.id, prev => ({ ...prev, ...designGenerationMessageFields(prev, generationUpdate),
+            ...(generationUpdate.task ? { runStatus: designGenerationRunStatus(generationUpdate.task) } : {}) }), true);
+        }
+        const projectedActiveRunId = generationSuccessor ?? physicalStatus.strategyTask?.activeRunId;
         const taskRunAdvanced = Boolean(
           projectedActiveRunId
           && projectedActiveRunId !== runId,
@@ -5436,8 +5466,9 @@ export function ProjectView({
         const reattachRunId = taskRunAdvanced && projectedActiveRunId
           ? projectedActiveRunId
           : runId;
-        const projectedTaskStatus: ChatMessage['runStatus'] =
-          physicalStatus.strategyTask?.terminal === true
+        const projectedTaskStatus: ChatMessage['runStatus'] = generationUpdate.task
+          ? designGenerationRunStatus(generationUpdate.task)
+          : physicalStatus.strategyTask?.terminal === true
             ? physicalStatus.strategyTask.outcome === 'canceled'
               ? 'canceled'
               : physicalStatus.strategyTask.outcome === 'blocked'
@@ -5448,7 +5479,7 @@ export function ProjectView({
         // advanced the logical task. Treat the daemon projection as the
         // subscription truth: the predecessor's physical `succeeded` status
         // is not the user task terminal state.
-        const status = taskRunAdvanced
+        const status = taskRunAdvanced || generationUpdate.task
           ? {
               ...physicalStatus,
               id: reattachRunId,
@@ -5469,7 +5500,8 @@ export function ProjectView({
           needsTaskProjectionProbe
           && !needsReplayForMessage
           && !taskRunAdvanced
-          && (!status.strategyTask || status.strategyTask.terminal)
+          && (!status.strategyTask || status.strategyTask.terminal || generationUpdate.task?.status === 'awaiting_input')
+          && (!generationUpdate.task || !['running', 'repairing'].includes(generationUpdate.task.status))
         ) {
           completedReattachRunsRef.current.add(runId);
           continue;
@@ -5908,6 +5940,7 @@ export function ProjectView({
         void reattachDaemonRun({
           agentId: message.agentId,
           runId: reattachRunId,
+          ...(generationUpdate.task ? { initialDesignGenerationTask: generationUpdate.task } : {}),
           projectId: project.id,
           conversationId: reattachConversationId,
           workspaceContext: projectRunWorkspaceContext,
@@ -5928,7 +5961,10 @@ export function ProjectView({
               true,
             );
           },
-          onRunCreated: (nextRunId, strategyTask) => {
+          onDesignGeneration: (update) => {
+            updateMessageById(message.id, prev => ({ ...prev, ...designGenerationMessageFields(prev, update) }), true);
+          },
+          onRunCreated: (nextRunId, strategyTask, designGenerationTask) => {
             activeReattachRunId = nextRunId;
             claimReattachRun(nextRunId);
             textBuffer.flush();
@@ -5937,6 +5973,7 @@ export function ProjectView({
               (prev) => ({
                 ...prev,
                 runId: nextRunId,
+                ...(designGenerationTask ? designGenerationMessageFields(prev, { task: designGenerationTask }) : {}),
                 runStatus: 'running',
                 lastRunEventId: undefined,
                 strategyTaskPrefixLength: replayedContent.length,
@@ -8356,7 +8393,11 @@ export function ProjectView({
               true,
             );
           },
-          onRunCreated: (runId, strategyTask) => {
+          onDesignGeneration: (update) => {
+            latestAssistantMsg = { ...latestAssistantMsg, ...designGenerationMessageFields(latestAssistantMsg, update) };
+            updateMessageById(assistantId, prev => ({ ...prev, ...designGenerationMessageFields(prev, update) }), true);
+          },
+          onRunCreated: (runId, strategyTask, designGenerationTask) => {
             // A successor boundary must include the final predecessor delta
             // and buffered text event even when the 250ms UI batch has not
             // fired yet.
@@ -8368,12 +8409,13 @@ export function ProjectView({
             const strategyTaskExecutionId = strategyTask?.taskExecutionId
               ?? meta?.strategyTaskExecutionId;
             const isTaskSuccessor = Boolean(
-              strategyTask
+              (strategyTask || designGenerationTask)
               && latestAssistantMsg.runId
               && latestAssistantMsg.runId !== runId,
             );
             const pinnedAssistant = {
               ...latestAssistantMsg,
+              ...(designGenerationTask ? designGenerationMessageFields(latestAssistantMsg, { task: designGenerationTask }) : {}),
               runId,
               runStatus: 'queued' as const,
               taskAnalytics: resolvedTaskAnalytics,
@@ -8395,6 +8437,7 @@ export function ProjectView({
             });
             updateMessageById(assistantId, (prev) => ({
               ...prev,
+              ...(designGenerationTask ? designGenerationMessageFields(prev, { task: designGenerationTask }) : {}),
               runId,
               runStatus: 'queued',
               taskAnalytics: resolvedTaskAnalytics,
@@ -8569,7 +8612,11 @@ export function ProjectView({
             recoveryActionType: taskAnalytics.recoveryActionType,
             recoveryActionInstanceId: taskAnalytics.recoveryActionInstanceId,
           },
-          onRunCreated: (runId, strategyTask) => {
+          onDesignGeneration: (update) => {
+            latestAssistantMsg = { ...latestAssistantMsg, ...designGenerationMessageFields(latestAssistantMsg, update) };
+            updateMessageById(assistantId, prev => ({ ...prev, ...designGenerationMessageFields(prev, update) }), true);
+          },
+          onRunCreated: (runId, strategyTask, designGenerationTask) => {
             textBuffer.flush();
             const resolvedTaskAnalytics = {
               ...taskAnalytics,
@@ -8578,12 +8625,13 @@ export function ProjectView({
             const strategyTaskExecutionId = strategyTask?.taskExecutionId
               ?? meta?.strategyTaskExecutionId;
             const isTaskSuccessor = Boolean(
-              strategyTask
+              (strategyTask || designGenerationTask)
               && latestAssistantMsg.runId
               && latestAssistantMsg.runId !== runId,
             );
             const pinnedAssistant = {
               ...latestAssistantMsg,
+              ...(designGenerationTask ? designGenerationMessageFields(latestAssistantMsg, { task: designGenerationTask }) : {}),
               runId,
               runStatus: 'queued' as const,
               taskAnalytics: resolvedTaskAnalytics,
@@ -8597,11 +8645,13 @@ export function ProjectView({
               lastRunEventId: undefined,
             };
             latestAssistantMsg = pinnedAssistant;
+            currentRunId = runId;
             void saveMessage(project.id, runConversationId, pinnedAssistant, {
               workspaceContext: projectRunWorkspaceContext,
             });
             updateMessageById(assistantId, (prev) => ({
               ...prev,
+              ...(designGenerationTask ? designGenerationMessageFields(prev, { task: designGenerationTask }) : {}),
               runId,
               runStatus: 'queued',
               taskAnalytics: resolvedTaskAnalytics,

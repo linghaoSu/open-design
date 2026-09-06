@@ -1,4 +1,5 @@
 import type { DesignGenerationReport } from '../design-runtime/design-generation.js';
+import type { DesignGenerationTaskProjection } from '../design-runtime/generation-task.js';
 import type { LiveArtifactRefreshStatus } from '../api/live-artifacts.js';
 import type { RunFailureCategory, RunFailureDetail } from '../api/chat.js';
 import type { StrategyTaskProjectionV2 } from '../plugins/strategy-v2.js';
@@ -64,6 +65,7 @@ export interface ProjectConversationCreatedSsePayload {
 export const CHAT_SSE_PROTOCOL_VERSION = 1;
 
 export interface ChatSseStartPayload {
+  designGenerationTask?: DesignGenerationTaskProjection;
   runId?: string;
   agentId?: string;
   bin: string;
@@ -81,6 +83,7 @@ export interface ChatSseChunkPayload {
 }
 
 export interface ChatSseEndPayload {
+  designGenerationTask?: DesignGenerationTaskProjection;
   designGeneration?: DesignGenerationReport;
   code: number | null;
   signal?: string | null;
@@ -183,6 +186,7 @@ export interface ChatSseDiagnosticPayload {
 export interface DesignGenerationDiagnostic extends ChatSseDiagnosticPayload {
   type: 'design_generation';
   report: DesignGenerationReport;
+  designGenerationTask?: DesignGenerationTaskProjection;
 }
 
 export interface StrategyTaskContinuationDiagnostic extends ChatSseDiagnosticPayload {

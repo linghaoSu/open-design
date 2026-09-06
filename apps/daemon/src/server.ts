@@ -844,6 +844,7 @@ import { registerDesignSystemRoutes } from './routes/design-systems.js';
 import { registerDesignRuntimeRoutes } from './routes/design-runtime.js';
 import { createDesignGenerationStore } from './storage/design-generation-store.js';
 import { createDesignGenerationService } from './services/design-runtime/generation-execution.js';
+import { prepareDesignGenerationRepair } from './services/design-runtime/generation-repair.js';
 import { createDesignRuntimeStore, DesignRuntimeProjectNotFoundError } from './storage/design-runtime-store.js';
 import { decodeDesignRuntimeSource } from './services/design-runtime/source-text.js';
 import { createProjectDesignRuntimeService } from './services/design-runtime/project-service.js';
@@ -7529,10 +7530,12 @@ export async function startServer({
     ),
   );
   let finalizeDesignGeneration = null;
+  let projectDesignGeneration = null;
   const design = {
     runs: createChatRunService({
       createSseResponse,
       createSseErrorPayload,
+      projectRunState: (run) => projectDesignGeneration?.(run),
       runsLogDir: path.join(RUNTIME_DATA_DIR, 'runs'),
       getAppVersionInfo: currentAppVersionInfo,
       // Fold committed side effects into a truncation-proof per-run ledger as
@@ -8522,6 +8525,32 @@ export async function startServer({
   const designGeneration = createDesignGenerationService({ state: designRuntimeStore, executions: createDesignGenerationStore(db),
     root: generationProjectRoot, currentScope: (projectId) => generationScope(projectId),
     observeTargetPackages: (projectId, names) => observeInstalledTargetPackages(generationProjectRoot(projectId), names) });
+  projectDesignGeneration = (run) => {
+    try {
+      const execution = designGeneration.forRun(run.id);
+      if (!execution || execution.projectId !== run.projectId || execution.conversationId !== (run.conversationId ?? null)) { delete run.designGenerationTask; return; }
+      const attempt = run.designGeneration?.attempt ?? (execution.repair?.runId === run.id ? 1 : 0);
+      if (run.designGenerationExecutionId && run.designGenerationExecutionId !== execution.id || run.designGenerationAttempt !== undefined && run.designGenerationAttempt !== attempt) throw new Error('Immutable physical generation identity disagrees with its durable mapping.');
+      run.designGenerationExecutionId = execution.id;
+      run.designGenerationAttempt ??= run.designGeneration?.attempt ?? (execution.repair?.runId === run.id ? 1 : 0);
+      if (execution.report?.runId === run.id) run.designGeneration = execution.report;
+      else if (execution.repair?.sourceRunId === run.id) run.designGeneration = execution.repair.sourceReport;
+      run.designGenerationTask = designGeneration.projection(run.id, (id) => design.runs.get(id)?.status ?? null);
+      const strategyTask = getStrategyTaskExecutionByRunId(db, run.id);
+      if (strategyTask && run.designGenerationTask) {
+        if (strategyTask.latestRunId !== execution.latestRunId) throw new Error('Strategy and generation disagree on the authorized physical Run.');
+        run.strategyTask = { ...projectStrategyTask(strategyTask, run.id), ...(run.designGenerationTask.nextRunId ? { nextRunId: run.designGenerationTask.nextRunId } : {}) };
+        if (strategyTask.outcome === 'clarification_required' && design.runs.get(execution.latestRunId)?.status === 'succeeded'
+          && execution.report?.runId === execution.latestRunId && ['accepted', 'advisory', 'not_applicable'].includes(execution.report.decision)) {
+          run.designGenerationTask.status = 'awaiting_input';
+        } else if (strategyTask.outcome === 'blocked' || strategyTask.outcome === 'canceled') run.designGenerationTask.status = strategyTask.outcome;
+        else if (run.designGenerationTask.status === 'succeeded' && strategyTask.outcome !== 'completed') run.designGenerationTask.status = execution.attempt === 1 ? 'repairing' : 'running';
+      }
+    } catch (error) {
+      delete run.designGenerationTask;
+      console.error('[design-generation] task projection unavailable', error);
+    }
+  };
   finalizeDesignGeneration = (run, status) => {
     try {
       const report = designGeneration.abort(run.id, status);
@@ -10520,7 +10549,7 @@ export async function startServer({
       );
     }
     const persistedStrategyFinalText = strategyRunMapping?.finalText.text ?? null;
-    const isOdNextRequestStage = strategyRunMapping?.inputStage === 'request';
+    const isOdNextRequestStage = strategyRunMapping?.inputStage === 'request' && strategyRunMapping.finalText.kind !== 'design_repair';
     const hasExplicitCurrentPrompt = Object.prototype.hasOwnProperty.call(
       chatBody,
       'currentPrompt',
@@ -10613,8 +10642,14 @@ export async function startServer({
         if (run.cancelRequested || TERMINAL_RUN_STATUSES.has(run.status)) return;
       } catch (error) { return failRun('DESIGN_GENERATION_AUTHORITY_CONFLICT', error instanceof Error ? error.message : String(error)); }
     }
+    const isDesignRepair = designExecution?.attempt === 1;
+    if (isDesignRepair && (designExecution.repair?.runId !== run.id
+      || strategyRunMapping && (strategyRunMapping.finalText.kind !== 'design_repair' || strategyRunMapping.finalText.text !== designExecution.repair.finalText))) {
+      return failRun('DESIGN_GENERATION_AUTHORITY_CONFLICT', 'The repair Run must retain its exact durable host envelope and strategy mapping.');
+    }
+    let prepareDesignRepair = null;
     let designPublicationEvidence = null;
-    const passDesignCompletionGate = async (external = {}) => {
+    const passDesignCompletionGate = async (external = {}, strategyEvidence = null) => {
       if (!designAuthority || !designExecution) return true;
       const canceled = () => run.cancelRequested || TERMINAL_RUN_STATUSES.has(run.status);
       try {
@@ -10629,10 +10664,16 @@ export async function startServer({
         const entry = await validateRunDeliverable({ projectsRoot: PROJECTS_DIR, projectId: run.projectId,
           projectMetadata: project?.metadata, runStatus: 'succeeded', artifactCount: 1 });
         if (canceled()) return false;
+        // Initial Direct Edit adopts its route from the parsed/inferable turn;
+        // the coordinator still validates that turn before an atomic repair claim.
+        const directCompletion = !!strategyTaskAtStart && (strategyTaskAtStart.route === 'direct_edit'
+          || strategyEvidence?.parsed.runtimeState?.route === 'direct_edit' && strategyEvidence.parsed.runtimeState.outcome === 'completed'
+          || strategyEvidence && odNextTurnMayInferDirectEditCompletion(strategyTaskAtStart, strategyEvidence.parsed));
+        const finalStrategyStage = !!strategyTaskAtStart && (strategyTaskAtStart.inputStage === 'production' || directCompletion);
         const report = await designGeneration.complete(run.id, designAuthority, {
-          production: strategyTaskAtStart ? strategyTaskAtStart.inputStage === 'production' || strategyTaskAtStart.route === 'direct_edit'
-            : false,
-          retainActive: !!strategyTaskAtStart && strategyTaskAtStart.inputStage !== 'production' && strategyTaskAtStart.route !== 'direct_edit',
+          production: finalStrategyStage,
+          retainActive: !!strategyTaskAtStart && !finalStrategyStage,
+          allowRepair: !!prepareDesignRepair && (!strategyTaskAtStart || !!strategyEvidence && finalStrategyStage),
           ...publication, canonicalEntry: publication.externalSources?.[0]?.sourcePath ?? entry.entryFile, canceled,
         });
         run.designGeneration = report;
@@ -10643,6 +10684,7 @@ export async function startServer({
           return failRun(report.reasonCodes.includes('DESIGN_GENERATION_AUTHORITY_CONFLICT') ? 'DESIGN_GENERATION_AUTHORITY_CONFLICT' : 'DESIGN_GENERATION_VALIDATION_FAILED',
             [...report.diagnostics, ...(report.validation?.diagnostics ?? [])].filter((issue) => issue.severity === 'error').map((issue) => `${issue.code}: ${issue.message}`).join('\n') || 'Design generation validation did not pass.'), false;
         }
+        if (report.decision === 'repair_required') prepareDesignRepair(strategyEvidence);
         return report.decision !== 'canceled';
       } catch (error) { failRun('DESIGN_GENERATION_AUTHORITY_CONFLICT', error instanceof Error ? error.message : String(error)); return false; }
     };
@@ -11467,6 +11509,14 @@ export async function startServer({
       reasoning: safeReasoning,
       serviceTier: safeServiceTier,
     };
+    const designRuntimeConfigurationDigest = createHash('sha256').update(JSON.stringify({
+      agentId: def.id, configuredAgentEnv, configuredModel: appConfigForRun?.agentModels?.[def.id] ?? null,
+      runtimeEnvironment: def.env ?? null, modelEnvironment: def.defaultModelEnvVar ? process.env[def.defaultModelEnvVar] ?? null : null,
+      provider: byokProvider ?? null,
+    })).digest('hex');
+    if (isDesignRepair && run.designRepairRuntimeFacts?.configurationDigest !== designRuntimeConfigurationDigest) {
+      return failRun('DESIGN_GENERATION_AUTHORITY_CONFLICT', 'Agent/provider configuration changed before the claimed repair; no replacement model was started.');
+    }
     const agentLaunch = resolveAgentLaunch(def, configuredAgentEnv);
     const resolvedBin = agentLaunch.selectedPath;
     if (def.id === 'amr' && resolvedBin && agentLaunch.launchPath) {
@@ -11521,9 +11571,12 @@ export async function startServer({
     // admit it yet because the current assistant placeholder is still in
     // flight, so this daemon-only path supplies the already-validated handle
     // directly. Public chat requests cannot reach this branch.
+    if (isDesignRepair && agentSupportsSessionResume && !pendingNativeSessionContinue) {
+      return failRun('DESIGN_GENERATION_AUTHORITY_CONFLICT', 'The persisted repair has no exact host native-session continuation evidence; restart cannot cold seed or reset it.');
+    }
     const forceInternalResume =
       pendingNativeSessionContinue != null &&
-      runtimeResumesSessionById(def) &&
+      agentSupportsSessionResume &&
       pendingNativeSessionContinue.sessionId.length > 0;
     const agentResumeCtx = forceInternalResume
       ? {
@@ -11541,8 +11594,7 @@ export async function startServer({
         }
       : resolvedAgentResumeCtx;
     if (
-      strategyTaskAtStart
-      && strategyTaskAtStart.inputStage !== 'request'
+      (strategyTaskAtStart && strategyTaskAtStart.inputStage !== 'request' || isDesignRepair && agentSupportsSessionResume)
       && !agentResumeCtx.isResuming
     ) {
       const blocked = blockAutomaticContinuation(db, { runId: run.id });
@@ -11705,9 +11757,9 @@ export async function startServer({
           odNextTaskInputSnapshot?.requestInputText ?? '',
         ].filter(Boolean).join('\n\n---\n\n')
       : '';
-    const composedResult = strategyTaskAtStart
+    const composedResult = strategyTaskAtStart || isDesignRepair
       ? {
-          composedPrompt: persistedStrategyFinalText!,
+          composedPrompt: isDesignRepair ? designExecution.repair.finalText : persistedStrategyFinalText!,
           clientInstructionPrompt: '',
           instructionPrompt: '',
         }
@@ -11734,7 +11786,8 @@ export async function startServer({
       composedPrompt: composed,
       clientInstructionPrompt,
     } = composedResult;
-    if (strategyTaskAtStart?.inputStage === 'request') {
+    if (isDesignRepair && composed !== designGeneration.forRun(run.id)?.repair?.finalText) throw new Error('Repair stdin differs from the exact durable host envelope.');
+    if (isOdNextRequestStage) {
       assertOdNextSemanticRequestFactProducerCoverage('request', {
         prior_transcript: typeof priorTranscript === 'string' ? priorTranscript : '',
         current_user_turn: currentPrompt,
@@ -12253,6 +12306,9 @@ export async function startServer({
       signal = null,
       { allowRetry = true } = {},
     ) => {
+      // A repair transport failure is terminal. Recovery must never mint a new
+      // budget or cold seed a replacement for the frozen repair invocation.
+      if (isDesignRepair) allowRetry = false;
       lifecycle.mark('finalize_start');
       flushRunMessageEvents(run);
       // Persist the transport-level close mechanism before classifying this
@@ -12496,6 +12552,109 @@ export async function startServer({
       }
       finishStrategyAwarePhysicalRun(status, code, signal);
       return false;
+    };
+    const startPendingContinuation = () => {
+      if (!pendingStrategyContinuation) return;
+      if (run.cancelRequested) {
+        design.runs.cancel(pendingStrategyContinuation.run);
+        pendingStrategyContinuation = null;
+        return;
+      }
+      const continuation = pendingStrategyContinuation;
+      // This turn is not over: the daemon is about to run the next stage of
+      // the SAME logical task, with no user prompt of its own. Record the
+      // hand-off on the source stream — it lands in the Run's event log,
+      // which is where a multi-Run turn is reconstructed when diagnosing one.
+      //
+      // Observability only. Do NOT drive rendering from it: the client keeps
+      // the turn whole through `strategyTaskRunIndex` (folded at render time),
+      // and a consumer that re-pointed the existing message at `nextRunId`
+      // instead would print the continuation's answer twice.
+      const continuationTask = getStrategyTaskExecutionByRunId(db, continuation.run.id);
+      if (continuationTask) design.runs.emit(run, 'diagnostic', {
+        type: 'strategy_task_continuation',
+        taskExecutionId: continuationTask?.taskExecutionId
+          ?? strategyTaskAtStart?.taskExecutionId
+          ?? null,
+        sourceRunId: run.id,
+        nextRunId: continuation.run.id,
+        inputStage: continuationTask?.inputStage ?? null,
+        taskRunIndex: continuationTask?.runs.length
+          ? continuationTask.runs.length - 1
+          : null,
+      });
+      reconcileAssistantMessageOnRunEnd(db, design.runs, continuation.run);
+      internalRunCreation.start(
+        continuation.run,
+        {
+          // The continuation is composed from the source Run's body, so it
+          // carries the same project, agent, plugin and Skill facts. Identity
+          // is inherited rather than re-derived: nobody made a request for
+          // this Run, and the task it continues is the user's.
+          body: continuation.chatBody,
+          requestAnalyticsContext:
+            run.analyticsContext ?? run.analyticsRecovery?.context ?? null,
+          creationKind: 'created',
+          resumed: false,
+        },
+        async () => {
+          try {
+            return await startChatRun(continuation.chatBody, continuation.run);
+          } catch (error) {
+            reconcileStrategyTaskRunTerminal(db, {
+              runId: continuation.run.id,
+              status: 'failed',
+            });
+            const latestTask = getStrategyTaskExecutionByRunId(db, continuation.run.id);
+            if (latestTask) {
+              continuation.run.strategyTask = projectStrategyTask(
+                latestTask,
+                continuation.run.id,
+              );
+            }
+            throw error;
+          }
+        },
+      );
+      pendingStrategyContinuation = null;
+    };
+    prepareDesignRepair = (strategyEvidence) => {
+      const liveSessionId = agentResumeCtx.isResuming ? agentResumeCtx.resumeSessionId
+        : agentCapturesSessionId ? capturedSessionId
+          : def.streamFormat === 'pi-rpc' ? acpSession?.getLastSessionPath?.()
+            : def.resumesSessionViaAcpLoad === true ? acpSession?.getDurableSessionId?.() : agentResumeCtx.newSessionId;
+      if (agentSupportsSessionResume && !liveSessionId) throw new Error('The design repair has no proven native session to continue.');
+      if (!run.conversationId || !designAuthority) throw new Error('The design repair requires the original persisted conversation authority.');
+      let repairBody;
+      const transition = prepareDesignGenerationRepair({ db, runs: internalRunCreation, generation: designGeneration,
+        sourceRunId: run.id, authority: designAuthority, sourceContext: strategyTaskAtStart ? null : { sourcePrompt: composed, nativeSessionResume: !!liveSessionId }, canceled: () => run.cancelRequested || design.runs.isTerminal(run.status),
+        ...(strategyEvidence ? { strategy: strategyEvidence } : {}),
+        createMeta: (text) => {
+          const identity = createHash('sha256').update(`${designExecution.id}:${run.id}:design_repair:1`).digest('hex');
+          repairBody = { ...chatBody,
+            analyticsHints: { ...(chatBody.analyticsHints ?? {}), ...inheritedRunLineageHints(run, chatBody, strategyTaskAtStart?.runs.length ?? 1) },
+            projectId: run.projectId, conversationId: run.conversationId, agentId: run.agentId,
+            model: def.id === 'byok-opencode' ? model : safeModel ?? undefined, reasoning: safeReasoning ?? undefined, serviceTier: safeServiceTier ?? undefined,
+            appliedPluginSnapshotId: run.appliedPluginSnapshotId, workspaceScope: run.workspaceScope,
+            assistantMessageId: `design_repair_assistant_${identity.slice(0, 32)}`,
+            clientRequestId: `design_repair_run_${identity.slice(0, 40)}`,
+            requestFingerprint: createHash('sha256').update(text).digest('hex'),
+            message: text, currentPrompt: text,
+            titleGeneration: undefined, userMessageId: undefined,
+            odNextTaskInputSnapshot: run.odNextTaskInputSnapshot ?? chatBody.odNextTaskInputSnapshot ?? null,
+          };
+          return repairBody;
+        } });
+      const child = transition.prepared.run;
+      child.designRepairRuntimeFacts = { configurationDigest: designRuntimeConfigurationDigest, model: safeModel, reasoning: safeReasoning, serviceTier: safeServiceTier, selectedPath: agentLaunch.selectedPath, launchPath: agentLaunch.launchPath };
+      if (liveSessionId) child.nativeSessionContinuePending = { sessionId: liveSessionId,
+        stablePromptHash: currentStableHash, stablePromptSections: currentStableSections, lastInputTokens: observedInputTokensForSession() };
+      if (transition.strategyTask) {
+        run.strategyTask = projectStrategyTask(transition.strategyTask, run.id);
+        child.strategyTask = projectStrategyTask(transition.strategyTask, child.id);
+      }
+      pendingStrategyContinuation = { run: child, chatBody: repairBody };
+      design.runs.persistState(child);
     };
     const mcpServers = buildLiveArtifactsMcpServersForAgent(def, {
       enabled: Boolean(toolTokenGrant?.token),
@@ -13554,6 +13713,13 @@ export async function startServer({
       return;
     }
 
+    if (isDesignRepair) {
+      const frozen = run.designRepairRuntimeFacts;
+      if (!frozen || frozen.model !== safeModel || frozen.reasoning !== safeReasoning || frozen.serviceTier !== safeServiceTier
+        || frozen.selectedPath !== agentLaunch.selectedPath || frozen.launchPath !== agentLaunch.launchPath) {
+        return failRun('DESIGN_GENERATION_AUTHORITY_CONFLICT', 'The claimed repair no longer resolves to the original runtime, model and execution options.');
+      }
+    }
     run.status = 'running';
     run.updatedAt = Date.now();
     send('start', {
@@ -13802,6 +13968,51 @@ export async function startServer({
       return;
     }
 
+    let designPromptDelivered = false;
+    const deliverPromptToChild = () => {
+      if (!designPromptDelivered && writePromptToChildStdin && child.stdin) {
+        designPromptDelivered = true;
+        const promptInputFormat = def.promptInputFormat ?? 'text';
+        lifecycle.mark('model_call_start');
+        lifecycle.mark('stdin_write_start');
+        const markStdinWriteEnd = (err?: Error | null) => {
+          if (err) return;
+          lifecycle.mark('stdin_write_end');
+        };
+        if (promptInputFormat === 'stream-json') {
+          // Wrap the prompt as an Anthropic user message and write it as one
+          // JSONL line. Do NOT close stdin: claude-code keeps reading further
+          // messages until EOF, which is what lets the daemon stream more user
+          // messages into the same turn. The stdin is closed on a clean terminal
+          // turn (see applyClaudeStreamJsonRunBookkeeping) or when the child
+          // exits (run terminates, user cancels).
+          const userMessage = JSON.stringify({
+            type: 'user',
+            message: {
+              role: 'user',
+              content: [{ type: 'text', text: composed }],
+            },
+          });
+          try {
+            // E-lite: `write` returns false when the chunk was buffered because the
+            // OS pipe is full (the child isn't draining stdin) — the corroborating
+            // signal for a `stdin_write`-phase inactivity stall.
+            const accepted = child.stdin.write(`${userMessage}\n`, 'utf8', markStdinWriteEnd);
+            run.stdinBackpressure = accepted === false;
+          } catch (err) {
+            // Swallow EPIPE here for the same reason as the listener above —
+            // a fast-exiting child has already routed its failure through
+            // stderr / exit handlers.
+            if (err && err.code !== 'EPIPE') throw err;
+          }
+          run.stdinOpen = true;
+        } else {
+          // Split write + close so the boolean backpressure signal survives —
+          // see writePromptAndEndStdin for why `end(chunk)` cannot report it.
+          run.stdinBackpressure = writePromptAndEndStdin(child.stdin, composed, markStdinWriteEnd);
+        }
+      }
+    };
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
 
@@ -13932,7 +14143,7 @@ export async function startServer({
         // same project from overwriting each other's transcript or final HTML.
         // Spec: artifacts/<projectId>/<runId>/transcript.ndjson(.gz).
         const critiqueProjectKey = typeof projectId === 'string' && projectId ? projectId : critiqueRunId;
-        const critiqueArtifactDir = path.join(ARTIFACTS_DIR, critiqueProjectKey, critiqueRunId);
+        const critiqueArtifactDir = path.join(CRITIQUE_ARTIFACTS_DIR, critiqueProjectKey, critiqueRunId);
         const stdoutIterable = (async function* () {
           for await (const chunk of child.stdout) yield String(chunk);
         })();
@@ -14018,7 +14229,7 @@ export async function startServer({
           });
         });
         try {
-          const orchestratorResult = await runOrchestrator({
+          const orchestration = runOrchestrator({
             runId: critiqueRunId,
             projectId: typeof projectId === 'string' ? projectId : '',
             conversationId: typeof conversationId === 'string' ? conversationId : null,
@@ -14038,10 +14249,12 @@ export async function startServer({
             childExitPromise,
             signal: critiqueAbort.signal,
             validateArtifact: async (artifact) => ({
-              allowed: await passDesignCompletionGate(critiqueDesignPublicationInput(artifact)),
+              allowed: await passDesignCompletionGate(critiqueDesignPublicationInput(artifact)) && !pendingStrategyContinuation,
               reason: 'Critique artifact did not pass the frozen design generation policy.',
             }),
           });
+          deliverPromptToChild();
+          const orchestratorResult = await orchestration;
           // Map the critique terminal status to the chat run lifecycle.
           // 'shipped' and 'below_threshold' both ran to a ship decision and
           // finalize as 'succeeded'; every other status (timed_out,
@@ -14051,6 +14264,9 @@ export async function startServer({
             || orchestratorResult.status === 'below_threshold';
           if (run.cancelRequested) {
             finishStrategyAwarePhysicalRun('canceled', 1, null);
+          } else if (pendingStrategyContinuation) {
+            finishRun('succeeded', 0, null);
+            startPendingContinuation();
           } else if (succeeded) {
             if (await passDesignCompletionGate()) finishRun('succeeded', 0, null);
           } else {
@@ -15248,7 +15464,7 @@ export async function startServer({
           resumeSessionId: agentResumePromptPolicy.resumeSessionId,
         }).autoReseedFullTranscript
       ) {
-        if (strategyTaskAtStart && strategyTaskAtStart.inputStage !== 'request') {
+        if (isDesignRepair || strategyTaskAtStart && strategyTaskAtStart.inputStage !== 'request') {
           const blocked = blockAutomaticContinuation(db, { runId: run.id });
           if (blocked) run.strategyTask = projectStrategyTask(blocked, run.id);
           latchOdNextRolloutForRun(run, 'observe', 'native_resume_failed');
@@ -15927,164 +16143,115 @@ export async function startServer({
           // host facts. Never let the stale continuation allocate a new Run or
           // mutate the already-terminal task after that boundary.
           if (run.cancelRequested || design.runs.isTerminal(run.status)) return;
-          if (!await passDesignCompletionGate()) return;
+          if (!await passDesignCompletionGate({}, { task: strategyTaskAtStart, parsed: strategyProtocolResult,
+            toolUseCount: strategyToolUseCount, deliverableValid,
+            ...(executionPreflight ? { executionPreflight } : {}), ...(complexRuntimeEvidence ? { complexRuntimeEvidence } : {}) })) return;
           designCompletionChecked = true;
-          let transition;
-          try {
-            transition = prepareAutomaticStrategyContinuation({
-              db,
-              service: internalRunCreation,
-              task: strategyTaskAtStart,
-              parsed: strategyProtocolResult,
-              toolUseCount: strategyToolUseCount,
-              ...(executionPreflight ? { executionPreflight } : {}),
-              ...(complexRuntimeEvidence ? { complexRuntimeEvidence } : {}),
-              ...(
-                strategyProtocolResult.runtimeState?.outcome === 'completed'
-                || mayInferDirectEditCompletion
-                  ? {
-                      completionEvidence: {
-                        physicalStatus: 'succeeded',
-                        deliverableValid,
-                      },
-                    }
-                  : {}),
-              createMeta: (stage, instruction, taskRunIndex) => {
-                const identity = createHash('sha256')
-                  .update(`${strategyTaskAtStart.taskExecutionId}:${stage}:${taskRunIndex}`)
-                  .digest('hex');
-                const meta = {
-                  ...chatBody,
-                  // One logical task, several physical Runs. The chain is only
-                  // reassemblable downstream if each Run reports the lineage of
-                  // the Run that caused it.
-                  analyticsHints: {
-                    ...(chatBody.analyticsHints ?? {}),
-                    ...inheritedRunLineageHints(run, chatBody, taskRunIndex),
-                  },
-                  projectId: strategyTaskAtStart.projectId,
-                  conversationId: strategyTaskAtStart.conversationId,
-                  agentId: strategyTaskAtStart.selectedAgentId,
-                  appliedPluginSnapshotId: strategyTaskAtStart.snapshotId,
-                  pluginId: strategyTaskAtStart.strategyId,
-                  assistantMessageId: `odnext_assistant_${identity.slice(0, 32)}`,
-                  clientRequestId: `odnext_run_${identity.slice(0, 40)}`,
-                  message: instruction,
-                  currentPrompt: instruction,
-                  titleGeneration: undefined,
-                  userMessageId: undefined,
-                  odNextTaskInputSnapshot:
-                    run.odNextTaskInputSnapshot ?? chatBody.odNextTaskInputSnapshot ?? null,
-                };
-                automaticContinuationChatBody = {
-                  ...meta,
-                  requestFingerprint: createHash('sha256')
-                    .update(JSON.stringify({
-                      taskExecutionId: strategyTaskAtStart.taskExecutionId,
-                      sourceRunId: run.id,
-                      stage,
-                      taskRunIndex,
-                      instruction,
-                      projectId: meta.projectId,
-                      conversationId: meta.conversationId,
-                      agentId: meta.agentId,
-                      snapshotId: meta.appliedPluginSnapshotId,
-                    }))
-                    .digest('hex'),
-                };
-                return automaticContinuationChatBody;
-              },
-            });
-          } catch (error) {
-            if (run.cancelRequested || design.runs.isTerminal(run.status)) return;
-            send('error', createSseErrorPayload(
-              'OD_NEXT_CONTINUATION_FAILED',
-              error instanceof Error ? error.message : String(error),
-              { retryable: false },
-            ));
-            finishStrategyAwarePhysicalRun('failed', 1, signal);
-            return;
-          }
-          run.strategyTask = projectStrategyTask(transition.result.task, run.id);
-          if (transition.result.action === 'blocked') {
-            const signal = rolloutStopSignalForBlockedContinuation(
-              transition.result.reasonCodes,
-            );
-            const stopMode = signal ? stopModeForOdNextSignal(signal) : null;
-            if (signal && stopMode) {
-              latchOdNextRolloutForRun(run, stopMode, signal);
+          if (!pendingStrategyContinuation) {
+            if (isDesignRepair && strategyProtocolResult.runtimeState?.outcome !== 'completed' && !mayInferDirectEditCompletion) {
+              return failRun('DESIGN_GENERATION_VALIDATION_FAILED', 'The single design repair did not complete its original production stage.');
             }
-          }
-          if (transition.start && transition.prepared?.kind === 'ready') {
-            const nextRun = transition.prepared.run;
-            nextRun.strategyTask = projectStrategyTask(transition.result.task, nextRun.id);
-            pendingStrategyContinuation = {
-              run: nextRun,
-              chatBody: automaticContinuationChatBody,
-            };
+            let transition;
+            try {
+              transition = prepareAutomaticStrategyContinuation({
+                db,
+                service: internalRunCreation,
+                onClaim: (child) => { if (designAuthority) designGeneration.bindContinuation(run.id, child.id, designAuthority); },
+                task: strategyTaskAtStart,
+                parsed: strategyProtocolResult,
+                toolUseCount: strategyToolUseCount,
+                ...(executionPreflight ? { executionPreflight } : {}),
+                ...(complexRuntimeEvidence ? { complexRuntimeEvidence } : {}),
+                ...(
+                  strategyProtocolResult.runtimeState?.outcome === 'completed'
+                  || mayInferDirectEditCompletion
+                    ? {
+                        completionEvidence: {
+                          physicalStatus: 'succeeded',
+                          deliverableValid,
+                        },
+                      }
+                    : {}),
+                createMeta: (stage, instruction, taskRunIndex) => {
+                  const identity = createHash('sha256')
+                    .update(`${strategyTaskAtStart.taskExecutionId}:${stage}:${taskRunIndex}`)
+                    .digest('hex');
+                  const meta = {
+                    ...chatBody,
+                    // One logical task, several physical Runs. The chain is only
+                    // reassemblable downstream if each Run reports the lineage of
+                    // the Run that caused it.
+                    analyticsHints: {
+                      ...(chatBody.analyticsHints ?? {}),
+                      ...inheritedRunLineageHints(run, chatBody, taskRunIndex),
+                    },
+                    projectId: strategyTaskAtStart.projectId,
+                    conversationId: strategyTaskAtStart.conversationId,
+                    agentId: strategyTaskAtStart.selectedAgentId,
+                    appliedPluginSnapshotId: strategyTaskAtStart.snapshotId,
+                    pluginId: strategyTaskAtStart.strategyId,
+                    assistantMessageId: `odnext_assistant_${identity.slice(0, 32)}`,
+                    clientRequestId: `odnext_run_${identity.slice(0, 40)}`,
+                    message: instruction,
+                    currentPrompt: instruction,
+                    titleGeneration: undefined,
+                    userMessageId: undefined,
+                    odNextTaskInputSnapshot:
+                      run.odNextTaskInputSnapshot ?? chatBody.odNextTaskInputSnapshot ?? null,
+                  };
+                  automaticContinuationChatBody = {
+                    ...meta,
+                    requestFingerprint: createHash('sha256')
+                      .update(JSON.stringify({
+                        taskExecutionId: strategyTaskAtStart.taskExecutionId,
+                        sourceRunId: run.id,
+                        stage,
+                        taskRunIndex,
+                        instruction,
+                        projectId: meta.projectId,
+                        conversationId: meta.conversationId,
+                        agentId: meta.agentId,
+                        snapshotId: meta.appliedPluginSnapshotId,
+                      }))
+                      .digest('hex'),
+                  };
+                  return automaticContinuationChatBody;
+                },
+              });
+            } catch (error) {
+              if (run.cancelRequested || design.runs.isTerminal(run.status)) return;
+              send('error', createSseErrorPayload(
+                'OD_NEXT_CONTINUATION_FAILED',
+                error instanceof Error ? error.message : String(error),
+                { retryable: false },
+              ));
+              finishStrategyAwarePhysicalRun('failed', 1, signal);
+              return;
+            }
+            run.strategyTask = projectStrategyTask(transition.result.task, run.id);
+            if (transition.result.action === 'blocked') {
+              const signal = rolloutStopSignalForBlockedContinuation(
+                transition.result.reasonCodes,
+              );
+              const stopMode = signal ? stopModeForOdNextSignal(signal) : null;
+              if (signal && stopMode) {
+                latchOdNextRolloutForRun(run, stopMode, signal);
+              }
+            }
+            if (transition.start && transition.prepared?.kind === 'ready') {
+              const nextRun = transition.prepared.run;
+              nextRun.strategyTask = projectStrategyTask(transition.result.task, nextRun.id);
+              pendingStrategyContinuation = {
+                run: nextRun,
+                chatBody: automaticContinuationChatBody,
+              };
+            }
           }
         }
         if (!designCompletionChecked && !await passDesignCompletionGate()) return;
       }
       const retried = finishWithRetryDecision(status, code, signal);
-      if (!retried && pendingStrategyContinuation) {
-        const continuation = pendingStrategyContinuation;
-        // This turn is not over: the daemon is about to run the next stage of
-        // the SAME logical task, with no user prompt of its own. Record the
-        // hand-off on the source stream — it lands in the Run's event log,
-        // which is where a multi-Run turn is reconstructed when diagnosing one.
-        //
-        // Observability only. Do NOT drive rendering from it: the client keeps
-        // the turn whole through `strategyTaskRunIndex` (folded at render time),
-        // and a consumer that re-pointed the existing message at `nextRunId`
-        // instead would print the continuation's answer twice.
-        const continuationTask = getStrategyTaskExecutionByRunId(db, continuation.run.id);
-        design.runs.emit(run, 'diagnostic', {
-          type: 'strategy_task_continuation',
-          taskExecutionId: continuationTask?.taskExecutionId
-            ?? strategyTaskAtStart?.taskExecutionId
-            ?? null,
-          sourceRunId: run.id,
-          nextRunId: continuation.run.id,
-          inputStage: continuationTask?.inputStage ?? null,
-          taskRunIndex: continuationTask?.runs.length
-            ? continuationTask.runs.length - 1
-            : null,
-        });
-        reconcileAssistantMessageOnRunEnd(db, design.runs, continuation.run);
-        internalRunCreation.start(
-          continuation.run,
-          {
-            // The continuation is composed from the source Run's body, so it
-            // carries the same project, agent, plugin and Skill facts. Identity
-            // is inherited rather than re-derived: nobody made a request for
-            // this Run, and the task it continues is the user's.
-            body: continuation.chatBody,
-            requestAnalyticsContext:
-              run.analyticsContext ?? run.analyticsRecovery?.context ?? null,
-            creationKind: 'created',
-            resumed: false,
-          },
-          async () => {
-            try {
-              return await startChatRun(continuation.chatBody, continuation.run);
-            } catch (error) {
-              reconcileStrategyTaskRunTerminal(db, {
-                runId: continuation.run.id,
-                status: 'failed',
-              });
-              const latestTask = getStrategyTaskExecutionByRunId(db, continuation.run.id);
-              if (latestTask) {
-                continuation.run.strategyTask = projectStrategyTask(
-                  latestTask,
-                  continuation.run.id,
-                );
-              }
-              throw error;
-            }
-          },
-        );
-      }
+      if (!retried) startPendingContinuation();
       } finally {
         // Best-effort cleanup of the per-run agy log file on every close
         // path — successful, failed, cancelled, or non-zero exit — so
@@ -16097,47 +16264,7 @@ export async function startServer({
         cleanupPromptFile();
       }
     });
-    if (writePromptToChildStdin && child.stdin) {
-      const promptInputFormat = def.promptInputFormat ?? 'text';
-      lifecycle.mark('model_call_start');
-      lifecycle.mark('stdin_write_start');
-      const markStdinWriteEnd = (err?: Error | null) => {
-        if (err) return;
-        lifecycle.mark('stdin_write_end');
-      };
-      if (promptInputFormat === 'stream-json') {
-        // Wrap the prompt as an Anthropic user message and write it as one
-        // JSONL line. Do NOT close stdin: claude-code keeps reading further
-        // messages until EOF, which is what lets the daemon stream more user
-        // messages into the same turn. The stdin is closed on a clean terminal
-        // turn (see applyClaudeStreamJsonRunBookkeeping) or when the child
-        // exits (run terminates, user cancels).
-        const userMessage = JSON.stringify({
-          type: 'user',
-          message: {
-            role: 'user',
-            content: [{ type: 'text', text: composed }],
-          },
-        });
-        try {
-          // E-lite: `write` returns false when the chunk was buffered because the
-          // OS pipe is full (the child isn't draining stdin) — the corroborating
-          // signal for a `stdin_write`-phase inactivity stall.
-          const accepted = child.stdin.write(`${userMessage}\n`, 'utf8', markStdinWriteEnd);
-          run.stdinBackpressure = accepted === false;
-        } catch (err) {
-          // Swallow EPIPE here for the same reason as the listener above —
-          // a fast-exiting child has already routed its failure through
-          // stderr / exit handlers.
-          if (err && err.code !== 'EPIPE') throw err;
-        }
-        run.stdinOpen = true;
-      } else {
-        // Split write + close so the boolean backpressure signal survives —
-        // see writePromptAndEndStdin for why `end(chunk)` cannot report it.
-        run.stdinBackpressure = writePromptAndEndStdin(child.stdin, composed, markStdinWriteEnd);
-      }
-    }
+    deliverPromptToChild();
   };
 
   orbitService.setRunHandler(async ({

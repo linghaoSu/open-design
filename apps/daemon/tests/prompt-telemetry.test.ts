@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
+import { serializeDesignRepairTurnV1 } from '@open-design/contracts';
+import { generationExecutionFixture, generationReportFixture } from './fixtures/design-runtime/design-generation.js';
 
 import {
   PROMPT_STACK_REDACTION_VERSION,
@@ -56,6 +58,18 @@ describe('prompt telemetry builder', () => {
     expect(section.redactedContent).not.toContain('sk-test-');
   });
 
+  it.each(['request', 'production'] as const)('binds a canonical host design repair at the same %s stage', (stage) => {
+    const execution = generationExecutionFixture();
+    const finalText = serializeDesignRepairTurnV1({ executionId: execution.id, sourceRunId: execution.latestRunId, policy: execution.policy,
+      report: { ...generationReportFixture(execution), decision: 'repair_required' }, strategy: {
+        taskExecutionId: 'task', inputStage: stage, taskRunIndex: 1, planContractHash: stage === 'production' ? 'a'.repeat(64) : null,
+        frozenInputIdentity: { schema: 'open-design.od-next-frozen-input-identity/v1', snapshotId: 'snapshot', strategyPackageHash: 'b'.repeat(64), frozenSkillPackageIdentity: 'skills', taskInputManifestSha256: 'c'.repeat(64) }, productionContinuation: stage === 'production' ? 'Production' : null,
+      } });
+    const input = { telemetry: buildPromptStackTelemetry({ composedPrompt: finalText, sections: [{ kind: 'odNextExactFinalText' as const, content: finalText }] }), finalText,
+      persisted: { kind: 'design_repair' as const, schema: 'open-design.design-repair-turn/v1' as const, text: finalText, utf8Bytes: Buffer.byteLength(finalText), sha256: createHash('sha256').update(finalText).digest('hex') }, stage };
+    expect(bindOdNextExactSendPromptEvidence(input).odNextExactSend).toMatchObject({ kind: 'design_repair', stage });
+    expect(() => bindOdNextExactSendPromptEvidence({ ...input, stage: 'contract_repair' })).toThrow('kind');
+  });
   it('rejects raw OD Next text drift before a runtime wrapper can be applied', () => {
     const finalText = '<open_design_request_turn>repair</open_design_request_turn>';
     const persistedText = `${finalText}\n`;

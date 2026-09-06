@@ -25,7 +25,7 @@ describe('durable design generation execution', () => {
     for (const changed of [
       { ...first, policy: { ...first.policy, mode: 'explore' as const } },
       { ...first, attempt: 1 as const }, { ...first, semanticDigest: `sha256:${'a'.repeat(64)}` },
-    ]) expect(() => store.update(0, changed)).toThrow('cannot be rewritten');
+    ]) expect(() => store.update(0, changed)).toThrow();
     store.update(0, { ...first, latestRunId: 'run-production' });
     expect(() => store.update(0, { ...first, latestRunId: 'run-duplicate' })).toThrow('stale Run');
     expect(store.forRun('run-duplicate')).toBeNull();

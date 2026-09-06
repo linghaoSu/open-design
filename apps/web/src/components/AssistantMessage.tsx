@@ -1,3 +1,5 @@
+import { DesignGenerationReportCard } from './DesignGenerationReportCard';
+import { applicableDesignGenerationReport, designGenerationAllowsDelivery } from '../runtime/design-generation';
 import { Fragment, memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TodoCard, ToolCard } from "./ToolCard";
 import { FileOpsSummary } from "./FileOpsSummary";
@@ -771,7 +773,10 @@ function AssistantMessageImpl({
   const hasTodoSnapshot = events.some(
     (event) => event.kind === "tool_use" && isTodoWriteToolName(event.name),
   );
+  const generationAllowsDelivery = designGenerationAllowsDelivery(message);
+  const hasGenerationReport = !!applicableDesignGenerationReport(message);
   const runSucceeded =
+    generationAllowsDelivery &&
     !streaming &&
     !hasResultDeliveryFailure &&
     (
@@ -902,6 +907,7 @@ function AssistantMessageImpl({
         </div>
       ) : null}
       <div className="assistant-flow">
+        <DesignGenerationReportCard message={message} />
         {taskActivity ? (
           <TaskActivityCard
             entries={taskActivity.entries}
@@ -909,11 +915,12 @@ function AssistantMessageImpl({
             hasConclusion={hasConclusion}
             runStreaming={streaming}
             runSucceeded={runSucceeded}
-            terminalRunSucceeded={message.runStatus === "succeeded"}
+            terminalRunSucceeded={generationAllowsDelivery && message.runStatus === "succeeded"}
             runCanceled={message.runStatus === "canceled"}
             runFailed={
               !streaming &&
               (message.runStatus === "failed" ||
+                message.designGenerationTask?.status === 'blocked' ||
                 message.runStatus === "canceled" ||
                 hasResultDeliveryFailure)
             }
@@ -1112,6 +1119,7 @@ function AssistantMessageImpl({
                   forceVisible: true,
                   isLast: !!isLast,
                   hideRunStatus:
+                    hasGenerationReport ||
                     taskActivity !== null ||
                     hasTodoSnapshot ||
                     message.id === errorCardOwnerId,
@@ -1130,6 +1138,7 @@ function AssistantMessageImpl({
                 forking={forking}
                 isLast={!!isLast}
                 hideRunStatus={
+                  hasGenerationReport ||
                   taskActivity !== null ||
                   hasTodoSnapshot ||
                   message.id === errorCardOwnerId

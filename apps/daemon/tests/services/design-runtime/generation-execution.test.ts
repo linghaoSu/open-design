@@ -36,6 +36,11 @@ describe('generation execution policy and actual source authority', () => {
     const changed = await f.service.complete('writes', f.authority, { production: false, canceled: () => false });
     expect(changed).toMatchObject({ decision: 'blocked', inventory: { complete: false, changed: ['Hidden.svelte'] } });
   });
+  it('does not certify an unchanged non-final strategy stage before successor claim', async () => {
+    const f = await fixture(); await f.service.start('plan', f.authority); await f.service.captureBaseline('plan', f.authority);
+    await f.service.complete('plan', f.authority, { production: false, retainActive: true, canceled: () => false });
+    expect(f.service.projection('plan', () => 'succeeded')?.status).toBe('running');
+  });
   it('captures current targets and semantic authoring at final validation start', async () => {
     const f = await fixture(); const request = validationFixture('react'); const original = f.state.read('project');
     const { snapshot } = request;
@@ -64,6 +69,7 @@ describe('generation execution policy and actual source authority', () => {
     const f = await fixture(); await f.service.start('plan', f.authority); const baseline = await f.service.captureBaseline('plan', f.authority);
     await f.write('planning.html', '<main>Initial plan</main>');
     expect((await f.service.complete('plan', f.authority, { production: false, retainActive: true, canceled: () => false })).decision).toBe('advisory');
+    expect(f.service.projection('plan', () => 'succeeded')?.status).toBe('running');
     const production = await f.service.start('production', f.authority, 'plan');
     expect(production.id).toBe(baseline.id); expect(production.baseline).toEqual(baseline.baseline);
     await f.service.captureBaseline('production', f.authority);

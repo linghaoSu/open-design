@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
-import type { StrategyInputStageV2 } from '@open-design/contracts';
+import { parseDesignRepairTurnV1, type StrategyInputStageV2 } from '@open-design/contracts';
 
 import { redactSecrets } from './redact.js';
 import type { StrategyTaskFinalTextIdentity } from './strategies/task-store.js';
@@ -486,7 +486,12 @@ export function bindOdNextExactSendPromptEvidence(input: {
     );
   }
   const expectedKind = input.stage === 'request' ? 'bundle' : 'turn';
-  if (input.persisted.kind !== expectedKind) {
+  let repairStageMatches = false;
+  if (input.persisted.kind === 'design_repair') {
+    try { repairStageMatches = parseDesignRepairTurnV1(input.finalText).strategy?.inputStage === input.stage; }
+    catch { /* Invalid canonical repair remains an exact-send failure below. */ }
+  }
+  if (input.persisted.kind !== expectedKind && !repairStageMatches) {
     throw new InvalidOdNextExactSendPromptError(
       'OD Next exact-send Prompt kind does not match its mapped task stage.',
     );

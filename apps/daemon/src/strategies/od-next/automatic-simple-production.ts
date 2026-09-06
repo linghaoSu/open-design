@@ -291,6 +291,8 @@ export function prepareAutomaticStrategyContinuation<
     instruction: string,
     taskRunIndex: number,
   ) => TMeta;
+  /** Additional host-owned logical mappings share the physical Run claim transaction. */
+  onClaim?: (run: TRun) => void;
   toolUseCount?: number;
   executionPreflight?: OdNextExecutionPreflightInput;
   completionEvidence?: {
@@ -441,6 +443,7 @@ export function prepareAutomaticStrategyContinuation<
             );
           }
           result = accepted;
+          input.onClaim?.(nextRun);
           return;
         }
         if (accepted.action !== 'plan_ready') {
@@ -466,6 +469,7 @@ export function prepareAutomaticStrategyContinuation<
               ...(input.updatedAt === undefined ? {} : { updatedAt: input.updatedAt }),
             });
         result = { ...accepted, task: claimed };
+        input.onClaim?.(nextRun);
       },
     });
     if (prepared.kind === 'ready' && result) {

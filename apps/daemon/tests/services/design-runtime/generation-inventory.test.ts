@@ -21,6 +21,15 @@ describe('complete generation source inventory', () => {
     expect(generationInventoryChanges(before.inventory, after.inventory)).toEqual({ changed: ['.pages/View.vue'], deleted: [] });
     expect((await captureGenerationInventory(dir)).inventory).toEqual(after.inventory);
   });
+  it('excludes daemon-owned historical HTML without excluding ordinary hidden source', async () => {
+    const dir = await root(); await mkdir(path.join(dir, '.file-versions')); await mkdir(path.join(dir, '.pages')); await mkdir(path.join(dir, '.pages', '.file-versions'));
+    await writeFile(path.join(dir, '.pages', '.file-versions', 'nested.html'), '<main>Application source</main>');
+    await writeFile(path.join(dir, '.file-versions', 'original.html'), '<main style="color:red">Old</main>');
+    await writeFile(path.join(dir, '.pages', 'current.html'), '<main>Current</main>');
+    const captured = await captureGenerationInventory(dir);
+    expect(captured.inventory.complete).toBe(true);
+    expect(captured.sources.map((source) => source.sourcePath)).toEqual(['.pages/.file-versions/nested.html', '.pages/current.html']);
+  });
   it('keeps attempt-zero edits and deleted required source in the logical baseline diff', async () => {
     const dir = await root(); await writeFile(path.join(dir, 'index.html'), '<main>original</main>');
     const baseline = await captureGenerationInventory(dir);

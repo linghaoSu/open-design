@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   DesignGenerationExecutionSchema, DesignGenerationReportSchema, defaultDesignGenerationTargets,
+  serializeDesignRepairTurnV1, type DesignRepairTurnV1, DesignGenerationTaskProjectionSchema, type DesignGenerationTaskProjection,
   type DesignGenerationExecution, type DesignGenerationPolicy, type DesignGenerationReport,
   type ProjectDesignRuntimeState, type HandoffTargetPackage, type DesignGenerationTargets, type DesignValidationSource, type ValidationDiagnostic,
 } from '@open-design/contracts';
@@ -11,7 +12,8 @@ import { captureGenerationInventory, generationDigest, generationInventoryChange
 import { collectProjectValidationFacts } from './project-validation-facts.js';
 import { validateStructuredDesign } from './design-validation.js';
 
-interface Authority { projectId: string; conversationId: string | null; scope: unknown }
+export interface DesignGenerationAuthority { projectId: string; conversationId: string | null; scope: unknown }
+type Authority = DesignGenerationAuthority;
 interface Deps {
   state: DesignRuntimeStore; executions: DesignGenerationStore;
   root(projectId: string): string;
@@ -22,6 +24,8 @@ interface Deps {
 export type PreparedDesignGeneration = Omit<DesignGenerationExecution, 'initialRunId' | 'latestRunId'>;
 export interface DesignGenerationCompletionOptions {
   production: boolean; retainActive?: boolean; externalSources?: DesignValidationSource[]; externalDiagnostics?: ValidationDiagnostic[];
+  /** Host dispatch capability only; absence retains the standalone no-repair gate. */
+  allowRepair?: boolean;
   canonicalEntry?: string | null; canceled(): boolean;
 }
 const digest = (value: unknown) => generationDigest(canonicalDesignSystemJson(value));
@@ -62,6 +66,12 @@ export function createDesignGenerationService(deps: Deps) {
   }
   function claim(runId: string, prepared: PreparedDesignGeneration): DesignGenerationExecution {
     return deps.executions.create(DesignGenerationExecutionSchema.parse({ ...prepared, initialRunId: runId, latestRunId: runId }));
+  }
+  function bindContinuation(sourceRunId: string, runId: string, authority: Authority): DesignGenerationExecution {
+    const execution = deps.executions.forRun(sourceRunId);
+    if (!execution || execution.latestRunId !== sourceRunId || execution.status !== 'active') throw new Error('The latest logical stage must own its next physical Run.');
+    assertCurrent(execution, authority);
+    return deps.executions.update(execution.revision, { ...execution, latestRunId: runId, targets: targets(deps.state.read(authority.projectId)), report: null });
   }
   async function start(runId: string, authority: Authority, initialTaskRunId?: string): Promise<DesignGenerationExecution> {
     const existing = deps.executions.forRun(runId);
@@ -136,13 +146,14 @@ export function createDesignGenerationService(deps: Deps) {
     const latest = deps.executions.forRun(runId);
     if (!latest || latest.latestRunId !== runId || latest.revision !== execution.revision) throw new Error('Another Run claimed this generation execution.');
     const complete = execution.baseline.complete && captured.inventory.complete && !diagnostics.some((issue) => issue.severity === 'error');
-    const decision = canceled ? 'canceled' : reasons.length ? 'blocked' : !applicable ? 'not_applicable'
+    let decision: DesignGenerationReport['decision'] = canceled ? 'canceled' : reasons.length ? 'blocked' : !applicable ? 'not_applicable'
       : execution.policy.mode === 'explore' ? 'advisory' : complete && validation?.accepted && (execution.policy.mode !== 'strict' || validation.strictReady) ? 'accepted' : 'blocked';
     if (decision === 'blocked' && !reasons.length) reasons.push('DESIGN_GENERATION_VALIDATION_FAILED');
+    if (decision === 'blocked' && options.allowRepair && !prior && execution.attempt === 0 && reasons.length === 1 && reasons[0] === 'DESIGN_GENERATION_VALIDATION_FAILED') decision = 'repair_required';
     const report = DesignGenerationReportSchema.parse({ schemaVersion: 1, executionId: execution.id, runId, attempt: execution.attempt,
       mode: execution.policy.mode, policyDigest: execution.policy.digest, projectRevision: state.revision, decision, reasonCodes: reasons,
       diagnostics, inventory: { baselineDigest: execution.baseline.digest, sourceDigest: sourceDigest(captured.inventory), complete, changed: [...new Set(changed)].sort(), deleted }, outputs, validation });
-    const next: DesignGenerationExecution = { ...execution, status: !prior && (decision === 'not_applicable' || options.retainActive && (decision === 'advisory' || decision === 'accepted')) ? 'active' : 'terminal', report };
+    const next: DesignGenerationExecution = { ...execution, awaitingContinuation: options.retainActive === true, status: !prior && (decision === 'repair_required' || decision === 'not_applicable' || options.retainActive && (decision === 'advisory' || decision === 'accepted')) ? 'active' : 'terminal', report };
     if (prior) deps.executions.reproveTerminal(execution.revision, next);
     else deps.executions.update(execution.revision, next);
     return report;
@@ -160,5 +171,28 @@ export function createDesignGenerationService(deps: Deps) {
     deps.executions.update(execution.revision, { ...execution, status: 'terminal', report });
     return report;
   }
-  return { prepare, claim, start, captureBaseline, complete, abort, markContended: deps.executions.markContended, forRun: deps.executions.forRun };
+  function repairText(runId: string, authority: Authority, strategy: DesignRepairTurnV1['strategy'], context: DesignRepairTurnV1['context'] = null): { execution: DesignGenerationExecution; text: string } {
+    const execution = deps.executions.forRun(runId);
+    if (!execution || execution.latestRunId !== runId || execution.status !== 'active' || execution.attempt !== 0 || execution.report?.decision !== 'repair_required') throw new Error('Only the current initial failed validation can request a host repair.');
+    assertCurrent(execution, authority);
+    if (execution.report.projectRevision !== deps.state.read(execution.projectId).revision) throw new Error('Project state changed before repair could be claimed.');
+    return { execution, text: serializeDesignRepairTurnV1({ executionId: execution.id, sourceRunId: runId, policy: execution.policy, report: execution.report, strategy, context }) };
+  }
+  function claimRepair(sourceRunId: string, runId: string, authority: Authority, expectedRevision: number, text: string): DesignGenerationExecution {
+    const { execution } = repairText(sourceRunId, authority, null);
+    return deps.executions.claimRepair(expectedRevision, { executionId: execution.id, sourceRunId, runId, finalText: text });
+  }
+  function projection(viewedRunId: string, physicalStatus: (runId: string) => string | null): DesignGenerationTaskProjection | null {
+    const execution = deps.executions.forRun(viewedRunId); if (!execution) return null;
+    const status = physicalStatus(execution.latestRunId);
+    const report = execution.report ?? execution.repair?.sourceReport ?? null;
+    const delivered = status === 'succeeded' && !!report && report.runId === execution.latestRunId && report.attempt === execution.attempt
+      && (execution.status === 'terminal' && ['accepted', 'advisory'].includes(report.decision) || report.decision === 'not_applicable' && !execution.awaitingContinuation);
+    return DesignGenerationTaskProjectionSchema.parse({ schemaVersion: 1, executionId: execution.id, projectId: execution.projectId, conversationId: execution.conversationId,
+      initialRunId: execution.initialRunId, activeRunId: execution.latestRunId, nextRunId: viewedRunId === execution.latestRunId ? null : execution.latestRunId,
+      attempt: execution.attempt, repairLimit: 1,
+      status: status === 'canceled' || report?.decision === 'canceled' ? 'canceled' : status === 'failed' || report?.decision === 'blocked' ? 'blocked'
+        : delivered ? 'succeeded' : execution.attempt === 1 ? 'repairing' : 'running', latestReport: report });
+  }
+  return { prepare, claim, start, bindContinuation, captureBaseline, complete, abort, repairText, claimRepair, projection, markContended: deps.executions.markContended, forRun: deps.executions.forRun };
 }

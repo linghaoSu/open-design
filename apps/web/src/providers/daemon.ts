@@ -41,6 +41,8 @@ import type {
   WorkspaceCollabContext,
 } from '@open-design/contracts';
 import type { StreamHandlers } from './anthropic';
+import { DesignGenerationProtocolError, readDesignGenerationRunStatus, readDesignGenerationUpdate, designGenerationSuccessor, designGenerationRunStatus, type DesignGenerationUpdate } from '../runtime/design-generation';
+import type { DesignGenerationTaskProjection, DesignGenerationReport } from '@open-design/contracts';
 import { workspaceProjectHeaders } from '../state/projects';
 import { setRuntimeAmrConsoleOrigin } from '../runtime/amr-guidance';
 
@@ -369,7 +371,8 @@ export interface DaemonStreamOptions {
   /** Daemon-issued continuation handle used only for an explicit task reply. */
   taskExecutionId?: string;
   /** Called for the initial Run and every daemon-projected successor Run. */
-  onRunCreated?: (runId: string, strategyTask?: StrategyTaskProjectionV2) => void;
+  onRunCreated?: (runId: string, strategyTask?: StrategyTaskProjectionV2, designGenerationTask?: DesignGenerationTaskProjection) => void;
+  onDesignGeneration?: (update: DesignGenerationUpdate, authoritative?: boolean) => void;
   /** Called once the daemon projects the logical strategy task as terminal
    *  (completed / blocked / canceled), with the terminal projection. */
   onStrategyTaskSettled?: (strategyTask: StrategyTaskProjectionV2) => void;
@@ -392,10 +395,13 @@ export interface DaemonReattachOptions {
   /** Publish a current-run success outcome to the app-level upgrade gate. */
   publishRunFinishedEvent?: boolean;
   /** Called when reattach discovers a newer active Run in the same task. */
-  onRunCreated?: (runId: string, strategyTask?: StrategyTaskProjectionV2) => void;
+  onRunCreated?: (runId: string, strategyTask?: StrategyTaskProjectionV2, designGenerationTask?: DesignGenerationTaskProjection) => void;
+  onDesignGeneration?: (update: DesignGenerationUpdate, authoritative?: boolean) => void;
   /** Called once the daemon projects the logical strategy task as terminal
    *  (completed / blocked / canceled), with the terminal projection. */
   onStrategyTaskSettled?: (strategyTask: StrategyTaskProjectionV2) => void;
+  /** Previously authenticated task facts retained across reload/reconnect. */
+  initialDesignGenerationTask?: DesignGenerationTaskProjection;
 }
 
 export const RUNS_CHANGED_EVENT = 'open-design:runs-changed';
@@ -749,6 +755,7 @@ export async function streamViaDaemon({
   analyticsHints,
   taskExecutionId,
   onStrategyTaskSettled,
+  onDesignGeneration,
 }: DaemonStreamOptions): Promise<void> {
   const emitRunStatus = (status: ChatRunStatus) => {
     onRunStatus?.(status);
@@ -864,6 +871,7 @@ export async function streamViaDaemon({
       publishRunFinishedEvent: true,
       onRunCreated,
       onStrategyTaskSettled,
+      onDesignGeneration,
     });
   } catch (err) {
     if ((err as Error).name === 'AbortError') return;
@@ -1278,6 +1286,7 @@ export async function listRunsForProject(
 }
 
 interface DaemonPhysicalRunResult {
+  designGenerationTask?: DesignGenerationTaskProjection;
   nextRunId?: string;
   strategyTask?: StrategyTaskProjectionV2;
 }
@@ -1286,6 +1295,7 @@ async function consumeDaemonRun(options: DaemonReattachOptions): Promise<void> {
   let runId = options.runId;
   let initialLastEventId = options.initialLastEventId;
   let taskText = '';
+  let generationTask: DesignGenerationTaskProjection | undefined = options.initialDesignGenerationTask;
   const visited = new Set<string>();
   const taskHandlers: DaemonStreamHandlers = {
     ...options.handlers,
@@ -1298,16 +1308,30 @@ async function consumeDaemonRun(options: DaemonReattachOptions): Promise<void> {
   while (true) {
     if (visited.has(runId)) {
       options.onRunStatus?.('failed');
-      options.handlers.onError(new Error('daemon returned a cyclic strategy task Run chain'));
+      options.handlers.onError(new Error('daemon returned a cyclic logical task Run chain'));
       return;
     }
     visited.add(runId);
-    const result = await consumeDaemonPhysicalRun({
+    let result: DaemonPhysicalRunResult | void;
+    try { result = await consumeDaemonPhysicalRun({
       ...options,
       handlers: taskHandlers,
       runId,
       initialLastEventId,
-    });
+      onDesignGeneration: (update, authoritative) => {
+        const checked = readDesignGenerationUpdate({ ...update, task: update.task, report: update.report,
+          runId, projectId: options.projectId, conversationId: options.conversationId, previousTask: generationTask, authoritative });
+        const staleObservation = !authoritative && generationTask && checked.task
+          && (checked.task.attempt < generationTask.attempt || ['succeeded', 'blocked', 'canceled', 'awaiting_input'].includes(generationTask.status));
+        if (checked.task && !staleObservation) generationTask = checked.task;
+        options.onDesignGeneration?.(staleObservation ? { ...(checked.report ? { report: checked.report } : {}) } : checked);
+      },
+    }); } catch (error) {
+      if (!(error instanceof DesignGenerationProtocolError)) throw error;
+      options.onRunStatus?.('failed');
+      options.handlers.onError(error);
+      return;
+    }
     if (!result?.nextRunId) return;
     runId = result.nextRunId;
     initialLastEventId = null;
@@ -1317,7 +1341,7 @@ async function consumeDaemonRun(options: DaemonReattachOptions): Promise<void> {
       conversation_id: options.conversationId ?? undefined,
       client_type: detectClientType(),
     });
-    options.onRunCreated?.(runId, result.strategyTask);
+    options.onRunCreated?.(runId, result.strategyTask, result.designGenerationTask);
   }
 }
 
@@ -1336,6 +1360,7 @@ async function consumeDaemonPhysicalRun({
   workspaceContext,
   publishRunFinishedEvent,
   onStrategyTaskSettled,
+  onDesignGeneration,
 }: DaemonReattachOptions): Promise<DaemonPhysicalRunResult | void> {
   let acc = '';
   let stderrBuf = '';
@@ -1343,6 +1368,16 @@ async function consumeDaemonPhysicalRun({
   let exitSignal: string | null = null;
   let endStatus: ChatRunStatus | null = null;
   let endStrategyTask: StrategyTaskProjectionV2 | undefined;
+  let endGenerationTask: DesignGenerationTaskProjection | undefined;
+  let observedGenerationTask: DesignGenerationTaskProjection | undefined;
+  let generationReport: DesignGenerationReport | undefined;
+  const reportGeneration = (task: unknown, report: unknown, authoritative = false) => {
+    if (task === undefined && report === undefined) return;
+    const update = readDesignGenerationUpdate({ task, report, runId, projectId, conversationId });
+    if (update.report) generationReport = update.report;
+    if (update.task) observedGenerationTask = update.task;
+    onDesignGeneration?.(update, authoritative);
+  };
   let pendingStructuredError: Error | null = null;
   // Tracks whether the server explicitly declared `status: 'succeeded'` in
   // the SSE end payload (or via the fallback run-status fetch). Distinct
@@ -1496,8 +1531,14 @@ async function consumeDaemonPhysicalRun({
             continue;
           }
 
+          if (event.event === 'diagnostic' && event.data.type === 'design_generation') {
+            reportGeneration(event.data.designGenerationTask, event.data.report);
+            continue;
+          }
+
           if (event.event === 'start') {
             const data = event.data as ChatSseStartPayload;
+            reportGeneration(data.designGenerationTask, undefined);
             onRunStatus?.('running');
             handlers.onAgentEvent({
               kind: 'status',
@@ -1530,6 +1571,8 @@ async function consumeDaemonPhysicalRun({
             reportArtifactCount(event.data.artifactCount);
             reportArtifactPaths(event.data.artifactPaths);
             if (event.data.strategyTask) endStrategyTask = event.data.strategyTask;
+            reportGeneration(event.data.designGenerationTask, event.data.designGeneration);
+            endGenerationTask = event.data.designGenerationTask;
             // `serverDeclaredSuccess` records whether the server explicitly
             // set `status: 'succeeded'` in the end payload — the local
             // `'succeeded'` fallback below does not count and must keep
@@ -1558,6 +1601,8 @@ async function consumeDaemonPhysicalRun({
           reportArtifactCount(status.artifactCount);
           reportArtifactPaths(status.artifactPaths);
           if (status.strategyTask) endStrategyTask = status.strategyTask;
+          reportGeneration(status.designGenerationTask, status.designGeneration);
+          endGenerationTask = status.designGenerationTask;
           break;
         }
         if (!status) {
@@ -1591,6 +1636,8 @@ async function consumeDaemonPhysicalRun({
         reportArtifactCount(status.artifactCount);
         reportArtifactPaths(status.artifactPaths);
         if (status.strategyTask) endStrategyTask = status.strategyTask;
+        reportGeneration(status.designGenerationTask, status.designGeneration);
+        endGenerationTask = status.designGenerationTask;
       } else {
         onRunStatus?.('failed');
         handlers.onError(createGenericDaemonDisconnectError());
@@ -1598,7 +1645,58 @@ async function consumeDaemonPhysicalRun({
       }
     }
 
-    if (endStrategyTask && !endStrategyTask.terminal) {
+    if (endGenerationTask || observedGenerationTask) {
+      const authenticate = async (id: string) => {
+        const status = await fetchChatRunStatus(id, workspaceContext);
+        const checked = readDesignGenerationRunStatus(status, id, { projectId, conversationId, previousTask: observedGenerationTask });
+        return { status: status!, task: checked.task };
+      };
+      const current = await authenticate(runId);
+      if (!['succeeded', 'failed', 'canceled'].includes(current.status.status)) throw new DesignGenerationProtocolError('The source Run has not ended.');
+      reportGeneration(current.task, current.status.designGeneration, true);
+      endGenerationTask = current.task;
+      endStrategyTask = current.status.strategyTask;
+      endStatus = current.status.status;
+      const successor = designGenerationSuccessor(current.task, runId, endStrategyTask);
+      if (successor) {
+        const child = await authenticate(successor);
+        if (current.status.strategyTask && child.status.strategyTask?.taskExecutionId !== current.status.strategyTask.taskExecutionId) {
+          throw new DesignGenerationProtocolError('The successor strategy execution changed.');
+        }
+      } else if (current.task.status === 'succeeded' && current.status.status !== 'succeeded') {
+        throw new DesignGenerationProtocolError('Design generation has no successful physical delivery.');
+      }
+    }
+
+    if (endGenerationTask) {
+      const nextRunId = designGenerationSuccessor(endGenerationTask, runId, endStrategyTask);
+      if (nextRunId) {
+        onRunStatus?.('running');
+        return { nextRunId, designGenerationTask: endGenerationTask, ...(endStrategyTask ? { strategyTask: endStrategyTask } : {}) };
+      }
+      if (endGenerationTask.status === 'awaiting_input') {
+        // The physical clarification turn ended. Its logical task awaits the
+        // user's next message and has not delivered an artifact.
+        onRunStatus?.('succeeded');
+        handlers.onDone(acc);
+        return;
+      }
+      if (endGenerationTask.status === 'running' || endGenerationTask.status === 'repairing') {
+        throw new DesignGenerationProtocolError('Design generation is unfinished but no authorized successor Run was provided.');
+      }
+      endStatus = designGenerationRunStatus(endGenerationTask);
+      serverDeclaredSuccess = endStatus === 'succeeded';
+      if (endStatus === 'failed') {
+        pendingStructuredError = new Error('Design generation was blocked by its saved validation policy.');
+        endResumable = false;
+      }
+    } else if (generationReport && ['repair_required', 'blocked', 'canceled'].includes(generationReport.decision)) {
+      endStatus = generationReport.decision === 'canceled' ? 'canceled' : 'failed';
+      pendingStructuredError = new Error('Design generation did not satisfy its saved validation policy.');
+      endResumable = false;
+    }
+
+    if (!endGenerationTask && endStrategyTask && !endStrategyTask.terminal) {
       const nextRunId = endStrategyTask.activeRunId !== runId
         ? endStrategyTask.activeRunId
         : endStrategyTask.nextRunId;
@@ -1608,7 +1706,7 @@ async function consumeDaemonPhysicalRun({
       }
     }
 
-    if (endStrategyTask?.terminal) {
+    if (!endGenerationTask && endStrategyTask?.terminal) {
       // Surface the terminal projection before the status/error handlers run,
       // so a blocked verdict (with its gate attribution) is stamped onto the
       // assistant message ahead of the failure finalization it triggers.

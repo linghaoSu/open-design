@@ -1002,6 +1002,14 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     }
     return design.runs.statusBody(run);
   };
+  const generationStatusAgrees = (status: ChatRunStatusResponse): boolean => {
+    const task = status.designGenerationTask;
+    if (!task) return true;
+    return task.projectId === status.projectId && task.conversationId === status.conversationId
+      && task.nextRunId === (task.activeRunId === status.id ? null : task.activeRunId)
+      && (!status.strategyTask || status.strategyTask.activeRunId === task.activeRunId
+        && (status.strategyTask.nextRunId ?? null) === task.nextRunId);
+  };
 
   type ClarificationContinuation = {
     task: StrategyTaskExecutionRecord;
@@ -3213,6 +3221,9 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
     const runId = routeParamId(req);
     if (!runId) return sendApiError(res, 400, 'BAD_REQUEST', 'run id missing');
     const requestedRun = design.runs.get(runId);
+    if (!requestedRun) return sendApiError(res, 404, 'NOT_FOUND', 'run not found');
+    if (!await authorizeRunProject(req, res, requestedRun, { mode: 'read' })) return;
+    const requestedStatus = statusWithStrategyTask(requestedRun);
     let task;
     try {
       task = getStrategyTaskExecutionByRunId(db, runId);
@@ -3225,11 +3236,23 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       }
       throw error;
     }
-    const resultRunId = task?.terminalRunId ?? task?.latestRunId ?? runId;
+    const strategyRunId = task?.terminalRunId ?? task?.latestRunId;
+    const generationTask = requestedStatus.designGenerationTask;
+    if (generationTask && (!generationStatusAgrees(requestedStatus)
+      || strategyRunId && strategyRunId !== generationTask.activeRunId)) {
+      return sendApiError(res, 409, 'DESIGN_GENERATION_AUTHORITY_CONFLICT', 'Logical task result identity changed.');
+    }
+    const resultRunId = generationTask?.activeRunId ?? strategyRunId ?? runId;
     const run = design.runs.get(resultRunId);
-    if (!requestedRun || !run) return sendApiError(res, 404, 'NOT_FOUND', 'run not found');
+    if (!run) return sendApiError(res, 404, 'NOT_FOUND', 'run not found');
     if (!await authorizeRunProject(req, res, run, { mode: 'read' })) return;
     const status = statusWithStrategyTask(run);
+    if (generationTask && (!status.designGenerationTask || !generationStatusAgrees(status)
+      || run.projectId !== requestedRun.projectId || run.conversationId !== requestedRun.conversationId
+      || status.designGenerationTask.activeRunId !== run.id || status.designGenerationTask.attempt < generationTask.attempt
+      || status.designGenerationTask.executionId !== generationTask.executionId || status.designGenerationTask.initialRunId !== generationTask.initialRunId)) {
+      return sendApiError(res, 409, 'DESIGN_GENERATION_AUTHORITY_CONFLICT', 'Logical task result Run does not belong to the requested generation.');
+    }
     const project = run.projectId ? toProjectRecord(getProject(db, run.projectId)) : null;
     let files: ProjectFileEntry[] = [];
     if (project) {
@@ -3292,6 +3315,8 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         ...(status.errorCode !== undefined ? { errorCode: status.errorCode } : {}),
       },
       ...(status.strategyTask ? { strategyTask: status.strategyTask } : {}),
+      ...(status.designGenerationTask ? { designGenerationTask: status.designGenerationTask } : {}),
+      ...(status.designGeneration ? { designGeneration: status.designGeneration } : {}),
       workspace: status.workspace ?? {
         storage: { kind: 'od-owned', baseDir: null },
         provenance: null,
@@ -3447,8 +3472,19 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
       }
       throw error;
     }
-    const activeRun = task?.activeRunId ? design.runs.get(task.activeRunId) : null;
+    const requestedStatus = statusWithStrategyTask(run);
+    const generationTask = requestedStatus.designGenerationTask;
+    if (generationTask && (!generationStatusAgrees(requestedStatus)
+      || task?.activeRunId && task.activeRunId !== generationTask.activeRunId)) {
+      return sendApiError(res, 409, 'DESIGN_GENERATION_AUTHORITY_CONFLICT', 'Logical task cancellation identity changed.');
+    }
+    const activeRunId = generationTask?.activeRunId ?? task?.activeRunId;
+    const activeRun = activeRunId ? design.runs.get(activeRunId) : null;
+    if (generationTask && (!activeRun || activeRun.projectId !== run.projectId || activeRun.conversationId !== run.conversationId)) {
+      return sendApiError(res, 409, 'DESIGN_GENERATION_AUTHORITY_CONFLICT', 'The active generation Run is unavailable or outside the authorized task.');
+    }
     let cancelRun = activeRun ?? run;
+    if (cancelRun.id !== run.id && !await authorizeRunProject(req, res, cancelRun, { mode: 'write', capability: 'writeFiles' })) return;
     let taskForCancel = task;
     if (taskForCancel && !['completed', 'blocked', 'canceled'].includes(taskForCancel.outcome)) {
       let canceled = null;
@@ -3482,6 +3518,14 @@ export function registerRunRoutes(app: Express, ctx: RegisterRunRoutesDeps) {
         );
       }
       cancelRun.strategyTask = projectStrategyTask(canceled, cancelRun.id);
+    }
+    if (generationTask) {
+      const currentStatus = statusWithStrategyTask(cancelRun);
+      const current = currentStatus.designGenerationTask;
+      if (!current || !generationStatusAgrees(currentStatus) || current.attempt < generationTask.attempt
+        || current.executionId !== generationTask.executionId || current.initialRunId !== generationTask.initialRunId || current.activeRunId !== cancelRun.id) {
+        return sendApiError(res, 409, 'DESIGN_GENERATION_AUTHORITY_CONFLICT', 'Generation advanced before cancellation could be applied.');
+      }
     }
     // Logical CAS wins before physical finish: the emitted end frame therefore
     // carries the terminal task projection and can never advertise a running

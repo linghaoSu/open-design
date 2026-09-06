@@ -18,7 +18,7 @@ import { splitResearchSubcommand } from './research/cli-args.js';
 import { resolveDaemonUrl } from './daemon-url.js';
 import { SidecarFactory } from '@open-design/sidecar';
 import { APP_KEYS, SIDECAR_MESSAGES } from '@open-design/sidecar-proto';
-import { EXPORT_FORMATS, EXPORT_IMAGE_FORMATS } from '@open-design/contracts';
+import { DesignGenerationTaskProjectionSchema, EXPORT_FORMATS, EXPORT_IMAGE_FORMATS } from '@open-design/contracts';
 import type { ArtifactLintFinding, LintArtifactCliResultEnvelope, LintArtifactResponse, LintFailOn } from '@open-design/contracts';
 import { buildExportCliRequestBody, buildExportCliResultEnvelope, resolveExportCliDeckMode } from './export-cli-request.js';
 import { exportRoutePath } from './export-cli-routing.js';
@@ -7710,7 +7710,7 @@ Common options:
       const runs = data?.runs ?? [];
       for (const r of runs) {
         const task = r.strategyTask;
-        console.log(`${r.id}\t${r.status}\tproject=${r.projectId ?? '-'}\tplugin=${r.pluginId ?? '-'}${task ? `\ttask=${task.taskExecutionId}\tactive=${task.activeRunId}\toutcome=${task.outcome}` : ''}`);
+        console.log(`${r.id}\t${r.status}\tproject=${r.projectId ?? '-'}\tplugin=${r.pluginId ?? '-'}${task ? `\ttask=${task.taskExecutionId}\tactive=${task.activeRunId}\toutcome=${task.outcome}` : ''}${r.designGenerationTask ? `\t${formatDesignGenerationTask(r.designGenerationTask)}` : ''}`);
       }
       return;
     }
@@ -7751,6 +7751,7 @@ Common options:
       if (data?.strategyTask) {
         console.log(`task\t${data.strategyTask.taskExecutionId}\tactive=${data.strategyTask.activeRunId}\toutcome=${data.strategyTask.outcome}`);
       }
+      if (data?.designGenerationTask) console.log(formatDesignGenerationTask(data.designGenerationTask));
       const artifacts = Array.isArray(data?.artifacts) ? data.artifacts : [];
       for (const artifact of artifacts) {
         console.log(`artifact\t${artifact.file ?? '-'}\t${artifact.kind ?? '-'}\t${artifact.title ?? '-'}`);
@@ -7775,6 +7776,7 @@ Common options:
       if (canceledRun.strategyTask) {
         console.log(`task\t${canceledRun.strategyTask.taskExecutionId}\tactive=${canceledRun.strategyTask.activeRunId}\toutcome=${canceledRun.strategyTask.outcome}`);
       }
+      if (canceledRun.designGenerationTask) console.log(formatDesignGenerationTask(canceledRun.designGenerationTask));
       return;
     }
     case 'continue': {
@@ -7967,63 +7969,149 @@ Common options:
   }
 }
 
+function formatDesignGenerationTask(value) {
+  const task = DesignGenerationTaskProjectionSchema.parse(value);
+  return `generation=${task.executionId}\tgeneration-status=${task.status}\tactive=${task.activeRunId}\tattempt=${task.attempt}/${task.repairLimit}`;
+}
+
 // Stream the SSE events at /api/runs/:id/events as ND-JSON on stdout.
 // Each line is one event: { event, data } so a code agent can parse it
 // without needing an SSE library.
 async function streamRunEvents(base, initialRunId, workspaceHeaders = {}) {
   let runId = initialRunId;
   const visited = new Set();
-  while (true) {
-    if (visited.has(runId)) {
-      console.error(`run watch failed: cyclic strategy task chain at ${runId}`);
-      process.exit(1);
+  let generation = null;
+  let strategyExecutionId = null;
+  const fail = (message) => { throw new Error(`run watch failed: ${message}`); };
+  const hasGeneration = (payload) => payload != null && Object.hasOwn(payload, 'designGenerationTask');
+  const verifyGeneration = (payload, viewedRunId, authoritative = false) => {
+    const parsed = DesignGenerationTaskProjectionSchema.safeParse(payload?.designGenerationTask);
+    if (!parsed.success) fail(`invalid design generation task for ${viewedRunId}`);
+    const task = parsed.data;
+    if (generation) {
+      for (const field of ['executionId', 'initialRunId', 'projectId', 'conversationId']) {
+        if (task[field] !== generation[field]) fail(`design generation ${field} changed at ${viewedRunId}`);
+      }
+      if (authoritative && task.attempt < generation.attempt) fail(`design repair attempt reset at ${viewedRunId}`);
     }
-    visited.add(runId);
-    const resp = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/events`, {
-      headers: { accept: 'text/event-stream', ...workspaceHeaders },
-    });
-    if (!resp.ok || !resp.body) {
-      console.error(`run watch failed: ${resp.status}`);
-      process.exit(1);
+    if (task.nextRunId === viewedRunId || (task.activeRunId !== viewedRunId && task.nextRunId !== task.activeRunId)) {
+      fail(`invalid design generation successor at ${viewedRunId}`);
     }
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let nextRunId = null;
-    let ended = false;
-    while (!ended) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const blocks = buffer.split('\n\n');
-      buffer = blocks.pop() ?? '';
-      for (const block of blocks) {
-        const lines = block.split('\n');
-        const eventLine = lines.find((l) => l.startsWith('event: '));
-        const dataLines = lines
-          .filter((line) => line.startsWith('data: '))
-          .map((line) => line.slice('data: '.length));
-        const event = eventLine ? eventLine.slice('event: '.length) : 'message';
-        const dataRaw = dataLines.join('\n');
-        let parsed;
-        try { parsed = JSON.parse(dataRaw); } catch { parsed = dataRaw; }
-        process.stdout.write(JSON.stringify({ event, data: parsed }) + '\n');
-        if (event !== 'end') continue;
-        const task = parsed?.strategyTask;
-        if (task && task.terminal !== true) {
-          const candidate = task.activeRunId !== runId
-            ? task.activeRunId
-            : task.nextRunId;
-          if (typeof candidate === 'string' && candidate.length > 0 && candidate !== runId) {
-            nextRunId = candidate;
+    const strategy = payload?.strategyTask;
+    if (strategy) {
+      if (strategy.activeRunId !== task.activeRunId || (strategy.nextRunId ?? null) !== task.nextRunId) {
+        fail(`strategy and design generation successors disagree at ${viewedRunId}`);
+      }
+      if (strategyExecutionId && strategy.taskExecutionId !== strategyExecutionId) fail(`strategy execution changed at ${viewedRunId}`);
+      strategyExecutionId = strategy.taskExecutionId;
+    }
+    if (task.status === 'awaiting_input' && (!strategy || strategy.terminal !== false || strategy.outcome !== 'clarification_required')) {
+      fail(`waiting for input has no matching strategy clarification at ${viewedRunId}`);
+    }
+    // Replayed end events may predate the latest authenticated status. Only
+    // current status may advance (or attempt to reset) the logical attempt.
+    if (!generation || authoritative) generation = task;
+    return task;
+  };
+  const readStatus = async (id) => {
+    const response = await fetch(`${base}/api/runs/${encodeURIComponent(id)}`, { headers: workspaceHeaders });
+    if (!response.ok) fail(`status ${response.status} for ${id}`);
+    const status = await response.json();
+    if (status?.id !== id) fail(`status Run identity changed for ${id}`);
+    return status;
+  };
+  const verifyStatus = (status, id) => {
+    const task = verifyGeneration(status, id, true);
+    if (status.projectId !== task.projectId || status.conversationId !== task.conversationId) {
+      fail(`status scope disagrees with design generation task for ${id}`);
+    }
+    if (task.status === 'awaiting_input' && task.activeRunId === id && status.status !== 'succeeded') {
+      fail(`waiting for input has no successful physical clarification at ${id}`);
+    }
+    if (task.activeRunId !== id && visited.has(task.activeRunId)) fail(`cyclic design generation chain at ${task.activeRunId}`);
+    return task;
+  };
+  try {
+    while (true) {
+      if (visited.has(runId)) {
+        fail(`cyclic Run chain at ${runId}`);
+      }
+      visited.add(runId);
+      const resp = await fetch(`${base}/api/runs/${encodeURIComponent(runId)}/events`, {
+        headers: { accept: 'text/event-stream', ...workspaceHeaders },
+      });
+      if (!resp.ok || !resp.body) {
+        fail(`events ${resp.status} for ${runId}`);
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let nextRunId = null;
+      let ended = false;
+      let endPayload = null;
+      try {
+        while (!ended) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const blocks = buffer.split('\n\n');
+          buffer = blocks.pop() ?? '';
+          for (const block of blocks) {
+            const lines = block.split('\n');
+            const eventLine = lines.find((l) => l.startsWith('event: '));
+            const dataLines = lines
+              .filter((line) => line.startsWith('data: '))
+              .map((line) => line.slice('data: '.length));
+            const event = eventLine ? eventLine.slice('event: '.length) : 'message';
+            const dataRaw = dataLines.join('\n');
+            let parsed;
+            try { parsed = JSON.parse(dataRaw); } catch { parsed = dataRaw; }
+            process.stdout.write(JSON.stringify({ event, data: parsed }) + '\n');
+            if (event !== 'end') continue;
+            endPayload = parsed;
+            ended = true;
+            break;
           }
         }
-        ended = true;
-        break;
+      } finally {
+        await reader.cancel().catch(() => {});
+        reader.releaseLock();
       }
+      if (hasGeneration(endPayload)) verifyGeneration(endPayload, runId);
+      // A closed connection is not proof of completion. Recover from its
+      // authenticated status; diagnostics alone never authorize a transition.
+      const status = generation || !ended ? await readStatus(runId) : null;
+      if (hasGeneration(status) || generation) {
+        const task = verifyStatus(status, runId);
+        if (!['succeeded', 'failed', 'canceled'].includes(status.status)) fail(`Run ${runId} has not ended`);
+        nextRunId = task.nextRunId;
+        if (nextRunId) {
+          if (visited.has(nextRunId)) fail(`cyclic design generation chain at ${nextRunId}`);
+          verifyStatus(await readStatus(nextRunId), nextRunId);
+        } else if (task.status === 'awaiting_input') {
+          // The authenticated clarification is complete; no child exists until
+          // the user answers. ND-JSON already carries the exact waiting state.
+          return;
+        } else if (task.status === 'blocked' || task.status === 'canceled') {
+          console.error(`design generation ${task.status}: ${task.executionId}`);
+          process.exitCode = 1;
+        } else if (task.status !== 'succeeded' || status.status !== 'succeeded') {
+          fail(`design generation has no terminal delivery or authorized successor at ${runId}`);
+        }
+      } else {
+        const task = (status ?? endPayload)?.strategyTask;
+        if (task && task.terminal !== true) {
+          const candidate = task.activeRunId !== runId ? task.activeRunId : task.nextRunId;
+          if (typeof candidate === 'string' && candidate.length > 0 && candidate !== runId) nextRunId = candidate;
+        }
+        if (!ended && !['succeeded', 'failed', 'canceled'].includes(status?.status)) fail(`stream closed before Run ${runId} ended`);
+      }
+      if (!nextRunId) return;
+      runId = nextRunId;
     }
-    if (!nextRunId) return;
-    runId = nextRunId;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
   }
 }
 
