@@ -1,8 +1,8 @@
 # Design Loom 本地安装版验收
 
-本报告记录 **2026-09-07** 的 macOS Apple Silicon 本地验收，应用版本为 **0.1.0-beta.1**。操作方法见[使用 Design Loom](design-loom.md)。已验收安装包来自源码检查点 `f2f99950b`，已成功构建、安装并从系统安装位置冷启动。后续概览改进仍在进行，不能用此检查点的结果认证尚未构建的新候选。
+本报告记录 **2026-09-07** 的 macOS Apple Silicon 本地验收，应用版本为 **0.1.0-beta.1**。操作方法见[使用 Design Loom](design-loom.md)。当前候选源码检查点为 `f6c5911c5`，已重新构建并安装到系统应用目录；此前 `f2f99950b` 的完整原生验收记录保留在下表。
 
-当前结论：该安装版的迁移、连续编辑发布、组件预览、真实 Codex 生成与冷启动数据延续均已完成下列实际操作验收。应用位于 `/Applications/Design Loom.app`，未启用上游更新。此包是**仅具 ad hoc 签名、未经 Developer ID 签名与公证的本地 beta**，不代表已完成公开稳定发行或跨机器兼容认证。本轮另发现概览没有展示已迁移的 tokens 与版本，已启动真实设计任务；其实现、重建和复验独立列为待办。
+当前结论：旧候选的迁移、连续编辑发布、组件预览、真实 Codex 生成与冷启动数据延续已完成实际操作验收。本轮按真实设计稿修复了概览和设置，当前候选已通过测试、构建、完整安装核验及工具管理环境中的启动检查。应用位于 `/Applications/Design Loom.app`，未启用上游更新。macOS 再次锁屏阻止了新候选从该位置冷启动后的原生复验，因此尚不标记整体验收完成。此包**仅具 ad hoc 签名，未经 Developer ID 签名与公证**，尚未满足公开分发门槛。
 
 ## 已完成的实际操作
 
@@ -22,6 +22,8 @@
 | 已迁移入口与普通页面 | 冷启动后打开已迁移的 `components.html` 可进入设计系统，不再提示重复迁移；普通 `index.html` 没有迁移提示。 |
 | 聊天报告与文件链接 | 原生点击 CommonMark 相对路径、绝对路径链接均打开正确的 `Page.tsx`，真实渲染标题“工作区偏好”。报告可展开其余 31 条诊断并重新收起。 |
 | 冷启动后的 props 预览 | 在 `production/button.tsx` 预览中修改 JSON 的 `children`、`variant`、`size` 会更新真实组件；输入无效的 `{` 时保留最后有效画面并显示错误，恢复有效 JSON 后成功更新。 |
+| 本轮先设计后实施 | 在安装的 Design Loom 中启动两次真实 Codex 设计运行，均成功完成。原生查看概览稿，操作锁定、可编辑基线、空项目及只读版本详情；设置文案来自同项目后续设计说明。设计过程见[界面设计记录](design-loom-interface-design.md)。 |
+| 新候选安装与启动检查 | `f6c5911c5` 的 DMG 经工具安装，再在应用完全停止后更新系统目录中的独立应用，保留旧副本可回退。18,704 个目录、文件与链接核验一致，原 OpenDesign 三项哈希不变。工具管理的安装副本成功启动，公开版本 API 返回 HTTP 200、macOS arm64、packaged、`0.1.0-beta.1`；该检查使用测试数据空间，不能代替系统安装位置的冷启动与原生点击验收。工具测试实例已停止。 |
 
 连续发布核验通过只读公共 API 获取状态、版本与文件，分别复算原始字节、包摘要和来源摘要。主动修改的 `USAGE.md` 被记录为预期变化，而非忽略全部文件差异。
 
@@ -29,16 +31,18 @@
 
 ## 构建与回归证据
 
-- 已验收检查点 `f2f99950b` 的 `tools-pack mac build --namespace design-loom --portable --to dmg --app-version 0.1.0-beta.1 --json` 成功；日志记录跳过正式 macOS 代码签名。该包静态审计 14 项通过，整仓 guard、类型检查及后续改动所属包的类型检查已有通过记录。
-- 该 DMG 为 352,898,749 字节，SHA-256 为 `d4e3abb9d46f8ce52f73eead01c8fead2d40c3ab211ffc35d0dc7f9fca8180cf`。安装应用的完整树摘要为 `6cdcd9864119664ee05d85aeb0c37560e19a7ae8bbac668778d8c5e1252de126`，与构建副本一致。冷启动后再次执行完整树及原 OpenDesign 三个基线文件哈希核验，均通过。
+- 当前 `f6c5911c5` 的 `tools-pack mac build --namespace design-loom --portable --to dmg --app-version 0.1.0-beta.1 --json` 成功，最终包静态审计 **18/18** 通过，确认新概览分类明细、BYOK 状态代码、独立身份、更新/遥测隔离与预览依赖已包含。整仓 guard 和类型检查通过；最后一次仅涉及 web 的扫描失败修复后，重新通过 web 类型检查与整仓 guard。
+- 当前 DMG 为 **352,913,042 字节**，SHA-256 为 `a0b355da07b7a444fe67cd23e2fd86e7c9392e8322b521f8127db0f8dcb75b48`。系统安装应用的完整树摘要为 `e7e286007f7fb58d4156235f0ef02250ba6cd543281a1eba7a4bbd7fd53190f8`，18,704 个条目与构建完全一致。原 OpenDesign 的三个基线文件哈希仍一致。
+- 此前原生验收使用的 `f2f99950b` 包静态审计 14 项通过；旧 DMG 的 SHA-256 为 `d4e3abb9d46f8ce52f73eead01c8fead2d40c3ab211ffc35d0dc7f9fca8180cf`。旧记录不会自动作为新候选的原生验收结果。
+- 概览相关最终 **72 项**测试通过，覆盖精确版本、账户/权限/项目切换、过期结果、分类明细、版本变化后的刷新及原编辑状态保留；相关文件工作区和预览回归 183 通过、3 项既有跳过。设置与语言最终 **174 项**测试通过，覆盖 OpenCode 可用、明确缺失、未知、加载、离线、扫描失败、失败提示保留与重试恢复；重新扫描不改变保存的 API 模式，HTTP 连接成功不被当作执行环境通过。
 - 编辑基线修复具备先红后绿的元数据与二进制继承回归；覆盖契约、存储、HTTP、CLI、版本面板。强编译器与预览兼容回归 139 项 daemon 用例通过；CSS Module 真实渲染回归 24 项通过。
 - 安装版操作发现的首次启动品牌与迁移后重复入口问题已修复并纳入该构建：本地代理主入口、第三方 Cloud 身份和来源说明覆盖 55 项入口/布局、2 项重新认证、19 项语言测试；迁移入口覆盖 39 项面板测试及 112 项文件工作区/迁移测试（另有 3 项既有跳过）。新欢迎页和冷启动后的已迁移项目入口均已完成原生操作。
 - 真实运行暴露的问题已形成后续修复：`377eb25be` 包含精确来源所有权适配、已证明 React 包装器的验证、BOM 处理与收起长报告；`f2f99950b` 修复 CommonMark 文件链接目的地。来源所有权新增 3 项回归先红后绿，相关验证/交付 77 项通过；包装器、编译器、验证与交付合并回归 142 项通过（与前者有重叠）。BOM 的 3 项回归先红后绿，相关两套 16 项通过；诊断卡片 8 项通过。CommonMark 新增 13 项回归通过，相关聊天 Markdown/项目链接 134 项通过；相应 daemon/web 类型检查通过。最终安装包已包含这些修复。
 - 预打包依赖回归 39 项通过。独立临时目录中的真实 React/Vue 渲染不借用仓库依赖；移除 React 后明确失败。
-- **签名边界**：安装候选为 ad hoc 签名，没有 TeamIdentifier 或 Hardened Runtime；`codesign` 深度严格完整性验证通过，但 `spctl` 的分发评估拒绝。当前环境没有 Developer ID Application 身份，已有开发/其他分发身份不替代这一要求。公开发行仍需合适的 Developer ID、签名与公证；本机原生运行通过不代表 Gatekeeper 分发接受。签名参数的后续防误用修复需随新候选另外构建核验。
+- **签名边界**：当前候选仍为本地 ad hoc 路径。此前候选的 `codesign` 深度严格完整性验证通过，但 `spctl` 分发评估拒绝。当前环境没有 Developer ID Application 身份，已有开发/其他分发身份不替代这一要求。`56338ec48` 已加入签名门禁并通过 60 项回归：`--signed` 强制发行签名且检查最终应用的 Apple Developer ID、TeamIdentifier、hardened runtime 与完整性；`--notarize` 必须搭配签名，缺少公证配置明确失败。对现有 ad hoc 包的只读 Developer ID 验证实际拒绝。该修复防止误标，不会将本地包变成正式签名包。
 - **外部依赖限制**：一次完整包装测试记录为 303 通过、8 项既有跳过、1 项失败。失败用例要求可选 Vela CLI 的实际 npm 二进制；当时 `@powerformer/vela-cli-darwin-arm64@0.0.35` 缺失且仓库返回 E404。该测试未被改为跳过；普通构建不要求此可选二进制，此前 DMG 构建已成功。API 模式需要可用 OpenCode，可来自本机安装或随附运行时；当前本机检测到外部 OpenCode 1.18.5，但此候选未包含 Vela/OpenCode companion。API 连接测试成功不证明执行依赖可用，缺少 OpenCode 时仍会阻止任务启动。本轮真实本地 Codex 成功不代替 API 生成或第三方 Cloud 验收。
 
-详细日志与清单保存在本次工作区的 `.tmp/design-loom-acceptance/`，包括该检查点构建的 `package-build-delivery.log`、`final-package-audit.json`、`installed-app-integrity.json`、`original-after-install.json`，以及 `delivery-final-guard.log`、`final-typecheck.log` 和 `runtime-check-*.json`。冷启动数据核验为 `runtime-check-installed-cold-start-1788715592784.json`，安装副本与原应用复核见 `verify-final-install.log`；签名与分发评估见 `macos-release-readiness-audit.json`。真实运行终态保存在 `real-agent-complete.json`；后续修复分别见 `validation-handoff-proof-final/manifest.json`、`verified-react-wrappers-final/manifest.json`、`generation-bom-fix-manifest.json` 和 `markdown-destination-final/manifest.json`。Vela 限制另见本地 `.tmp/design-loom-pack-tests.log`、`.tmp/design-loom-packaging-manifest.json`。这些是忽略提交的验收材料，本报告保留其结论，不依赖其他机器具备相同临时目录。daemon 数据路径只遵循 [AGENTS.md 的数据目录契约](../AGENTS.md#daemon-data-directory-contract)。
+详细日志与清单保存在本次工作区的 `.tmp/design-loom-acceptance/`。当前候选包括 `package-build-release-iteration.log`、`release-iteration-package-audit.json`、`release-iteration-system-install.json`、`release-iteration-installed-integrity.json`、`release-iteration-startup-smoke.json`、`release-iteration-guard-final.log` 与 `release-iteration-typecheck.log`。本轮设计、概览、设置与签名证据分别见 `overview-designed-in-app/manifest.json`、`design-overview-final/manifest.json`、`settings-runtime-final/manifest.json`、`signing-fail-closed-manifest.json`。旧候选的构建、原生冷启动及真实生成材料仍保留，包含 `package-build-delivery.log`、`final-package-audit.json`、`runtime-check-installed-cold-start-1788715592784.json`、`real-agent-complete.json` 及各项修复清单；更新前的只读快照为 `runtime-check-before-release-iteration-install-*.json`。Vela 限制另见本地 `.tmp/design-loom-pack-tests.log`、`.tmp/design-loom-packaging-manifest.json`。这些是忽略提交的验收材料，本报告保留其结论，不依赖其他机器具备相同临时目录。daemon 数据路径只遵循 [AGENTS.md 的数据目录契约](../AGENTS.md#daemon-data-directory-contract)。
 
 ## 支持边界
 
@@ -56,7 +60,9 @@
 - [x] **该检查点项目界面复验**：从系统安装位置完成已迁移入口、普通 HTML、折叠诊断、CommonMark 文件链接及完整 JSON props 的原生操作。
 - [x] **该检查点冷启动**：实际安装可执行文件、项目 revision、连续发布历史、编辑基线和来源字节均通过重启后的只读核验。
 - [x] **原 OpenDesign 安装隔离**：冷启动后再次确认三个基线文件哈希与操作前一致；该包仅声明 `designloom://`，未安装全局 `od` 入口。
-- [ ] **概览改进**：基于已启动的真实设计任务，补全已迁移 tokens 与版本的可见信息；设计、实现及验收尚未完成。
-- [ ] **下一安装候选**：合入本轮后续改动后，重新构建并记录源码检查点、产物摘要，再安装、冷启动和原生复验。以上旧检查点的通过记录不得自动转用于新候选。
+- [x] **按设计稿实施**：真实设计运行完成，已实施概览成果展示、分类明细与设置文案/依赖状态，相关测试和源码复审通过。
+- [x] **新候选构建与安装**：`f6c5911c5` 构建成功，静态审计、系统目录完整安装及工具管理环境启动通过。
+- [ ] **新候选最终原生验收**：解锁后，从 `/Applications/Design Loom.app` 启动；操作迁移系统的概览、tokens/文件详情、版本管理，设置页 OpenCode 状态与重扫，再核对数据延续和原应用隔离。旧候选的原生通过记录不得自动转用于新候选。
+- [ ] **公开分发签名与公证**：配置可用的 Developer ID Application 与公证凭据，执行正式签名构建并验证分发接受状态。当前未具备这些条件，不标记为公开发行完成。
 
 以上待办由本轮验收负责人依据实际结果更新；未勾选项不计为通过。
