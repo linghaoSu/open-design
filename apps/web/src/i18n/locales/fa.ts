@@ -1,8 +1,10 @@
+import { designWorkspaceFallback } from '../design-workspace-fallback';
 import { reactPreviewFallback } from '../react-preview-fallback';
 import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const fa: Dict = {
+  ...designWorkspaceFallback,
   ...reactPreviewFallback,
   ...designMigrationFallback,
 
@@ -150,8 +152,8 @@ export const fa: Dict = {
   "designRuntime.addStory": "افزودن داستان",
   "designRuntime.slotMappings": "نگاشت اسلات‌ها",
   "designRuntime.chooseCodeSlot": "انتخاب اسلات کد",
-  'designRuntime.title': "محیط اجرای طراحی",
-  'designRuntime.description': "اجزای پروژه را کامپایل کنید، کد را پیوند دهید و مقادیر ویژگی‌ها را بررسی کنید.",
+  'designRuntime.title': "سیستم طراحی",
+  'designRuntime.description': "از اجزا دوباره استفاده کنید، هماهنگی صفحات را حفظ کنید و طراحی را برای توسعه آماده کنید.",
   'designRuntime.revision': "بازبینی {revision}",
   'designRuntime.refresh': "تازه‌سازی",
   'designRuntime.readOnly': "دسترسی فقط خواندنی: فراداده را مرور و مقادیر را اعتبارسنجی کنید. ویرایش به دسترسی نوشتن نیاز دارد.",
@@ -159,8 +161,8 @@ export const fa: Dict = {
   'designRuntime.saved': "تغییرات ذخیره شد.",
   'designRuntime.diagnostics': "عیب‌یابی",
   'designRuntime.allowedValues': "مقادیر مجاز",
-  'designRuntime.sources': "منابع اجزا",
-  "designRuntime.sourceHint": "خروجی‌های React/TypeScript یا Vue SFC را انتخاب کنید. کامپایل، رجیستری را با این انتخاب‌ها جایگزین می‌کند.",
+  'designRuntime.sources': "فایل‌های اجزا",
+  "designRuntime.sourceHint": "اجزای موردنظر را انتخاب کنید. این انتخاب جایگزین مجموعه فعلی اجزا می‌شود.",
   'designRuntime.systemId': "شناسه سیستم طراحی",
   'designRuntime.sourcePath': "فایل منبع",
   'designRuntime.chooseSource': "انتخاب فایل منبع",
@@ -171,8 +173,8 @@ export const fa: Dict = {
   'designRuntime.codeId': "شناسه جزء کد",
   'designRuntime.packageName': "بسته (اختیاری)",
   'designRuntime.addSource': "افزودن منبع",
-  'designRuntime.compile': "کامپایل رجیستری",
-  'designRuntime.empty': "منابع انتخاب‌شده را کامپایل کنید تا اجزا و پیوندهای کد را ببینید.",
+  'designRuntime.compile': "افزودن اجزا",
+  'designRuntime.empty': "برای شروع ساخت مجموعه، فایل‌های اجزا را انتخاب کنید.",
   'designRuntime.components': "اجزای طراحی",
   'designRuntime.component': "جزء طراحی",
   'designRuntime.slots': "جایگاه‌ها",

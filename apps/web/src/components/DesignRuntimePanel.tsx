@@ -32,6 +32,7 @@ import { DesignRuntimeSourceSelections } from './DesignRuntimeSourceSelections';
 import { DesignRuntimeLegacyMigration, isLegacyDesignSource } from './DesignRuntimeLegacyMigration';
 import { DesignHandoffPanel } from './DesignHandoffPanel';
 import { DesignPreviewPanel, type DesignPreviewSelection } from './DesignPreviewPanel';
+import { Icon } from './Icon';
 import styles from './DesignRuntimePanel.module.css';
 
 interface Props {
@@ -44,11 +45,13 @@ interface Props {
 
 type SourceSelection = ProjectDesignRuntimeCompileRequest['selections'][number];
 type ScalarKind = 'string' | 'number' | 'boolean' | 'null';
+type RuntimeTab = 'overview' | 'code' | 'structure' | 'migration' | 'versions' | 'validation' | 'handoff' | 'preview';
 interface PropDraft { included: boolean; input: string; kind: ScalarKind }
 
 function newSelection(sourcePath = ''): SourceSelection {
   const identity = crypto.randomUUID();
-  return { sourcePath, exportName: '', framework: 'react', componentId: `component-${identity}`, codeComponentId: `code/${identity}` };
+  const framework = sourcePath.endsWith('.vue') ? 'vue' : 'react';
+  return { sourcePath, exportName: framework === 'vue' ? 'default' : '', framework, componentId: `component-${identity}`, codeComponentId: `code/${identity}` };
 }
 
 function sourceSelections(state: ProjectDesignRuntimeState): SourceSelection[] {
@@ -112,6 +115,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
   const [designSystemId, setDesignSystemId] = useState('project');
   const [componentId, setComponentId] = useState('');
   const [codeId, setCodeId] = useState('');
+  const [bindingFramework, setBindingFramework] = useState<'react' | 'vue'>('react');
   const [mappings, setMappings] = useState<Record<string, string>>({});
   const [transforms, setTransforms] = useState<Record<string, string>>({});
   const [slotMappings, setSlotMappings] = useState<Record<string, string>>({});
@@ -119,7 +123,9 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(true);
   const [structureBusy, setStructureBusy] = useState(false);
-  const [tab, setTab] = useState<'code' | 'structure' | 'migration' | 'versions' | 'validation' | 'handoff' | 'preview'>('code');
+  const [tab, setTab] = useState<RuntimeTab>('overview');
+  const [connectionsOpen, setConnectionsOpen] = useState(false);
+  const moreMenu = useRef<HTMLDetailsElement>(null);
   const [migrationOpened, setMigrationOpened] = useState(false);
   const [previewOpened, setPreviewOpened] = useState(false);
   const [previewSelection, setPreviewSelection] = useState<DesignPreviewSelection>();
@@ -127,6 +133,15 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
   const [handoffOpened, setHandoffOpened] = useState(false);
   const [versionsOpened, setVersionsOpened] = useState(false);
   const [validationOpened, setValidationOpened] = useState(false);
+  function navigate(next: RuntimeTab) {
+    if (next === 'migration') setMigrationOpened(true);
+    if (next === 'versions') setVersionsOpened(true);
+    if (next === 'validation') setValidationOpened(true);
+    if (next === 'handoff') setHandoffOpened(true);
+    if (next === 'preview') { setPreviewSelection(undefined); setPreviewOpened(true); }
+    if (moreMenu.current) moreMenu.current.open = false;
+    setTab(next);
+  }
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [diagnostics, setDiagnostics] = useState<ValidationDiagnostic[] | null>(null);
@@ -140,15 +155,17 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
   const selectedCode = state?.codeIndex.components.find((component) => component.id === codeId);
   const componentRef = selectedComponent && state?.registry ? `ds:${state.registry.id}/${selectedComponent.id}` : '';
   const binding = state?.bindings.bindings.find((candidate) => candidate.componentRef === componentRef
-    && candidate.framework === (selectedCode?.framework ?? 'react'));
+    && candidate.framework === (selectedCode?.framework ?? bindingFramework));
   const visibleComponents = state?.registry?.components.filter((component) =>
     `${component.name} ${component.id}`.toLowerCase().includes(query.toLowerCase())) ?? [];
 
-  function selectComponent(nextId: string, nextState = state) {
+  function selectComponent(nextId: string, nextState = state, preferredBinding?: ComponentBinding) {
     setComponentId(nextId);
     const ref = nextState?.registry ? `ds:${nextState.registry.id}/${nextId}` : '';
-    const nextBinding = nextState?.bindings.bindings.find((candidate) => candidate.componentRef === ref);
-    setCodeId(nextBinding && nextBinding.status !== 'unbound' ? nextBinding.codeComponentId : nextState?.codeIndex.components[0]?.id ?? '');
+    const nextBinding = preferredBinding ?? nextState?.bindings.bindings.find((candidate) => candidate.componentRef === ref);
+    const candidateCode = nextBinding ? nextState?.codeIndex.components.find((code) => code.framework === nextBinding.framework) : nextState?.codeIndex.components[0];
+    setBindingFramework(nextBinding?.framework ?? candidateCode?.framework ?? 'react');
+    setCodeId(nextBinding && nextBinding.status !== 'unbound' ? nextBinding.codeComponentId : candidateCode?.id ?? '');
     setMappings(Object.fromEntries(nextBinding?.propMappings?.map((mapping) => [mapping.designProp, mapping.codeProp]) ?? []));
     setTransforms(Object.fromEntries(nextBinding?.propMappings?.map((mapping) => [mapping.designProp, mapping.valueTransform !== undefined ? JSON.stringify({ valueTransform: mapping.valueTransform }, null, 2) : mapping.values !== undefined ? JSON.stringify({ values: mapping.values }, null, 2) : '']) ?? []));
     setSlotMappings(Object.fromEntries(nextBinding?.slotMappings?.map((mapping) => [mapping.designSlot, mapping.codeSlot]) ?? []));
@@ -179,7 +196,6 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
       .then(({ state: nextState }) => {
         if (mounted.current && generation.current === current) {
           adoptState(nextState, true);
-          if (!nextState.registry && files.some((file) => isLegacyDesignSource(file.name))) { setMigrationOpened(true); setTab('migration'); }
         }
       })
       .catch((cause: unknown) => {
@@ -301,20 +317,20 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
           <p>{t('designRuntime.description')}</p>
         </div>
         <div className={styles.actions}>
-          {state ? <span className={styles.muted}>{t('designRuntime.revision', { revision: state.revision })}</span> : null}
-          <Button disabled={busy || structureBusy} onClick={() => void perform(getProjectDesignRuntime, ({ state: nextState }) => adoptState(nextState, state === null))}>{t('designRuntime.refresh')}</Button>
-          <Button variant="ghost" onClick={onClose}>{t('common.close')}</Button>
+          <Button variant="ghost" size="icon" aria-label={t('designRuntime.refresh')} title={t('designRuntime.refresh')} disabled={busy || structureBusy} onClick={() => void perform(getProjectDesignRuntime, ({ state: nextState }) => adoptState(nextState, state === null))}><Icon name="refresh" size={16} /></Button>
+          <Button variant="ghost" size="icon" aria-label={t('common.close')} title={t('common.close')} onClick={onClose}><Icon name="close" size={16} /></Button>
         </div>
       </header>
-      <div role="tablist" aria-label={t('designRuntime.title')} className={styles.actions}>
-        <Button role="tab" id={`${inputId}-migration-tab`} aria-controls={`${inputId}-migration`} aria-selected={tab === 'migration'} disabled={busy || structureBusy} data-testid="design-runtime-migration-tab" onClick={() => { setMigrationOpened(true); setTab('migration'); }}>{t('designMigration.title')}</Button>
-        <Button role="tab" id={`${inputId}-code-tab`} aria-controls={`${inputId}-code`} aria-selected={tab === 'code'} disabled={busy || structureBusy} data-testid="design-runtime-code-tab" onClick={() => setTab('code')}>{t('projectStructure.codeTab')}</Button>
-        <Button role="tab" id={`${inputId}-structure-tab`} aria-controls={`${inputId}-structure`} aria-selected={tab === 'structure'} disabled={busy || structureBusy} data-testid="design-runtime-structure-tab" onClick={() => setTab('structure')}>{t('projectStructure.title')}</Button>
-        <Button role="tab" id={`${inputId}-versions-tab`} aria-controls={`${inputId}-versions`} aria-selected={tab === 'versions'} disabled={busy || structureBusy} data-testid="design-runtime-versions-tab" onClick={() => { setVersionsOpened(true); setTab('versions'); }}>{t('designVersions.title')}</Button>
-        <Button role="tab" id={`${inputId}-validation-tab`} aria-controls={`${inputId}-validation`} aria-selected={tab === 'validation'} disabled={busy || structureBusy} data-testid="design-runtime-validation-tab" onClick={() => { setValidationOpened(true); setTab('validation'); }}>{t('designValidation.title')}</Button>
-        <Button role="tab" id={`${inputId}-handoff-tab`} aria-controls={`${inputId}-handoff`} aria-selected={tab === 'handoff'} disabled={busy || structureBusy} data-testid="design-runtime-handoff-tab" onClick={() => { setHandoffOpened(true); setTab('handoff'); }}>{t('designHandoff.title')}</Button>
-        <Button role="tab" id={`${inputId}-preview-tab`} aria-controls={`${inputId}-preview`} aria-selected={tab === 'preview'} disabled={busy || structureBusy} data-testid="design-runtime-preview-tab" onClick={() => { setPreviewSelection(undefined); setPreviewOpened(true); setTab('preview'); }}>{t('designPreview.title')}</Button>
+      <div role="tablist" aria-label={t('designRuntime.title')} className={styles.navigation}>
+        {(['overview', 'code', 'preview'] as const).map((id) => <Button key={id} variant="ghost" className={styles.tab} role="tab" id={`${inputId}-${id}-tab`} aria-controls={`${inputId}-${id}`} aria-selected={tab === id} disabled={busy || structureBusy} data-testid={`design-runtime-${id}-tab`} onClick={() => navigate(id)}>{id === 'overview' ? t('designWorkspace.overview') : id === 'code' ? t('designRuntime.components') : t('designPreview.title')}</Button>)}
+        <details ref={moreMenu} className={styles.more} data-testid="design-runtime-more">
+          <summary className={styles.moreTrigger} data-active={!['overview', 'code', 'preview'].includes(tab)}>{t('designWorkspace.more')}<Icon name="chevron-down" size={12} /></summary>
+          <div className={styles.moreMenu}>
+            {(['migration', 'versions', 'structure', 'validation', 'handoff'] as const).map((id) => <Button key={id} variant="ghost" className={styles.tab} role="tab" id={`${inputId}-${id}-tab`} aria-controls={`${inputId}-${id}`} aria-selected={tab === id} disabled={busy || structureBusy} data-testid={`design-runtime-${id}-tab`} onClick={() => navigate(id)}>{id === 'migration' ? t('designWorkspace.migrateTitle') : id === 'versions' ? t('designVersions.title') : id === 'structure' ? t('projectStructure.title') : id === 'validation' ? t('designValidation.title') : t('designHandoff.title')}</Button>)}
+          </div>
+        </details>
       </div>
+      <div className={styles.content}>
       {viewerOnly ? <p className={styles.notice}>{t('designRuntime.readOnly')}</p> : null}
       {busy ? <p role="status">{t('common.loading')}</p> : null}
       {error ? <p className={styles.error} role="alert">{error}</p> : null}
@@ -326,24 +342,34 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
           {diagnostic.allowedValues ? <span>{t('designRuntime.allowedValues')}: {diagnostic.allowedValues.map((value) => JSON.stringify(value)).join(', ')}</span> : null}
         </li>)}
       </ul> : null}
+      <div id={`${inputId}-overview`} role="tabpanel" aria-labelledby={`${inputId}-overview-tab`} hidden={tab !== 'overview'}>
+        {state ? <DesignSystemOverview state={state} hasLegacyFiles={files.some((file) => isLegacyDesignSource(file.name))} hasSourceFiles={sourceFiles.length > 0} disabled={busy || structureBusy} onNavigate={navigate} onRepair={(id, target) => { selectComponent(id, state, target); setConnectionsOpen(true); navigate('code'); }} /> : null}
+      </div>
       <div id={`${inputId}-code`} role="tabpanel" aria-labelledby={`${inputId}-code-tab`} hidden={tab !== 'code'}>
+      <p className={styles.sectionIntro}>{t('designWorkspace.componentsHint')}</p>
       <div className={styles.columns}>
+        <details className={styles.sourceSetup} open={!state?.registry} data-testid="design-runtime-source-setup">
+        <summary>{t('designWorkspace.editSources')}</summary>
         <form className={styles.card} onSubmit={(event) => { event.preventDefault(); compile(); }}>
           <h3>{t('designRuntime.sources')}</h3>
-          <p className={styles.muted}>{t('designRuntime.sourceHint')}</p>
+          <p className={styles.muted}>{t(sourceFiles.length ? 'designRuntime.sourceHint' : 'designWorkspace.noSourceFiles')}</p>
           <fieldset disabled={viewerOnly || busy || !state}>
-            <label className={styles.field}>{t('designRuntime.systemId')}
-              <input data-testid="design-runtime-system-id" value={designSystemId} readOnly={!!state?.registry} required pattern="[A-Za-z0-9][A-Za-z0-9._-]*" onChange={(event) => setDesignSystemId(event.target.value)} />
-            </label>
+            <details className={styles.advanced}>
+              <summary>{t('designWorkspace.advanced')}</summary>
+              <label className={styles.field}>{t('designRuntime.systemId')}
+                <input data-testid="design-runtime-system-id" value={designSystemId} readOnly={!!state?.registry} required pattern="[A-Za-z0-9][A-Za-z0-9._-]*" onChange={(event) => setDesignSystemId(event.target.value)} />
+              </label>
+            </details>
             <DesignRuntimeSourceSelections selections={selections} files={sourceFiles} onChange={setSelections} />
             <div className={styles.actions}>
               <Button data-testid="design-runtime-add-source" onClick={() => setSelections((current) => [...current, newSelection(sourceFiles[0])])}>{t('designRuntime.addSource')}</Button>
-              <Button data-testid="design-runtime-compile" type="submit" variant="primary">{t('designRuntime.compile')}</Button>
+              <Button data-testid="design-runtime-compile" type="submit" variant="primary" disabled={!sourceFiles.length}>{t('designRuntime.compile')}</Button>
             </div>
           </fieldset>
         </form>
+        </details>
         <div className={styles.catalog}>
-          {!state?.registry ? <p className={styles.empty}>{t('designRuntime.empty')}</p> : <>
+          {!state?.registry ? null : <>
             <section className={styles.card}>
               <h3>{t('designRuntime.components')}</h3>
               <label className={styles.field}>{t('common.search')}
@@ -352,11 +378,14 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
               <label className={styles.field}>{t('designRuntime.component')}
                 <select data-testid="design-runtime-component-select" value={componentId} disabled={busy} onChange={(event) => selectComponent(event.target.value)}>
                   {selectedComponent && !visibleComponents.includes(selectedComponent) ? <option value={selectedComponent.id}>{selectedComponent.name}</option> : null}
-                  {visibleComponents.map((component) => <option key={component.id} value={component.id}>{component.name} · {component.id}</option>)}
+                  {visibleComponents.map((component) => <option key={component.id} value={component.id}>{component.name}</option>)}
                 </select>
               </label>
               {selectedComponent ? <>
                 <ComponentMetadata component={selectedComponent} />
+                <details className={styles.advanced}><summary>{t('designWorkspace.componentDetails')}</summary>
+                <p className={styles.muted}><code>{selectedComponent.id}</code></p>
+                {selectedComponent.source ? <p className={styles.muted}><code>{selectedComponent.source.sourcePath}</code> · {selectedComponent.source.exportName}</p> : null}
                 <h4>{t('designRuntime.slots')}</h4>
                 {Object.entries(selectedComponent.slots ?? {}).length ? <ul>
                   {Object.entries(selectedComponent.slots ?? {}).map(([name, slot]) => <li key={name}>
@@ -364,14 +393,17 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
                   </li>)}
                 </ul> : <p className={styles.muted}>{t('common.none')}</p>}
                 {selectedComponent.stories?.length ? <><h4>{t('designRuntime.stories')}</h4><ul>{selectedComponent.stories.map((story) => <li key={story.id}><strong>{story.name}</strong> · <code>{story.exportName}</code><p>{Object.entries(story.args).map(([name, value]) => `${name}: ${JSON.stringify(value)}`).join(', ')}</p><code>{story.source.sourcePath}</code></li>)}</ul></> : null}
+                </details>
               </> : null}
             </section>
+            <details className={styles.advanced} open={connectionsOpen} onToggle={(event) => { if (event.target === event.currentTarget) setConnectionsOpen(event.currentTarget.open); }} data-testid="design-runtime-connections"><summary>{t('designWorkspace.connections')}</summary>
             <section className={styles.card}>
               <h3>{t('designRuntime.binding')}</h3>
               <p>{t('designRuntime.status')}: <strong data-testid="design-runtime-binding-status">{t(`designRuntime.status.${binding?.status ?? 'unbound'}`)}</strong></p>
               {binding && binding.status !== 'unbound' ? <p className={styles.muted}>{t('designRuntime.boundTarget')}: <code>{binding.codeComponentId}</code></p> : null}
               <label className={styles.field}>{t('designRuntime.codeComponent')}
-                <select data-testid="design-runtime-code-select" value={codeId} disabled={busy} onChange={(event) => { setCodeId(event.target.value); setMappings({}); setSlotMappings({}); setDiagnostics(null); setMessage(''); }}>
+                <select data-testid="design-runtime-code-select" value={codeId} disabled={busy} onChange={(event) => { const code = state.codeIndex.components.find((candidate) => candidate.id === event.target.value); if (code) setBindingFramework(code.framework); setCodeId(event.target.value); setMappings({}); setSlotMappings({}); setDiagnostics(null); setMessage(''); }}>
+                  {!selectedCode ? <option value={codeId}>{codeId || t('common.none')}</option> : null}
                   {state.codeIndex.components.map((component) => <option key={component.id} value={component.id}>{component.name} · {component.id}</option>)}
                 </select>
               </label>
@@ -418,7 +450,8 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
                 }}>{t('designRuntime.resolve')}</Button>
               </div>
             </section>
-            {selectedComponent ? <form className={styles.card} onSubmit={(event) => { event.preventDefault(); validate(); }}>
+            </details>
+            {selectedComponent ? <details className={styles.advanced} data-testid="design-runtime-usage-checks"><summary>{t('designWorkspace.usageChecks')}</summary><form className={styles.card} onSubmit={(event) => { event.preventDefault(); validate(); }}>
               <h3>{t('designRuntime.validate')}</h3>
               <fieldset disabled={busy}>
                 {Object.entries(selectedComponent.props).map(([name, definition]) => {
@@ -448,7 +481,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
                 })}
                 <Button data-testid="design-runtime-validate" type="submit">{t('designRuntime.validate')}</Button>
               </fieldset>
-            </form> : null}
+            </form></details> : null}
           </>}
         </div>
       </div>
@@ -466,20 +499,73 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
         {versionsOpened ? <DesignSystemVersionsPanel scope={scope} state={state} files={files} viewerOnly={viewerOnly} externalBusy={busy} onState={(next) => { adoptState(next); setError(''); setDiagnostics(null); }} onBusyChange={setStructureBusy} onPreview={openPreview} /> : null}
       </div>
       <div id={`${inputId}-preview`} role="tabpanel" aria-labelledby={`${inputId}-preview-tab`} hidden={tab !== 'preview'}>
-        {previewOpened && tab === 'preview' && state ? <DesignPreviewPanel key={previewSelection?.id ?? 'current'} scope={scope} state={state} selection={previewSelection} sourceIdentity={files} externalBusy={busy} onBusyChange={setStructureBusy} /> : null}
+        <p className={styles.sectionIntro}>{t('designWorkspace.previewHint')}</p>
+        {previewOpened && tab === 'preview' && state ? <DesignPreviewPanel key={previewSelection?.id ?? 'current'} scope={scope} state={state} selection={previewSelection} sourceIdentity={files} externalBusy={busy} onBusyChange={setStructureBusy} onOpenStructure={() => navigate('structure')} /> : null}
       </div>
       <div id={`${inputId}-validation`} role="tabpanel" aria-labelledby={`${inputId}-validation-tab`} hidden={tab !== 'validation'}>
         {validationOpened ? <DesignRuntimeValidationPanel scope={scope} state={state} files={files} viewerOnly={viewerOnly} externalBusy={busy} onState={(next) => { adoptState(next); setError(''); setDiagnostics(null); }} onBusyChange={setStructureBusy} /> : null}
+      </div>
       </div>
     </section>
   );
 }
 
+function DesignSystemOverview({ state, hasLegacyFiles, hasSourceFiles, disabled, onNavigate, onRepair }: {
+  state: ProjectDesignRuntimeState;
+  hasLegacyFiles: boolean;
+  hasSourceFiles: boolean;
+  disabled: boolean;
+  onNavigate(tab: RuntimeTab): void;
+  onRepair(componentId: string, binding: ComponentBinding): void;
+}) {
+  const t = useT();
+  const hasSystem = !!state.registry;
+  const componentRefs = new Map((state.registry?.components ?? []).map((component) => [`ds:${state.registry!.id}/${component.id}`, component.id]));
+  const connectionIssues = state.bindings.bindings.filter((binding) => binding.status !== 'bound' && componentRefs.has(binding.componentRef));
+  return <div className={styles.overview}>
+    <div className={styles.overviewHeading}>
+      <span className={styles.overviewIcon}><Icon name="swatchbook" size={24} /></span>
+      <h3>{t(hasSystem ? 'designRuntime.components' : 'designWorkspace.startTitle')}</h3>
+      <p>{t(hasSystem ? 'designWorkspace.existingHint' : 'designWorkspace.startHint')}</p>
+    </div>
+    {hasSystem ? <>
+      <div className={styles.stats}>
+        <Button variant="ghost" disabled={disabled} onClick={() => onNavigate('code')}><Icon name="blocks" size={18} />{t('designWorkspace.componentsCount', { count: state.registry!.components.length })}<Icon name="chevron-right" size={14} /></Button>
+        <Button variant="ghost" disabled={disabled} onClick={() => onNavigate('preview')}><Icon name="layout" size={18} />{t('designWorkspace.screensCount', { count: state.document?.screens.length ?? 0 })}<Icon name="chevron-right" size={14} /></Button>
+      </div>
+      {connectionIssues.length ? <div className={styles.repair}>
+        <Icon name="alert-triangle" size={18} />
+        <div><strong>{t('designWorkspace.repairTitle')}</strong><p>{t('designWorkspace.repairHint', { count: connectionIssues.length })}</p></div>
+        <Button disabled={disabled} data-testid="design-runtime-repair-connections" onClick={() => onRepair(componentRefs.get(connectionIssues[0]!.componentRef)!, connectionIssues[0]!)}>{t('designWorkspace.connections')}</Button>
+      </div> : null}
+    </> : null}
+    {!hasSystem && hasLegacyFiles ? <p className={styles.detected}><Icon name="check" size={16} />{t('designWorkspace.legacyDetected')}</p> : null}
+    <div className={styles.choices}>
+      <section className={styles.choice}>
+        <Icon name="folder-transfer" size={22} />
+        <h4>{t('designWorkspace.migrateTitle')}</h4>
+        <p>{t('designWorkspace.migrateHint')}</p>
+        <Button data-testid="design-runtime-start-migration" variant={!hasSystem && hasLegacyFiles ? 'primary' : 'default'} disabled={disabled} onClick={() => onNavigate('migration')}>{t('designWorkspace.openMigration')}<Icon name="arrow-right" size={14} /></Button>
+      </section>
+      <section className={styles.choice}>
+        <Icon name="blocks" size={22} />
+        <h4>{t('designWorkspace.createTitle')}</h4>
+        <p>{t(hasSourceFiles ? 'designWorkspace.createHint' : 'designWorkspace.noSourceFiles')}</p>
+        <Button data-testid="design-runtime-start-code" variant={!hasLegacyFiles ? 'primary' : 'default'} disabled={disabled} onClick={() => onNavigate('code')}>{t('designWorkspace.openSources')}<Icon name="arrow-right" size={14} /></Button>
+      </section>
+    </div>
+    <div className={styles.importPackage}>
+      <p>{t('designWorkspace.importHint')}</p>
+      <Button variant="ghost" disabled={disabled} data-testid="design-runtime-import-version" onClick={() => onNavigate('versions')}><Icon name="import" size={15} />{t('designWorkspace.importVersion')}</Button>
+    </div>
+  </div>;
+}
+
 function ComponentMetadata({ component }: { component: ComponentDefinition | CodeComponentDefinition }) {
   const t = useT();
   return <div className={styles.metadata}>
-    <p><strong>{component.name}</strong> <code>{component.id}</code></p>
-    {'sourcePath' in component ? <p><code>{component.sourcePath}</code> · {component.exportName} · {component.framework}</p> : component.source ? <p><code>{component.source.sourcePath}</code> · {component.source.exportName}</p> : null}
+    <p><strong>{component.name}</strong></p>
+    {'sourcePath' in component ? <p><code>{component.sourcePath}</code> · {component.exportName} · {component.framework}</p> : null}
     <h4>{t('designRuntime.props')}</h4>
     {Object.entries(component.props).length ? <dl className={styles.props}>
       {Object.entries(component.props).map(([name, definition]) => <div key={name}>

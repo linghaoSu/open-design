@@ -1,0 +1,71 @@
+.source {
+  min-width: 0;
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.essentials {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: 12px;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin: 10px 0;
+  font-weight: 500;
+}
+
+.field input,
+.field select {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+}
+
+.muted {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.source summary {
+  cursor: pointer;
+  padding: 8px 0;
+  color: var(--text-muted);
+}
+
+.advanced {
+  margin-bottom: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.source input[readonly] {
+  color: var(--text-muted);
+}
+
+.source .storySource {
+  margin: 12px 0;
+  border: 0;
+  border-inline-start: 2px solid var(--border);
+  padding: 0;
+  padding-inline-start: 10px;
+  min-width: 0;
+}
+
+.story + .story {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}

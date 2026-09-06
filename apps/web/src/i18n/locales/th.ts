@@ -1,8 +1,10 @@
+import { designWorkspaceFallback } from '../design-workspace-fallback';
 import { reactPreviewFallback } from '../react-preview-fallback';
 import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const th: Dict = {
+  ...designWorkspaceFallback,
   ...reactPreviewFallback,
   ...designMigrationFallback,
 
@@ -150,8 +152,8 @@ export const th: Dict = {
   "designRuntime.addStory": "เพิ่มเรื่อง",
   "designRuntime.slotMappings": "การจับคู่สล็อต",
   "designRuntime.chooseCodeSlot": "เลือกสล็อตโค้ด",
-  'designRuntime.title': "รันไทม์การออกแบบ",
-  'designRuntime.description': "คอมไพล์คอมโพเนนต์ของโปรเจกต์ เชื่อมโยงโค้ด และตรวจสอบค่าคุณสมบัติ",
+  'designRuntime.title': "ระบบการออกแบบ",
+  'designRuntime.description': "นำคอมโพเนนต์กลับมาใช้ รักษาความสอดคล้องของหน้า และเตรียมงานออกแบบสำหรับการพัฒนา",
   'designRuntime.revision': "รุ่นแก้ไข {revision}",
   'designRuntime.refresh': "รีเฟรช",
   'designRuntime.readOnly': "เข้าถึงแบบอ่านอย่างเดียว: ดูข้อมูลเมตาและตรวจสอบค่าได้ การแก้ไขต้องมีสิทธิ์เขียน",
@@ -159,8 +161,8 @@ export const th: Dict = {
   'designRuntime.saved': "บันทึกการเปลี่ยนแปลงแล้ว",
   'designRuntime.diagnostics': "การวินิจฉัย",
   'designRuntime.allowedValues': "ค่าที่อนุญาต",
-  'designRuntime.sources': "ซอร์สคอมโพเนนต์",
-  "designRuntime.sourceHint": "เลือกชื่อส่งออก React/TypeScript หรือ Vue SFC การคอมไพล์จะแทนที่รีจิสทรีด้วยรายการที่เลือกนี้",
+  'designRuntime.sources': "ไฟล์คอมโพเนนต์",
+  "designRuntime.sourceHint": "เลือกคอมโพเนนต์ที่จะรวม รายการที่เลือกนี้จะแทนที่คอลเลกชันคอมโพเนนต์ปัจจุบัน",
   'designRuntime.systemId': "ID ระบบการออกแบบ",
   'designRuntime.sourcePath': "ไฟล์ซอร์ส",
   'designRuntime.chooseSource': "เลือกไฟล์ซอร์ส",
@@ -171,8 +173,8 @@ export const th: Dict = {
   'designRuntime.codeId': "ID คอมโพเนนต์โค้ด",
   'designRuntime.packageName': "แพ็กเกจ (ไม่บังคับ)",
   'designRuntime.addSource': "เพิ่มซอร์ส",
-  'designRuntime.compile': "คอมไพล์รีจิสทรี",
-  'designRuntime.empty': "คอมไพล์ซอร์สที่เลือกเพื่อดูคอมโพเนนต์และการเชื่อมโยงโค้ด",
+  'designRuntime.compile': "เพิ่มคอมโพเนนต์",
+  'designRuntime.empty': "เลือกไฟล์คอมโพเนนต์เพื่อเริ่มสร้างคอลเลกชันของคุณ",
   'designRuntime.components': "คอมโพเนนต์การออกแบบ",
   'designRuntime.component': "คอมโพเนนต์การออกแบบ",
   'designRuntime.slots': "สล็อต",

@@ -1,8 +1,10 @@
+import { designWorkspaceFallback } from '../design-workspace-fallback';
 import { reactPreviewFallback } from '../react-preview-fallback';
 import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const ko: Dict = {
+  ...designWorkspaceFallback,
   ...reactPreviewFallback,
   ...designMigrationFallback,
 
@@ -150,8 +152,8 @@ export const ko: Dict = {
   "designRuntime.addStory": "스토리 추가",
   "designRuntime.slotMappings": "슬롯 매핑",
   "designRuntime.chooseCodeSlot": "코드 슬롯 선택",
-  'designRuntime.title': "디자인 런타임",
-  'designRuntime.description': "프로젝트 컴포넌트를 컴파일하고 코드를 연결하며 속성 값을 검증합니다.",
+  'designRuntime.title': "디자인 시스템",
+  'designRuntime.description': "컴포넌트를 재사용하고 페이지의 일관성을 유지하며 개발에 필요한 디자인을 준비하세요.",
   'designRuntime.revision': "리비전 {revision}",
   'designRuntime.refresh': "새로 고침",
   'designRuntime.readOnly': "읽기 전용: 메타데이터를 탐색하고 값을 검증할 수 있습니다. 편집에는 쓰기 권한이 필요합니다.",
@@ -159,8 +161,8 @@ export const ko: Dict = {
   'designRuntime.saved': "변경 사항을 저장했습니다.",
   'designRuntime.diagnostics': "진단",
   'designRuntime.allowedValues': "허용되는 값",
-  'designRuntime.sources': "컴포넌트 소스",
-  "designRuntime.sourceHint": "React/TypeScript 내보내기 또는 Vue SFC를 선택하세요. 컴파일하면 이 선택으로 레지스트리가 교체됩니다.",
+  'designRuntime.sources': "컴포넌트 파일",
+  "designRuntime.sourceHint": "포함할 컴포넌트를 선택하세요. 이 선택으로 현재 컴포넌트 모음이 교체됩니다.",
   'designRuntime.systemId': "디자인 시스템 ID",
   'designRuntime.sourcePath': "소스 파일",
   'designRuntime.chooseSource': "소스 파일 선택",
@@ -171,8 +173,8 @@ export const ko: Dict = {
   'designRuntime.codeId': "코드 컴포넌트 ID",
   'designRuntime.packageName': "패키지 (선택 사항)",
   'designRuntime.addSource': "소스 추가",
-  'designRuntime.compile': "레지스트리 컴파일",
-  'designRuntime.empty': "선택한 소스를 컴파일하여 컴포넌트와 코드 바인딩을 탐색하세요.",
+  'designRuntime.compile': "컴포넌트 추가",
+  'designRuntime.empty': "컴포넌트 파일을 선택하여 모음을 만들어 보세요.",
   'designRuntime.components': "디자인 컴포넌트",
   'designRuntime.component': "디자인 컴포넌트",
   'designRuntime.slots': "슬롯",

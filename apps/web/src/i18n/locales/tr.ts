@@ -1,8 +1,10 @@
+import { designWorkspaceFallback } from '../design-workspace-fallback';
 import { reactPreviewFallback } from '../react-preview-fallback';
 import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const tr: Dict = {
+  ...designWorkspaceFallback,
   ...reactPreviewFallback,
   ...designMigrationFallback,
 
@@ -150,8 +152,8 @@ export const tr: Dict = {
   "designRuntime.addStory": "Hikâye ekle",
   "designRuntime.slotMappings": "Yuva eşlemeleri",
   "designRuntime.chooseCodeSlot": "Kod yuvası seç",
-  'designRuntime.title': "Tasarım çalışma zamanı",
-  'designRuntime.description': "Proje bileşenlerini derleyin, kodu bağlayın ve özellik değerlerini denetleyin.",
+  'designRuntime.title': "Tasarım sistemi",
+  'designRuntime.description': "Bileşenleri yeniden kullanın, sayfaları tutarlı tutun ve tasarımınızı geliştirmeye hazırlayın.",
   'designRuntime.revision': "Revizyon {revision}",
   'designRuntime.refresh': "Yenile",
   'designRuntime.readOnly': "Salt okunur erişim: meta verileri inceleyin ve değerleri doğrulayın. Düzenleme için yazma izni gerekir.",
@@ -159,8 +161,8 @@ export const tr: Dict = {
   'designRuntime.saved': "Değişiklikler kaydedildi.",
   'designRuntime.diagnostics': "Tanılamalar",
   'designRuntime.allowedValues': "İzin verilen değerler",
-  'designRuntime.sources': "Bileşen kaynakları",
-  "designRuntime.sourceHint": "React/TypeScript dışa aktarımlarını veya Vue SFC bileşenlerini seçin. Derleme, kayıt defterini bu seçimlerle değiştirir.",
+  'designRuntime.sources': "Bileşen dosyaları",
+  "designRuntime.sourceHint": "Dahil edilecek bileşenleri seçin. Bu seçim mevcut bileşen koleksiyonunun yerini alır.",
   'designRuntime.systemId': "Tasarım sistemi ID",
   'designRuntime.sourcePath': "Kaynak dosya",
   'designRuntime.chooseSource': "Kaynak dosya seçin",
@@ -171,8 +173,8 @@ export const tr: Dict = {
   'designRuntime.codeId': "Kod bileşeni ID",
   'designRuntime.packageName': "Paket (isteğe bağlı)",
   'designRuntime.addSource': "Kaynak ekle",
-  'designRuntime.compile': "Kaydı derle",
-  'designRuntime.empty': "Bileşenleri ve kod bağlantılarını incelemek için kaynak seçimini derleyin.",
+  'designRuntime.compile': "Bileşen ekle",
+  'designRuntime.empty': "Koleksiyonunuzu oluşturmaya başlamak için bileşen dosyalarını seçin.",
   'designRuntime.components': "Tasarım bileşenleri",
   'designRuntime.component': "Tasarım bileşeni",
   'designRuntime.slots': "Yuvalar",

@@ -1,8 +1,10 @@
+import { designWorkspaceFallback } from '../design-workspace-fallback';
 import { reactPreviewFallback } from '../react-preview-fallback';
 import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const fr: Dict = {
+  ...designWorkspaceFallback,
   ...reactPreviewFallback,
   ...designMigrationFallback,
 
@@ -150,8 +152,8 @@ export const fr: Dict = {
   "designRuntime.addStory": "Ajouter une story",
   "designRuntime.slotMappings": "Correspondances des slots",
   "designRuntime.chooseCodeSlot": "Choisir un slot de code",
-  'designRuntime.title': "Runtime de conception",
-  'designRuntime.description': "Compilez les composants du projet, associez le code et vérifiez les valeurs des propriétés.",
+  'designRuntime.title': "Système de design",
+  'designRuntime.description': "Réutilisez les composants, gardez des pages cohérentes et préparez votre design pour le développement.",
   'designRuntime.revision': "Révision {revision}",
   'designRuntime.refresh': "Actualiser",
   'designRuntime.readOnly': "Accès en lecture seule : consultez les métadonnées et validez les valeurs. La modification nécessite un accès en écriture.",
@@ -159,8 +161,8 @@ export const fr: Dict = {
   'designRuntime.saved': "Modifications enregistrées.",
   'designRuntime.diagnostics': "Diagnostics",
   'designRuntime.allowedValues': "Valeurs autorisées",
-  'designRuntime.sources': "Sources des composants",
-  "designRuntime.sourceHint": "Choisissez des exports React/TypeScript ou des SFC Vue. La compilation remplace le registre par cette sélection.",
+  'designRuntime.sources': "Fichiers de composants",
+  "designRuntime.sourceHint": "Choisissez les composants à inclure. Cette sélection remplace la collection actuelle de composants.",
   'designRuntime.systemId': "ID du système de design",
   'designRuntime.sourcePath': "Fichier source",
   'designRuntime.chooseSource': "Choisir un fichier source",
@@ -171,8 +173,8 @@ export const fr: Dict = {
   'designRuntime.codeId': "ID du composant de code",
   'designRuntime.packageName': "Paquet (facultatif)",
   'designRuntime.addSource': "Ajouter une source",
-  'designRuntime.compile': "Compiler le registre",
-  'designRuntime.empty': "Compilez une sélection de sources pour consulter les composants et leurs associations au code.",
+  'designRuntime.compile': "Ajouter des composants",
+  'designRuntime.empty': "Choisissez des fichiers de composants pour créer votre collection.",
   'designRuntime.components': "Composants de design",
   'designRuntime.component': "Composant de design",
   'designRuntime.slots': "Emplacements",

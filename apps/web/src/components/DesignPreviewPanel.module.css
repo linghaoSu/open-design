@@ -1,9 +1,16 @@
-.panel{display:grid;gap:16px;padding:16px}
-.fields{display:flex;flex-wrap:wrap;gap:16px;align-items:end}
-.field{display:grid;gap:8px;min-width:180px}
-.field select{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px}
-.screens{display:flex;gap:12px;flex-wrap:wrap;border:1px solid var(--border);padding:12px}
-.screenChoice{display:flex;align-items:center;gap:8px}
+.panel{display:grid;gap:16px;padding:16px;min-width:0}
+.panel h3,.panel p{margin:0}
+.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr));gap:16px;align-items:end;margin:12px 0}
+.field{display:grid;gap:8px;min-width:0}
+.field select{min-width:0;width:100%}
+.screens{display:flex;gap:12px;flex-wrap:wrap;border:1px solid var(--border);border-radius:8px;padding:12px;min-width:0;margin:0}
+.screens legend{padding:0 6px;font-weight:500}
+.screenChoice{display:flex;align-items:center;gap:8px;min-width:0;overflow-wrap:anywhere}
+.screenChoice input[type='checkbox']{flex:0 0 16px;width:16px;min-width:16px;height:16px;min-height:16px;margin:0;padding:0;accent-color:var(--accent)}
+.advanced{padding-top:12px;border-top:1px solid var(--border-soft);min-width:0}
+.advanced summary{cursor:pointer;color:var(--text-muted);font-weight:500}
+.advanced[open] summary{margin-bottom:12px}
+.empty{display:grid;justify-items:start;gap:12px;padding:20px;border:1px dashed var(--border);border-radius:8px;color:var(--text-muted);line-height:1.5}
 .comparison{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
 .single{grid-template-columns:minmax(0,1fr)}
 .side{min-width:0;display:grid;align-content:start;gap:12px}

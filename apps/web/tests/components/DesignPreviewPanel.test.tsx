@@ -14,6 +14,37 @@ beforeEach(() => { vi.clearAllMocks(); vi.mocked(provider.createProjectDesignRun
 afterEach(cleanup);
 
 describe('real component preview panel', () => {
+  it('starts with screen selection and keeps optional selectors collapsed until advanced settings are opened', async () => {
+    const { state, result } = previewUiFixture();
+    result.request.kind = 'production-handoff'; result.request.framework = 'vue';
+    result.sides.forEach((side) => { side.kind = 'production-handoff'; });
+    vi.mocked(provider.createProjectDesignRuntimePreview).mockResolvedValue(result);
+    render(<DesignPreviewPanel scope={scope} state={state} />);
+    const advanced = screen.getByTestId('design-preview-advanced') as HTMLDetailsElement;
+    expect(advanced.open).toBe(false);
+    expect(screen.getByTestId('design-preview-screen-home').closest('details')).toBeNull();
+    for (const selector of ['kind', 'framework', 'draft']) expect(screen.getByTestId(`design-preview-${selector}`).closest('details')).toBe(advanced);
+    fireEvent.click(advanced.querySelector('summary')!);
+    expect(advanced.open).toBe(true);
+    fireEvent.change(screen.getByTestId('design-preview-kind'), { target: { value: 'production-handoff' } });
+    fireEvent.change(screen.getByTestId('design-preview-framework'), { target: { value: 'vue' } });
+    expect(provider.createProjectDesignRuntimePreview).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('design-preview-build'));
+    await screen.findByTestId('design-preview-frame-current-home');
+    expect(provider.createProjectDesignRuntimePreview).toHaveBeenCalledWith(expect.objectContaining(scope), expect.objectContaining({ kind: 'production-handoff', framework: 'vue', screenIds: ['home'] }));
+  });
+
+  it('offers the structure page instead of an unusable preview form when no screens exist', () => {
+    const { state } = previewUiFixture(); const open = vi.fn();
+    const view = render(<DesignPreviewPanel scope={scope} state={{ ...state, document: null }} onOpenStructure={open} />);
+    expect(screen.getByTestId('design-preview-empty').textContent).toContain('Save a semantic screen');
+    expect(screen.queryByTestId('design-preview-build')).toBeNull(); expect(screen.queryByTestId('design-preview-advanced')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Project structure' }));
+    expect(open).toHaveBeenCalledOnce(); expect(provider.createProjectDesignRuntimePreview).not.toHaveBeenCalled();
+    view.rerender(<DesignPreviewPanel scope={scope} state={{ ...state, document: { ...state.document!, screens: [] } }} onOpenStructure={open} />);
+    expect(screen.getByTestId('design-preview-open-structure')).toBeTruthy(); expect(screen.queryByTestId('design-preview-build')).toBeNull();
+  });
+
   it('builds only on explicit action using saved revision and workspace, and accepts only this opaque frame identity', async () => {
     render(<StrictMode><DesignPreviewPanel scope={scope} state={previewUiFixture().state} /></StrictMode>);
     expect(provider.createProjectDesignRuntimePreview).not.toHaveBeenCalled();
@@ -39,6 +70,8 @@ describe('real component preview panel', () => {
     result.sides.push({ ...structuredClone(result.sides[0]!), role: 'proposed', screens: [{ screenId: 'home', sourcePath: 'src/Home.tsx', exportName: 'Home', bundle: null, diagnostics: [error] }] });
     vi.mocked(provider.createProjectDesignRuntimePreview).mockResolvedValue(result);
     render(<DesignPreviewPanel scope={scope} state={state} selection={{ id: 'selection', comparison, screenIds: ['home'] }} />);
+    expect((screen.getByTestId('design-preview-advanced') as HTMLDetailsElement).open).toBe(false);
+    expect(screen.getByTestId('design-preview-comparison').closest('details')).toBeNull();
     fireEvent.click(screen.getByTestId('design-preview-build')); await screen.findByText('Local binding is stale.');
     expect(screen.getByTestId('design-preview-impact').textContent).toContain('home, other'); expect(screen.queryByTestId('design-preview-frame-proposed-home')).toBeNull();
     fireEvent.click(screen.getByTestId('design-preview-clear-comparison')); expect(screen.queryByTestId('design-preview-comparison')).toBeNull(); expect(screen.queryByTestId('design-preview-frame-current-home')).toBeNull();

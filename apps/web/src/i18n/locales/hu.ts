@@ -1,8 +1,10 @@
+import { designWorkspaceFallback } from '../design-workspace-fallback';
 import { reactPreviewFallback } from '../react-preview-fallback';
 import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const hu: Dict = {
+  ...designWorkspaceFallback,
   ...reactPreviewFallback,
   ...designMigrationFallback,
 
@@ -150,8 +152,8 @@ export const hu: Dict = {
   "designRuntime.addStory": "Történet hozzáadása",
   "designRuntime.slotMappings": "Slotleképezések",
   "designRuntime.chooseCodeSlot": "Kódbeli slot kiválasztása",
-  'designRuntime.title': "Tervezési futtatókörnyezet",
-  'designRuntime.description': "Fordítsd le a projekt komponenseit, kapcsold össze a kódot, és ellenőrizd a tulajdonságértékeket.",
+  'designRuntime.title': "Tervezési rendszer",
+  'designRuntime.description': "Használd újra a komponenseket, őrizd meg az oldalak egységességét, és készítsd elő a tervet a fejlesztéshez.",
   'designRuntime.revision': "Verzió: {revision}",
   'designRuntime.refresh': "Frissítés",
   'designRuntime.readOnly': "Csak olvasási hozzáférés: metaadatok böngészése és értékek ellenőrzése. A szerkesztéshez írási jog szükséges.",
@@ -159,8 +161,8 @@ export const hu: Dict = {
   'designRuntime.saved': "Módosítások mentve.",
   'designRuntime.diagnostics': "Diagnosztika",
   'designRuntime.allowedValues': "Megengedett értékek",
-  'designRuntime.sources': "Komponensforrások",
-  "designRuntime.sourceHint": "Válasszon React/TypeScript-exportokat vagy Vue SFC-ket. A fordítás ezzel a kiválasztással helyettesíti a nyilvántartást.",
+  'designRuntime.sources': "Komponensfájlok",
+  "designRuntime.sourceHint": "Válaszd ki a felvenni kívánt komponenseket. Ez a kijelölés lecseréli a jelenlegi komponensgyűjteményt.",
   'designRuntime.systemId': "Tervezési rendszer ID",
   'designRuntime.sourcePath': "Forrásfájl",
   'designRuntime.chooseSource': "Forrásfájl kiválasztása",
@@ -171,8 +173,8 @@ export const hu: Dict = {
   'designRuntime.codeId': "Kódkomponens ID",
   'designRuntime.packageName': "Csomag (nem kötelező)",
   'designRuntime.addSource': "Forrás hozzáadása",
-  'designRuntime.compile': "Nyilvántartás fordítása",
-  'designRuntime.empty': "Fordítsd le a kiválasztott forrásokat a komponensek és kódkapcsolataik böngészéséhez.",
+  'designRuntime.compile': "Komponensek hozzáadása",
+  'designRuntime.empty': "Válassz komponensfájlokat a gyűjtemény létrehozásához.",
   'designRuntime.components': "Tervezési komponensek",
   'designRuntime.component': "Tervezési komponens",
   'designRuntime.slots': "Helyek",

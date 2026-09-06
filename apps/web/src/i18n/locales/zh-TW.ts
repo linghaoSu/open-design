@@ -1,8 +1,10 @@
+import { designWorkspaceFallback } from '../design-workspace-fallback';
 import { reactPreviewFallback } from '../react-preview-fallback';
 import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from "../types";
 
 export const zhTW: Dict = {
+  ...designWorkspaceFallback,
   ...reactPreviewFallback,
   ...designMigrationFallback,
 
@@ -150,8 +152,8 @@ export const zhTW: Dict = {
   "designRuntime.addStory": "新增故事",
   "designRuntime.slotMappings": "插槽對應",
   "designRuntime.chooseCodeSlot": "選擇程式碼插槽",
-  'designRuntime.title': "設計執行環境",
-  'designRuntime.description': "編譯專案元件、關聯程式碼並驗證屬性值。",
+  'designRuntime.title': "設計系統",
+  'designRuntime.description': "重用元件，保持頁面一致，為開發準備好設計。",
   'designRuntime.revision': "修訂 {revision}",
   'designRuntime.refresh': "重新整理",
   'designRuntime.readOnly': "唯讀存取：可瀏覽中繼資料及驗證屬性值，編輯需要寫入權限。",
@@ -159,8 +161,8 @@ export const zhTW: Dict = {
   'designRuntime.saved': "變更已儲存。",
   'designRuntime.diagnostics': "診斷",
   'designRuntime.allowedValues': "允許的值",
-  'designRuntime.sources': "元件原始檔",
-  "designRuntime.sourceHint": "選擇 React/TypeScript 匯出或 Vue 單一檔案元件。編譯會用這些選項取代登錄表。",
+  'designRuntime.sources': "元件檔案",
+  "designRuntime.sourceHint": "選擇要包含的元件。此選擇將取代目前的元件集合。",
   'designRuntime.systemId': "設計系統 ID",
   'designRuntime.sourcePath': "原始檔",
   'designRuntime.chooseSource': "選取原始檔",
@@ -171,8 +173,8 @@ export const zhTW: Dict = {
   'designRuntime.codeId': "程式碼元件 ID",
   'designRuntime.packageName': "套件名稱（選填）",
   'designRuntime.addSource': "新增原始檔",
-  'designRuntime.compile': "編譯登錄表",
-  'designRuntime.empty': "編譯選取的原始檔，即可瀏覽元件及其程式碼繫結。",
+  'designRuntime.compile': "新增元件",
+  'designRuntime.empty': "選擇元件檔案，開始建立元件集合。",
   'designRuntime.components': "設計元件",
   'designRuntime.component': "設計元件",
   'designRuntime.slots': "插槽",

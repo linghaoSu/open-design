@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button } from '@open-design/components';
+import { Button, Select } from '@open-design/components';
 import type { DesignPreviewBundle, DesignPreviewComparison, DesignPreviewKind, ProjectDesignPreviewResult, ProjectDesignRuntimeState } from '@open-design/contracts';
 import { createProjectDesignRuntimePreview, ProjectDesignRuntimeError, type ProjectDesignRuntimeScope } from '../providers/design-runtime';
 import { StructureDiagnostics } from './ProjectStructureReview';
@@ -12,6 +12,7 @@ export interface DesignPreviewSelection { id: string; comparison: DesignPreviewC
 interface Props {
   scope: ProjectDesignRuntimeScope; state: ProjectDesignRuntimeState; selection?: DesignPreviewSelection | undefined;
   externalBusy?: boolean | undefined; sourceIdentity?: unknown; onBusyChange?(busy: boolean): void;
+  onOpenStructure?(): void;
 }
 
 function RuntimeFrame({ bundle, role, screenId }: { bundle: DesignPreviewBundle; role: string; screenId: string }) {
@@ -43,7 +44,7 @@ function RuntimeFrame({ bundle, role, screenId }: { bundle: DesignPreviewBundle;
 export function DesignPreviewPanel(props: Props) {
   return <PreviewContent key={JSON.stringify([props.scope.projectId, workspaceAccountScopedCacheKey(props.scope.workspaceContext), props.selection?.id])} {...props} />;
 }
-function PreviewContent({ scope, state, selection, externalBusy = false, sourceIdentity, onBusyChange }: Props) {
+function PreviewContent({ scope, state, selection, externalBusy = false, sourceIdentity, onBusyChange, onOpenStructure }: Props) {
   const t = useT(); const [kind, setKind] = useState<DesignPreviewKind>('semantic-design'); const [framework, setFramework] = useState<'react' | 'vue'>('react');
   const [comparison, setComparison] = useState(selection?.comparison);
   const [screenIds, setScreenIds] = useState(() => selection?.screenIds.slice(0, 6) ?? state.document?.screens.slice(0, 6).map((screen) => screen.id) ?? []);
@@ -71,20 +72,27 @@ function PreviewContent({ scope, state, selection, externalBusy = false, sourceI
   }
   const locked = busy || externalBusy;
   return <section className={styles.panel} data-testid="design-preview-panel">
-    <h3>{t('designPreview.title')}</h3><p className={styles.muted}>{t('designPreview.hint')}</p>
-    <div className={styles.fields}>
-      <label className={styles.field}>{t('designPreview.kind')}<select data-testid="design-preview-kind" value={kind} disabled={locked} onChange={(event) => { change(); setKind(event.target.value as DesignPreviewKind); }}><option value="semantic-design">{t('designPreview.semantic')}</option><option value="production-handoff">{t('designPreview.production')}</option></select></label>
-      <label className={styles.field}>{t('designPreview.framework')}<select data-testid="design-preview-framework" value={framework} disabled={locked} onChange={(event) => { change(); setFramework(event.target.value as 'react' | 'vue'); }}><option value="react">React</option><option value="vue">Vue</option></select></label>
-      <label className={styles.field}>{t('designPreview.draft')}<select data-testid="design-preview-draft" disabled={locked} value={comparison?.type === 'shared-draft' ? comparison.draftId : ''} onChange={(event) => {
+    <h3>{t('designPreview.title')}</h3>
+    {comparison ? <div className={styles.notice} data-testid="design-preview-comparison"><p>{comparison.type === 'shared-draft' ? `${t('designPreview.sharedComparison')}: ${comparison.draftId}` : `${t('designPreview.upgradeComparison')}: ${comparison.proof.plan.from.version} → ${comparison.proof.plan.to.version}`}</p><Button data-testid="design-preview-clear-comparison" disabled={locked} onClick={() => { change(); setComparison(undefined); }}>{t('designPreview.clearComparison')}</Button></div> : null}
+    {state.document?.screens.length ? <>
+    <fieldset className={styles.screens} disabled={locked}><legend>{t('designPreview.screens')}</legend>{state.document.screens.map((screen) => <label className={styles.screenChoice} key={screen.id}><input data-testid={`design-preview-screen-${screen.id}`} type="checkbox" checked={screenIds.includes(screen.id)} disabled={!screenIds.includes(screen.id) && screenIds.length >= 6} onChange={(event) => { change(); setScreenIds((old) => event.target.checked ? [...old, screen.id] : old.filter((id) => id !== screen.id)); }} />{screen.name ?? screen.id}</label>)}</fieldset>
+    <div><Button data-testid="design-preview-build" variant="primary" disabled={locked || !screenIds.length} onClick={() => void build()}>{busy ? t('designPreview.building') : t('designPreview.build')}</Button></div>
+    <details className={styles.advanced} data-testid="design-preview-advanced"><summary>{t('designWorkspace.advanced')}</summary>
+      <p className={styles.muted}>{t('designPreview.hint')}</p>
+      <div className={styles.fields}>
+      <label className={styles.field}>{t('designPreview.kind')}<Select data-testid="design-preview-kind" value={kind} disabled={locked} onChange={(event) => { change(); setKind(event.target.value as DesignPreviewKind); }}><option value="semantic-design">{t('designPreview.semantic')}</option><option value="production-handoff">{t('designPreview.production')}</option></Select></label>
+      <label className={styles.field}>{t('designPreview.framework')}<Select data-testid="design-preview-framework" value={framework} disabled={locked} onChange={(event) => { change(); setFramework(event.target.value as 'react' | 'vue'); }}><option value="react">React</option><option value="vue">Vue</option></Select></label>
+      <label className={styles.field}>{t('designPreview.draft')}<Select data-testid="design-preview-draft" disabled={locked} value={comparison?.type === 'shared-draft' ? comparison.draftId : ''} onChange={(event) => {
         change(); const draft = state.sharedChanges.drafts.find((entry) => entry.id === event.target.value);
         setComparison(draft ? { type: 'shared-draft', draftId: draft.id, expectedDefinitionRevision: draft.baseDefinition?.revision ?? 0 } : undefined);
-      }}><option value="">{t('designPreview.currentOnly')}</option>{state.sharedChanges.drafts.map((draft) => <option key={draft.id} value={draft.id}>{draft.componentRef} · {draft.proposedDefinition.revision}</option>)}</select></label>
+      }}><option value="">{t('designPreview.currentOnly')}</option>{state.sharedChanges.drafts.map((draft) => <option key={draft.id} value={draft.id}>{draft.componentRef} · {draft.proposedDefinition.revision}</option>)}</Select></label>
     </div>
-    {comparison ? <div className={styles.notice} data-testid="design-preview-comparison"><p>{comparison.type === 'shared-draft' ? `${t('designPreview.sharedComparison')}: ${comparison.draftId}` : `${t('designPreview.upgradeComparison')}: ${comparison.proof.plan.from.version} → ${comparison.proof.plan.to.version}`}</p><Button data-testid="design-preview-clear-comparison" disabled={locked} onClick={() => { change(); setComparison(undefined); }}>{t('designPreview.clearComparison')}</Button></div> : null}
     <p className={styles.muted}>{kind === 'semantic-design' ? t('designPreview.semanticHint') : t('designPreview.productionHint')}</p>
-    <fieldset className={styles.screens} disabled={locked}><legend>{t('designPreview.screens')}</legend>{state.document?.screens.map((screen) => <label className={styles.screenChoice} key={screen.id}><input data-testid={`design-preview-screen-${screen.id}`} type="checkbox" checked={screenIds.includes(screen.id)} disabled={!screenIds.includes(screen.id) && screenIds.length >= 6} onChange={(event) => { change(); setScreenIds((old) => event.target.checked ? [...old, screen.id] : old.filter((id) => id !== screen.id)); }} />{screen.name ?? screen.id}</label>)}</fieldset>
-    {!state.document?.screens.length ? <p>{t('designPreview.noScreens')}</p> : null}
-    <div><Button data-testid="design-preview-build" variant="primary" disabled={locked || !screenIds.length} onClick={() => void build()}>{busy ? t('designPreview.building') : t('designPreview.build')}</Button></div>
+    </details>
+    </> : <div className={styles.empty} data-testid="design-preview-empty">
+      <p>{t('designPreview.noScreens')}</p>
+      {onOpenStructure ? <Button data-testid="design-preview-open-structure" disabled={locked} onClick={onOpenStructure}>{t('projectStructure.title')}</Button> : null}
+    </div>}
     {error ? <p role="alert" className={styles.error}>{error}</p> : null}
     {result ? <>
       <div className={styles.notice} data-testid="design-preview-impact"><strong>{t('designPreview.impact')}</strong><p>{t('designPreview.selected')}: {result.request.screenIds.join(', ')}</p><p>{t('designPreview.affected')}: {result.impact.affectedScreens.map((screen) => screen.screenId).join(', ') || t('designPreview.none')}</p><p className={styles.muted}>{t('designPreview.sampleHint')}</p><StructureDiagnostics diagnostics={result.impact.diagnostics} /></div>

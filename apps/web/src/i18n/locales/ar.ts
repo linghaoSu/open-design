@@ -1,8 +1,10 @@
+import { designWorkspaceFallback } from '../design-workspace-fallback';
 import { reactPreviewFallback } from '../react-preview-fallback';
 import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const ar: Dict = {
+  ...designWorkspaceFallback,
   ...reactPreviewFallback,
   ...designMigrationFallback,
 
@@ -150,8 +152,8 @@ export const ar: Dict = {
   "designRuntime.addStory": "إضافة قصة",
   "designRuntime.slotMappings": "تعيينات الفتحات",
   "designRuntime.chooseCodeSlot": "اختيار فتحة كود",
-  'designRuntime.title': "بيئة تشغيل التصميم",
-  'designRuntime.description': "جمّع مكونات المشروع واربط الكود وتحقق من قيم الخصائص.",
+  'designRuntime.title': "نظام التصميم",
+  'designRuntime.description': "أعد استخدام المكونات، وحافظ على تناسق الصفحات، وجهّز تصميمك للتطوير.",
   'designRuntime.revision': "المراجعة {revision}",
   'designRuntime.refresh': "تحديث",
   'designRuntime.readOnly': "وصول للقراءة فقط: تصفح البيانات الوصفية وتحقق من القيم. يتطلب التحرير صلاحية الكتابة.",
@@ -159,8 +161,8 @@ export const ar: Dict = {
   'designRuntime.saved': "تم حفظ التغييرات.",
   'designRuntime.diagnostics': "التشخيصات",
   'designRuntime.allowedValues': "القيم المسموح بها",
-  'designRuntime.sources': "مصادر المكونات",
-  "designRuntime.sourceHint": "اختر تصديرات React/TypeScript أو مكونات Vue SFC. يستبدل التجميع السجل بهذه الاختيارات.",
+  'designRuntime.sources': "ملفات المكونات",
+  "designRuntime.sourceHint": "اختر المكونات المراد تضمينها. سيحل هذا الاختيار محل مجموعة المكونات الحالية.",
   'designRuntime.systemId': "معرّف نظام التصميم",
   'designRuntime.sourcePath': "ملف المصدر",
   'designRuntime.chooseSource': "اختر ملف مصدر",
@@ -171,8 +173,8 @@ export const ar: Dict = {
   'designRuntime.codeId': "معرّف مكون الكود",
   'designRuntime.packageName': "الحزمة (اختياري)",
   'designRuntime.addSource': "إضافة مصدر",
-  'designRuntime.compile': "تجميع السجل",
-  'designRuntime.empty': "جمّع المصادر المحددة لتصفح المكونات وروابطها بالكود.",
+  'designRuntime.compile': "إضافة مكونات",
+  'designRuntime.empty': "اختر ملفات المكونات للبدء في إنشاء مجموعتك.",
   'designRuntime.components': "مكونات التصميم",
   'designRuntime.component': "مكون التصميم",
   'designRuntime.slots': "الفتحات",

@@ -37,6 +37,8 @@ import {
 } from '../../src/collab/collab-context';
 import { IframeKeepAliveProvider } from '../../src/components/IframeKeepAlivePool';
 import { navigate } from '../../src/router';
+import * as designRuntimeProvider from '../../src/providers/design-runtime';
+import { emptyDesignRuntimeState } from '../helpers/design-runtime-fixtures';
 
 describe('settleManualEditExit', () => {
   it.each([
@@ -1359,6 +1361,83 @@ describe('FileWorkspace upload input', () => {
 });
 
 describe('FileWorkspace launcher tab creation', () => {
+  it('opens Design system in the workspace while retaining the active HTML frame and restores file actions on close', async () => {
+    const file = workspaceFile('artifact.html');
+    mockedFetchProjectFileText.mockResolvedValue('<html><body>artifact</body></html>');
+    vi.spyOn(designRuntimeProvider, 'getProjectDesignRuntime').mockResolvedValue({ state: emptyDesignRuntimeState() });
+    function Harness() {
+      const [tabsState, setTabsState] = useState<OpenTabsState>({ tabs: [file.name], active: file.name });
+      return <IframeKeepAliveProvider><FileWorkspace
+        projectId="project-1" projectKind="prototype" files={[file]} liveArtifacts={[]}
+        onRefreshFiles={vi.fn()} isDeck={false} tabsState={tabsState} onTabsStateChange={setTabsState}
+        fileActionsBefore={<button type="button">Reveal artifact</button>}
+      /></IframeKeepAliveProvider>;
+    }
+    const { container } = render(<Harness />);
+    await waitFor(() => expect(mockedFetchProjectFileText).toHaveBeenCalledTimes(1));
+    const frame = screen.getByTestId('artifact-preview-frame');
+    const viewer = screen.getByTestId('retained-file-viewer');
+    const body = container.querySelector<HTMLElement>('.ws-body')!;
+    const actions = container.querySelector<HTMLElement>('[data-app-chrome-file-actions="true"]')!;
+    const src = frame.getAttribute('src');
+    expect(body.style.display).not.toBe('none');
+    expect(actions.hidden).toBe(false);
+
+    fireEvent.click(screen.getByTestId('design-runtime-entry'));
+    const panel = await screen.findByTestId('design-runtime-panel');
+    await waitFor(() => expect(within(panel).getByRole('heading', { name: 'Design system', level: 2 })).toBeVisible());
+    expect(body.style.display).toBe('none');
+    expect(actions.hidden).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Reveal artifact' })).toBeNull();
+    expect(screen.getByTestId('retained-file-viewer')).toBe(viewer);
+    expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+    expect(frame.isConnected).toBe(true);
+    expect(frame.getAttribute('src')).toBe(src);
+
+    fireEvent.click(within(panel).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByTestId('design-runtime-panel')).toBeNull();
+    expect(body.style.display).not.toBe('none');
+    expect(actions.hidden).toBe(false);
+    expect(screen.getByRole('button', { name: 'Reveal artifact' })).toBeVisible();
+    expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+    expect(frame.getAttribute('src')).toBe(src);
+    expect(screen.getByTestId('retained-file-viewer')).toBe(viewer);
+    expect(mockedFetchProjectFileText).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByTestId('design-runtime-entry'));
+    expect(screen.getByTestId('design-runtime-panel')).toBeVisible();
+    const fileTab = screen.getByRole('tab', { name: /artifact\.html/i });
+    expect(fileTab.getAttribute('aria-selected')).toBe('false');
+    expect(fileTab.classList.contains('active')).toBe(false);
+    expect(screen.getByTestId('design-files-tab').getAttribute('aria-selected')).toBe('false');
+
+    fireEvent.click(screen.getByTestId('design-files-tab'));
+    expect(screen.queryByTestId('design-runtime-panel')).toBeNull();
+    expect(screen.getByTestId('design-files-tab').getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('project-file-tree')).toBeVisible();
+    expect(body.style.display).not.toBe('none');
+    expect(screen.getByTestId('artifact-preview-frame-retained-artifact.html')).toBe(frame);
+    expect(frame.isConnected).toBe(true);
+
+    fireEvent.click(fileTab);
+    expect(fileTab.getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+    expect(screen.getByTestId('retained-file-viewer')).toBe(viewer);
+    expect(viewer.getAttribute('aria-hidden')).not.toBe('true');
+    expect(frame.getAttribute('src')).toBe(src);
+    expect(actions.hidden).toBe(false);
+    expect(mockedFetchProjectFileText).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByTestId('design-runtime-entry'));
+    fireEvent.click(fileTab);
+    expect(screen.queryByTestId('design-runtime-panel')).toBeNull();
+    expect(fileTab.getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('artifact-preview-frame')).toBe(frame);
+    expect(frame.getAttribute('src')).toBe(src);
+    expect(actions.hidden).toBe(false);
+    expect(mockedFetchProjectFileText).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps the active HTML preview full-sized and prewarms file revisions across Design Files round-trips', async () => {
     const file = workspaceFile('artifact.html');
     mockedFetchProjectFileText.mockResolvedValue('<html><body>artifact</body></html>');

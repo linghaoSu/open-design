@@ -4,8 +4,12 @@ Projects can compile selected React/TypeScript exports and Vue SFCs into a struc
 registry, inspect their properties, manage explicit code bindings, and validate
 property values. They can also compose semantic screens and reusable project
 components, inspect affected screens, and explicitly publish shared revisions.
-Open **Design runtime** from the project file workspace's tab
-bar, select source files and their framework/exports, then choose **Compile registry**.
+Open **Design system** from the project file workspace. It starts on **Overview**,
+where you can review existing design-system files, choose reusable components, or
+import an exported system package. Projects with legacy design-system files show
+a migration recommendation here. The main navigation is **Overview**, **Design
+components** and **Preview**. **More** contains migration, **Versions**,
+**Project structure**, **Validation** and **Handoff**.
 The same operations are available through `od design-runtime` and the project HTTP
 API. Existing design-system discovery remains available alongside these structured
 registries and exact project locks.
@@ -56,17 +60,20 @@ state. Existing source and artifact exports retain their original content.
 
 ## Migrate an existing design system
 
-Open **Design systems → Your systems → Edit with agent**, then **Design runtime →
-Migration**. Projects containing legacy design-system files open this tab by default
-when they do not yet have a structured registry. Existing project folders can use
-the same entry after their design-system files have been imported.
+Open **Design systems → Your systems → Edit with agent**, then **Design system →
+Overview → Review existing files**. You can also open migration through **More →
+Use an existing design system**. Existing project folders can use the same entry
+after their design-system files have been imported.
 
-Select the files to preserve in the immutable package, including any images, fonts,
-usage guides and source evidence. The form recognizes `tokens.css` and the
+The form follows three steps: name the system, choose its files, then review and
+use it. Start with the system name. **Advanced settings** contains its stable ID,
+initial version, Explore or Guided mode, and constraint policies. The default
+preserves the project's current Explore or Guided setting.
+
+Next, select the files to preserve in the immutable package, including any images,
+fonts, usage guides and source evidence. The form recognizes `tokens.css` and the
 `system/variables.css` used by brand workspaces. Select a different project CSS file
-when needed. Enter the new system's stable ID, name and initial version; choose
-Explore or Guided explicitly. The default preserves the project's current Explore
-or Guided setting.
+when needed.
 
 **Review migration** reads the selected files without changing them. It reports
 converted tokens, unresolved declarations, compiled components and packaged files.
@@ -84,14 +91,15 @@ reference material. They do not supply typed component contracts. A token-only
 system can migrate, while a documentation-only selection with no convertible
 tokens or components reports what is missing.
 
-After reviewing the result, choose **Publish and activate reviewed version**.
+After a successful review, **Publish and activate reviewed version** appears.
+Inspect the result before choosing it; a blocked or outdated review cannot be applied.
 The daemon rechecks the project revision, source bytes and authorization, then
 saves the immutable package and exact dependency lock together. It preserves the
 original project files, existing catalog selection and project-local definitions.
 If the form, source or project changes, review again. A project with an existing
 structured registry uses the normal version/upgrade workflow instead.
 
-The migrated version appears under **Versions**, where it can be inspected and
+The migrated version appears under **More → Versions**, where it can be inspected and
 exported. Import that package and activate its exact version in another project to
 reuse it. Migration chooses Explore or Guided; Strict still requires complete
 component, semantic-screen and production-source validation.
@@ -161,6 +169,12 @@ active plan.
 
 ## Project workflow and persistence
 
+Open **Design components** and choose the component files and exports to include.
+For React, use a named export such as `Button`; Vue components use `default`.
+Other source options are under **Advanced settings**. Choose **Add components**
+to save the complete selection. Once a registry exists, **Manage component files**
+is collapsed by default; expand it to change that selection.
+
 Compilation replaces the project's registry using the complete selection list.
 Each selection contains a project-relative source path, export name, and stable
 component/code IDs. React is the default framework; Vue selects the SFC default
@@ -183,6 +197,9 @@ Recompilation does not automatically revalidate stale, broken, or candidate
 bindings. **Bind** and **Revalidate** check the current registry and code index;
 **Unbind** retains the binding's design identity while removing its code target.
 Drift is assessed when the index is recompiled, not by a background file watcher.
+In **Design components**, **Code connections** and **Check property values** are
+collapsed by default. Expand them when you need to manage bindings or validate
+example property values.
 
 Every write carries `expectedRevision`. A concurrent change returns HTTP 409 with
 the expected and current revisions; callers must review the refreshed state before
@@ -319,7 +336,7 @@ write persists the complete shape.
 
 ## Published versions and exact locks
 
-Open **Design runtime → Versions** to publish selected source files, inspect exact
+Open **Design system → More → Versions** to publish selected source files, inspect exact
 published versions and pin one to the project. The panel shows the active version,
 declared range and verified metadata/source digests. Publishing newer content
 leaves the active lock unchanged. **Package import and export** accepts
@@ -403,8 +420,11 @@ from the active package unless an explicit array replaces it (`[]` clears it).
 
 ## Real component previews
 
-Open **Design runtime → Preview**, choose React or Vue and up to six saved screens,
-then select **Build preview**. **Semantic design** expands project definitions into
+Open **Design system → Preview**, select up to six saved screens, then choose
+**Build preview**. Screens are the default view. If none exist, **Project structure**
+opens the screen editor. **Advanced settings** is collapsed by default and contains
+the framework, preview mode and shared-component comparison options. The default
+**Semantic design** mode expands project definitions into
 their current or staged templates and renders actual components from the exact
 locked design-system source. **Production handoff** instead requires current local
 implementations, verified bindings and installed production packages. A changed

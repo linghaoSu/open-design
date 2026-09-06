@@ -89,7 +89,10 @@ describe('DesignRuntimeValidationPanel', () => {
     vi.mocked(provider.getProjectDesignRuntimeValidationSettings).mockResolvedValue({ ...validationSettingsFixture(), effectiveConstraints: null,
       diagnostics: [{ schemaVersion: 1, code: 'ODDS5001', severity: 'error', message: 'Exact bytes missing' }], settings: { ...validationSettingsFixture().settings, mode: 'strict' } });
     render(<DesignRuntimePanel projectId="project" workspaceContext={scope.workspaceContext} files={files} viewerOnly={false} onClose={vi.fn()}/>);
-    await waitFor(() => expect(input('design-runtime-validation-tab').disabled).toBe(false)); fireEvent.click(input('design-runtime-validation-tab')); await ready();
+    await waitFor(() => expect(input('design-runtime-validation-tab').disabled).toBe(false));
+    fireEvent.click(screen.getByTestId('design-runtime-more').querySelector('summary')!);
+    expect(input('design-runtime-validation-tab')).toBeVisible();
+    fireEvent.click(input('design-runtime-validation-tab')); await ready();
     expect(screen.getByText(/Exact bytes missing/)).toBeTruthy(); fireEvent.change(input('validation-mode'), { target: { value: 'explore' } });
     expect(input('validation-save-settings').disabled).toBe(false);
   });

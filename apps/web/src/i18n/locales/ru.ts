@@ -1,8 +1,10 @@
+import { designWorkspaceFallback } from '../design-workspace-fallback';
 import { reactPreviewFallback } from '../react-preview-fallback';
 import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const ru: Dict = {
+  ...designWorkspaceFallback,
   ...reactPreviewFallback,
   ...designMigrationFallback,
 
@@ -150,8 +152,8 @@ export const ru: Dict = {
   "designRuntime.addStory": "Добавить историю",
   "designRuntime.slotMappings": "Сопоставления слотов",
   "designRuntime.chooseCodeSlot": "Выбрать слот кода",
-  'designRuntime.title': "Среда выполнения дизайна",
-  'designRuntime.description': "Компилируйте компоненты проекта, связывайте код и проверяйте значения свойств.",
+  'designRuntime.title': "Дизайн-система",
+  'designRuntime.description': "Используйте компоненты повторно, сохраняйте единый стиль страниц и готовьте дизайн к разработке.",
   'designRuntime.revision': "Редакция {revision}",
   'designRuntime.refresh': "Обновить",
   'designRuntime.readOnly': "Доступ только для чтения: просмотр метаданных и проверка значений. Для редактирования нужны права записи.",
@@ -159,8 +161,8 @@ export const ru: Dict = {
   'designRuntime.saved': "Изменения сохранены.",
   'designRuntime.diagnostics': "Диагностика",
   'designRuntime.allowedValues': "Допустимые значения",
-  'designRuntime.sources': "Исходники компонентов",
-  "designRuntime.sourceHint": "Выберите экспорты React/TypeScript или Vue SFC. Компиляция заменит реестр выбранными компонентами.",
+  'designRuntime.sources': "Файлы компонентов",
+  "designRuntime.sourceHint": "Выберите компоненты для включения. Этот выбор заменит текущую коллекцию компонентов.",
   'designRuntime.systemId': "ID дизайн-системы",
   'designRuntime.sourcePath': "Исходный файл",
   'designRuntime.chooseSource': "Выбрать исходный файл",
@@ -171,8 +173,8 @@ export const ru: Dict = {
   'designRuntime.codeId': "ID компонента кода",
   'designRuntime.packageName': "Пакет (необязательно)",
   'designRuntime.addSource': "Добавить исходник",
-  'designRuntime.compile': "Скомпилировать реестр",
-  'designRuntime.empty': "Скомпилируйте выбранные исходники для просмотра компонентов и их связей с кодом.",
+  'designRuntime.compile': "Добавить компоненты",
+  'designRuntime.empty': "Выберите файлы компонентов, чтобы начать создавать коллекцию.",
   'designRuntime.components': "Компоненты дизайна",
   'designRuntime.component': "Компонент дизайна",
   'designRuntime.slots': "Слоты",

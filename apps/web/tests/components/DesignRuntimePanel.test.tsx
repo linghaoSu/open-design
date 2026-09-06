@@ -22,6 +22,24 @@ const panelProps = {
   viewerOnly: false, onClose: vi.fn(),
 };
 
+/** Open real disclosures before manipulating their controls. */
+function control(id: string): HTMLElement {
+  const element = screen.getByTestId(id);
+  const parents: HTMLDetailsElement[] = [];
+  for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+    if (parent.tagName === 'DETAILS') parents.push(parent as HTMLDetailsElement);
+  }
+  for (const details of parents.reverse()) {
+    if (!details.open) fireEvent.click(details.querySelector('summary')!);
+  }
+  return element;
+}
+
+async function openCode() {
+  await waitFor(() => expect((screen.getByTestId('design-runtime-code-tab') as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByTestId('design-runtime-code-tab'));
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((settle) => { resolve = settle; });
@@ -38,15 +56,148 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('DesignRuntimePanel', () => {
-  it('opens the Migration tab for an existing legacy design system without starting a review or mutation', async () => {
+  it('starts on the overview with setup choices and keeps advanced tools out of the initial view', async () => {
+    vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state: emptyDesignRuntimeState() });
+    render(<DesignRuntimePanel {...panelProps} />);
+    await waitFor(() => expect((screen.getByTestId('design-runtime-code-tab') as HTMLButtonElement).disabled).toBe(false));
+
+    expect(screen.getByRole('heading', { name: 'Design system', level: 2 })).toBeVisible();
+    expect(screen.getByTestId('design-runtime-overview-tab').getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('design-runtime-start-code')).toBeVisible();
+    expect(screen.getByTestId('design-runtime-import-version')).toBeVisible();
+    expect(screen.getByTestId('design-runtime-compile')).not.toBeVisible();
+    for (const tab of ['migration', 'structure', 'versions', 'validation', 'handoff']) {
+      expect(screen.getByTestId(`design-runtime-${tab}-tab`)).not.toBeVisible();
+    }
+    expect(provider.compileProjectDesignRuntime).not.toHaveBeenCalled();
+    expect(provider.putProjectDesignRuntimeBinding).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId('design-runtime-start-code'));
+    expect(screen.getByTestId('design-runtime-code-tab').getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('design-runtime-compile')).toBeVisible();
+    expect(screen.getByTestId('design-runtime-system-id')).not.toBeVisible();
+    expect(control('design-runtime-system-id')).toBeVisible();
+  });
+
+  it('shows registered components while leaving registration, binding and usage forms collapsed', async () => {
+    render(<DesignRuntimePanel {...panelProps} />);
+    await openCode();
+
+    expect(screen.getByTestId('design-runtime-component-select')).toBeVisible();
+    for (const id of ['design-runtime-compile', 'design-runtime-bind', 'design-runtime-validate']) {
+      expect(screen.getByTestId(id)).not.toBeVisible();
+      expect(screen.getByTestId(id).closest('details')?.open).toBe(false);
+      expect(control(id)).toBeVisible();
+    }
+    expect(provider.compileProjectDesignRuntime).not.toHaveBeenCalled();
+    expect(provider.putProjectDesignRuntimeBinding).not.toHaveBeenCalled();
+    expect(provider.validateProjectDesignRuntimeUsage).not.toHaveBeenCalled();
+  });
+
+  it('opens the first registry connection problem on its exact framework target without changing bindings', async () => {
+    const state = designRuntimeState();
+    const button = state.registry!.components[0]!;
+    state.registry!.components.push({
+      ...button, id: 'card', name: 'Card',
+      source: { kind: 'typescript', sourcePath: 'src/Card.tsx', exportName: 'Card' },
+    });
+    state.codeIndex.components.push(
+      { ...state.codeIndex.components[0]!, id: 'code/Card', name: 'React Card', sourcePath: 'src/Card.tsx', exportName: 'Card', source: { kind: 'typescript', sourcePath: 'src/Card.tsx', exportName: 'Card' } },
+      { schemaVersion: 1, id: 'code/VueCard', name: 'Vue Card', framework: 'vue', sourcePath: 'src/Card.vue', exportName: 'default', props: { appearance: button.props.variant!, disabled: button.props.disabled! } },
+    );
+    state.bindings.bindings.unshift({ schemaVersion: 1, id: 'local-unbound', componentRef: 'local:banner', framework: 'react', status: 'unbound', verified: false });
+    state.bindings.bindings.push(
+      { schemaVersion: 1, id: 'card-react-binding', componentRef: 'ds:test/card', framework: 'react', status: 'bound', verified: true, codeComponentId: 'code/Card' },
+      { schemaVersion: 1, id: 'card-vue-binding', componentRef: 'ds:test/card', framework: 'vue', status: 'broken', verified: false, codeComponentId: 'code/VueCard', propMappings: [{ designProp: 'variant', codeProp: 'appearance' }] },
+    );
+    vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state });
+    render(<DesignRuntimePanel {...panelProps} files={[...panelProps.files, { name: 'src/Card.vue' }]} />);
+    await waitFor(() => expect((screen.getByTestId('design-runtime-repair-connections') as HTMLButtonElement).disabled).toBe(false));
+
+    expect(screen.getByText('1 connections need to be checked before use.')).toBeVisible();
+    expect((screen.getByTestId('design-runtime-component-select') as HTMLSelectElement).value).toBe('button');
+    expect((screen.getByTestId('design-runtime-connections') as HTMLDetailsElement).open).toBe(false);
+    fireEvent.click(screen.getByTestId('design-runtime-repair-connections'));
+
+    expect(screen.getByTestId('design-runtime-code-tab').getAttribute('aria-selected')).toBe('true');
+    expect((screen.getByTestId('design-runtime-component-select') as HTMLSelectElement).value).toBe('card');
+    expect((screen.getByTestId('design-runtime-connections') as HTMLDetailsElement).open).toBe(true);
+    expect(screen.getByTestId('design-runtime-code-select')).toBeVisible();
+    expect((screen.getByTestId('design-runtime-code-select') as HTMLSelectElement).value).toBe('code/VueCard');
+    expect(screen.getByTestId('design-runtime-binding-status')).toHaveTextContent('Broken');
+    expect((screen.getByRole('combobox', { name: 'Property mappings: variant' }) as HTMLSelectElement).value).toBe('appearance');
+    expect(provider.getProjectDesignRuntime).toHaveBeenCalledOnce();
+    for (const request of [provider.compileProjectDesignRuntime, provider.putProjectDesignRuntimeBinding, provider.deleteProjectDesignRuntimeBinding, provider.revalidateProjectDesignRuntimeBinding, provider.resolveProjectDesignRuntimeBinding, provider.validateProjectDesignRuntimeUsage]) {
+      expect(request).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each([
+    { status: 'broken', label: 'Broken', codeId: 'code/MissingVueButton', option: 'code/MissingVueButton' },
+    { status: 'unbound', label: 'Unbound', codeId: '', option: 'None' },
+  ] as const)('keeps the Vue $status connection selected when only React code is available', async ({ status, label, codeId, option }) => {
+    const state = designRuntimeState();
+    const vueBinding = { schemaVersion: 1 as const, id: 'button-vue-binding', componentRef: 'ds:test/button', framework: 'vue' as const, verified: false as const };
+    state.bindings.bindings.push(status === 'broken'
+      ? { ...vueBinding, status, codeComponentId: codeId }
+      : { ...vueBinding, status });
+    vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state });
+    render(<DesignRuntimePanel {...panelProps} />);
+    await waitFor(() => expect((screen.getByTestId('design-runtime-repair-connections') as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.getByTestId('design-runtime-binding-status')).toHaveTextContent('Bound');
+
+    fireEvent.click(screen.getByTestId('design-runtime-repair-connections'));
+
+    expect(screen.getByTestId('design-runtime-code-tab').getAttribute('aria-selected')).toBe('true');
+    expect((screen.getByTestId('design-runtime-connections') as HTMLDetailsElement).open).toBe(true);
+    expect(screen.getByTestId('design-runtime-binding-status')).toHaveTextContent(label);
+    const target = screen.getByTestId('design-runtime-code-select') as HTMLSelectElement;
+    expect(target).toBeVisible();
+    expect(target.value).toBe(codeId);
+    expect(target.selectedOptions[0]?.textContent).toBe(option);
+    expect(screen.getByTestId('design-runtime-bind')).toBeDisabled();
+    expect(provider.getProjectDesignRuntime).toHaveBeenCalledOnce();
+    for (const request of [provider.compileProjectDesignRuntime, provider.putProjectDesignRuntimeBinding, provider.deleteProjectDesignRuntimeBinding, provider.revalidateProjectDesignRuntimeBinding, provider.resolveProjectDesignRuntimeBinding, provider.validateProjectDesignRuntimeUsage]) {
+      expect(request).not.toHaveBeenCalled();
+    }
+  });
+
+  it('keeps an edited registration draft mounted across overview and advanced navigation', async () => {
+    render(<DesignRuntimePanel {...panelProps} />);
+    await openCode();
+    const draft = control('design-runtime-export-name-0') as HTMLInputElement;
+    fireEvent.change(draft, { target: { value: 'UnsubmittedButton' } });
+    fireEvent.click(screen.getByTestId('design-runtime-overview-tab'));
+    expect(draft).not.toBeVisible();
+    for (const tab of ['migration', 'structure', 'versions', 'validation', 'handoff']) {
+      expect(control(`design-runtime-${tab}-tab`)).toBeVisible();
+    }
+    fireEvent.click(screen.getByTestId('design-runtime-structure-tab'));
+    expect(screen.getByTestId('design-runtime-structure-tab').getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('project-structure-panel')).toBeVisible();
+    fireEvent.click(screen.getByTestId('design-runtime-code-tab'));
+    expect(screen.getByTestId('design-runtime-export-name-0')).toBe(draft);
+    expect(draft.value).toBe('UnsubmittedButton');
+    expect(draft).toBeVisible();
+    expect(provider.compileProjectDesignRuntime).not.toHaveBeenCalled();
+  });
+
+  it('recommends migration on the overview without starting a review or opening setup automatically', async () => {
     vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state: emptyDesignRuntimeState() });
     render(<DesignRuntimePanel {...panelProps} files={[{ name: 'DESIGN.md' }, { name: 'system/variables.css' }, { name: 'components.html' }]} />);
+    await waitFor(() => expect((screen.getByTestId('design-runtime-start-migration') as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.getByTestId('design-runtime-overview-tab').getAttribute('aria-selected')).toBe('true');
+    expect(screen.queryByTestId('design-runtime-legacy-migration')).toBeNull();
+    expect(provider.compileProjectDesignRuntime).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId('design-runtime-start-migration'));
     await screen.findByTestId('design-runtime-legacy-migration');
     expect(screen.getByTestId('design-runtime-migration-tab').getAttribute('aria-selected')).toBe('true');
     expect((screen.getByTestId('legacy-token-stylesheet') as HTMLSelectElement).value).toBe('system/variables.css');
     expect(screen.queryByTestId('legacy-review-result')).toBeNull();
     expect(provider.compileProjectDesignRuntime).not.toHaveBeenCalled();
   });
+
   it('preserves and exposes typed and legacy value conversions when editing another code mapping', async () => {
     const state = designRuntimeState();
     state.bindings.bindings[0]!.propMappings = [
@@ -55,10 +206,11 @@ describe('DesignRuntimePanel', () => {
     ];
     vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state });
     render(<DesignRuntimePanel {...panelProps} />);
+    await openCode();
     await screen.findByTestId('design-runtime-component-select');
-    expect((screen.getByTestId('design-runtime-value-transform-variant') as HTMLTextAreaElement).value).toContain('valueTransform');
-    expect((screen.getByTestId('design-runtime-value-transform-disabled') as HTMLTextAreaElement).value).toContain('values');
-    fireEvent.click(screen.getByTestId('design-runtime-bind'));
+    expect((control('design-runtime-value-transform-variant') as HTMLTextAreaElement).value).toContain('valueTransform');
+    expect((control('design-runtime-value-transform-disabled') as HTMLTextAreaElement).value).toContain('values');
+    fireEvent.click(control('design-runtime-bind'));
     await waitFor(() => expect(provider.putProjectDesignRuntimeBinding).toHaveBeenCalledOnce());
     expect(vi.mocked(provider.putProjectDesignRuntimeBinding).mock.calls[0]![2].binding.propMappings).toEqual(state.bindings.bindings[0]!.propMappings);
   });
@@ -68,23 +220,25 @@ describe('DesignRuntimePanel', () => {
     state.codeIndex.components[0]!.props = state.registry!.components[0]!.props;
     vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state });
     render(<DesignRuntimePanel {...panelProps} />);
+    await openCode();
     await screen.findByTestId('design-runtime-component-select');
-    fireEvent.click(screen.getByTestId('design-runtime-validate'));
+    fireEvent.click(control('design-runtime-validate'));
     await waitFor(() => expect(provider.validateProjectDesignRuntimeUsage).toHaveBeenCalledOnce());
     expect(vi.mocked(provider.validateProjectDesignRuntimeUsage).mock.calls[0]![1].props).toEqual({ [name]: false });
   });
   it('compiles multiple selected project exports with identities retained across export edits', async () => {
     vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state: emptyDesignRuntimeState() });
     render(<DesignRuntimePanel {...panelProps} />);
-    await waitFor(() => expect(screen.getByTestId('design-runtime-compile').closest('fieldset')?.disabled).toBe(false));
-    const componentId = (screen.getByTestId('design-runtime-component-id-0') as HTMLInputElement).value;
-    const codeId = (screen.getByTestId('design-runtime-code-id-0') as HTMLInputElement).value;
-    fireEvent.change(screen.getByTestId('design-runtime-export-name-0'), { target: { value: 'Button' } });
-    fireEvent.change(screen.getByTestId('design-runtime-export-name-0'), { target: { value: 'RenamedButton' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
-    fireEvent.change(screen.getByTestId('design-runtime-source-path-1'), { target: { value: 'src/Card.tsx' } });
-    fireEvent.change(screen.getByTestId('design-runtime-export-name-1'), { target: { value: 'Card' } });
-    fireEvent.click(screen.getByTestId('design-runtime-compile'));
+    await openCode();
+    await waitFor(() => expect(control('design-runtime-compile').closest('fieldset')?.disabled).toBe(false));
+    const componentId = (control('design-runtime-component-id-0') as HTMLInputElement).value;
+    const codeId = (control('design-runtime-code-id-0') as HTMLInputElement).value;
+    fireEvent.change(control('design-runtime-export-name-0'), { target: { value: 'Button' } });
+    fireEvent.change(control('design-runtime-export-name-0'), { target: { value: 'RenamedButton' } });
+    fireEvent.click(control('design-runtime-add-source'));
+    fireEvent.change(control('design-runtime-source-path-1'), { target: { value: 'src/Card.tsx' } });
+    fireEvent.change(control('design-runtime-export-name-1'), { target: { value: 'Card' } });
+    fireEvent.click(control('design-runtime-compile'));
     await waitFor(() => expect(provider.compileProjectDesignRuntime).toHaveBeenCalledOnce());
     const [authority, request] = vi.mocked(provider.compileProjectDesignRuntime).mock.calls[0]!;
     expect(authority).toMatchObject({ projectId: 'project-a', workspaceContext });
@@ -99,27 +253,28 @@ describe('DesignRuntimePanel', () => {
   it('compiles explicit frameworks, metadata and grouped story selections without reallocating identities', async () => {
     vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state: emptyDesignRuntimeState() });
     render(<DesignRuntimePanel {...panelProps} files={[...panelProps.files, { name: 'src/Button.stories.ts' }, { name: 'src/Card.vue' }, { name: 'src/Card.stories.ts' }]} />);
-    await waitFor(() => expect(screen.getByTestId('design-runtime-compile').closest('fieldset')?.disabled).toBe(false));
-    fireEvent.change(screen.getByTestId('design-runtime-source-path-0'), { target: { value: 'src/Button.tsx' } });
-    fireEvent.change(screen.getByTestId('design-runtime-export-name-0'), { target: { value: 'Button' } });
-    fireEvent.change(screen.getByTestId('design-runtime-metadata-export-0'), { target: { value: 'ButtonPolicy' } });
-    fireEvent.click(screen.getByTestId('design-runtime-add-story-source-0'));
-    fireEvent.change(screen.getByTestId('design-runtime-story-source-0-0'), { target: { value: 'src/Button.stories.ts' } });
-    fireEvent.change(screen.getByTestId('design-runtime-story-export-0-0-0'), { target: { value: 'Primary' } });
-    const storyId = (screen.getByTestId('design-runtime-story-id-0-0-0') as HTMLInputElement).value;
-    fireEvent.change(screen.getByTestId('design-runtime-story-export-0-0-0'), { target: { value: 'RenamedPrimary' } });
-    fireEvent.click(screen.getByTestId('design-runtime-add-story-0-0'));
-    fireEvent.change(screen.getByTestId('design-runtime-story-export-0-0-1'), { target: { value: 'Secondary' } });
-    fireEvent.click(screen.getByTestId('design-runtime-add-source'));
-    const componentId = (screen.getByTestId('design-runtime-component-id-1') as HTMLInputElement).value;
-    const codeId = (screen.getByTestId('design-runtime-code-id-1') as HTMLInputElement).value;
-    fireEvent.change(screen.getByTestId('design-runtime-framework-1'), { target: { value: 'vue' } });
-    fireEvent.change(screen.getByTestId('design-runtime-source-path-1'), { target: { value: 'src/Card.vue' } });
-    expect((screen.getByTestId('design-runtime-export-name-1') as HTMLInputElement).readOnly).toBe(true);
-    fireEvent.click(screen.getByTestId('design-runtime-add-story-source-1'));
-    fireEvent.change(screen.getByTestId('design-runtime-story-source-1-0'), { target: { value: 'src/Card.stories.ts' } });
-    fireEvent.change(screen.getByTestId('design-runtime-story-export-1-0-0'), { target: { value: 'Plain' } });
-    fireEvent.click(screen.getByTestId('design-runtime-compile'));
+    await openCode();
+    await waitFor(() => expect(control('design-runtime-compile').closest('fieldset')?.disabled).toBe(false));
+    fireEvent.change(control('design-runtime-source-path-0'), { target: { value: 'src/Button.tsx' } });
+    fireEvent.change(control('design-runtime-export-name-0'), { target: { value: 'Button' } });
+    fireEvent.change(control('design-runtime-metadata-export-0'), { target: { value: 'ButtonPolicy' } });
+    fireEvent.click(control('design-runtime-add-story-source-0'));
+    fireEvent.change(control('design-runtime-story-source-0-0'), { target: { value: 'src/Button.stories.ts' } });
+    fireEvent.change(control('design-runtime-story-export-0-0-0'), { target: { value: 'Primary' } });
+    const storyId = (control('design-runtime-story-id-0-0-0') as HTMLInputElement).value;
+    fireEvent.change(control('design-runtime-story-export-0-0-0'), { target: { value: 'RenamedPrimary' } });
+    fireEvent.click(control('design-runtime-add-story-0-0'));
+    fireEvent.change(control('design-runtime-story-export-0-0-1'), { target: { value: 'Secondary' } });
+    fireEvent.click(control('design-runtime-add-source'));
+    const componentId = (control('design-runtime-component-id-1') as HTMLInputElement).value;
+    const codeId = (control('design-runtime-code-id-1') as HTMLInputElement).value;
+    fireEvent.change(control('design-runtime-framework-1'), { target: { value: 'vue' } });
+    fireEvent.change(control('design-runtime-source-path-1'), { target: { value: 'src/Card.vue' } });
+    expect((control('design-runtime-export-name-1') as HTMLInputElement).readOnly).toBe(true);
+    fireEvent.click(control('design-runtime-add-story-source-1'));
+    fireEvent.change(control('design-runtime-story-source-1-0'), { target: { value: 'src/Card.stories.ts' } });
+    fireEvent.change(control('design-runtime-story-export-1-0-0'), { target: { value: 'Plain' } });
+    fireEvent.click(control('design-runtime-compile'));
     await waitFor(() => expect(provider.compileProjectDesignRuntime).toHaveBeenCalledOnce());
     const request = vi.mocked(provider.compileProjectDesignRuntime).mock.calls[0]![1];
     expect(request.selections).toMatchObject([
@@ -142,16 +297,17 @@ describe('DesignRuntimePanel', () => {
     vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state });
     vi.mocked(provider.deleteProjectDesignRuntimeBinding).mockResolvedValue({ state: unbound });
     render(<DesignRuntimePanel {...panelProps} />);
+    await openCode();
     await screen.findByText('Primary example');
-    expect((screen.getByTestId('design-runtime-metadata-export-0') as HTMLInputElement).value).toBe('ButtonPolicy');
-    expect((screen.getByTestId('design-runtime-story-source-0-0') as HTMLSelectElement).value).toBe('src/Button.stories.ts');
-    expect((screen.getByTestId('design-runtime-story-id-0-0-0') as HTMLInputElement).value).toBe('primary-stable');
-    expect((screen.getByTestId(`design-runtime-slot-mapping-${slotName}`) as HTMLSelectElement).value).toBe('children');
-    fireEvent.click(screen.getByTestId('design-runtime-unbind'));
-    await waitFor(() => expect(screen.getByTestId('design-runtime-binding-status').textContent).toBe('Unbound'));
-    fireEvent.change(screen.getByTestId(`design-runtime-slot-mapping-${slotName}`), { target: { value: '' } });
-    fireEvent.change(screen.getByTestId(`design-runtime-slot-mapping-${slotName}`), { target: { value: 'children' } });
-    fireEvent.click(screen.getByTestId('design-runtime-bind'));
+    expect((control('design-runtime-metadata-export-0') as HTMLInputElement).value).toBe('ButtonPolicy');
+    expect((control('design-runtime-story-source-0-0') as HTMLSelectElement).value).toBe('src/Button.stories.ts');
+    expect((control('design-runtime-story-id-0-0-0') as HTMLInputElement).value).toBe('primary-stable');
+    expect((control(`design-runtime-slot-mapping-${slotName}`) as HTMLSelectElement).value).toBe('children');
+    fireEvent.click(control('design-runtime-unbind'));
+    await waitFor(() => expect(control('design-runtime-binding-status').textContent).toBe('Unbound'));
+    fireEvent.change(control(`design-runtime-slot-mapping-${slotName}`), { target: { value: '' } });
+    fireEvent.change(control(`design-runtime-slot-mapping-${slotName}`), { target: { value: 'children' } });
+    fireEvent.click(control('design-runtime-bind'));
     await waitFor(() => expect(provider.putProjectDesignRuntimeBinding).toHaveBeenCalledOnce());
     expect(vi.mocked(provider.putProjectDesignRuntimeBinding).mock.calls[0]![2]).toMatchObject({ expectedRevision: 2, binding: { slotMappings: [{ designSlot: slotName, codeSlot: 'children' }] } });
   });
@@ -174,20 +330,22 @@ describe('DesignRuntimePanel', () => {
     vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state: initial });
     vi.mocked(provider.putProjectDesignRuntimeBinding).mockResolvedValue({ state: retargeted });
     const first = render(<DesignRuntimePanel {...panelProps} />);
+    await openCode();
     await screen.findByTestId('design-runtime-code-select');
-    fireEvent.change(screen.getByTestId('design-runtime-code-select'), { target: { value: 'code/Card' } });
-    fireEvent.change(screen.getByTestId('design-runtime-slot-mapping-body'), { target: { value: 'children' } });
-    fireEvent.click(screen.getByTestId('design-runtime-bind'));
-    await screen.findByText('Revision 2');
+    fireEvent.change(control('design-runtime-code-select'), { target: { value: 'code/Card' } });
+    fireEvent.change(control('design-runtime-slot-mapping-body'), { target: { value: 'children' } });
+    fireEvent.click(control('design-runtime-bind'));
+    await screen.findByText('Changes saved.');
     expect(vi.mocked(provider.putProjectDesignRuntimeBinding).mock.calls[0]![2].binding).toMatchObject({ componentRef: 'ds:test/button', codeComponentId: 'code/Card' });
     first.unmount();
     vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state: retargeted });
     render(<DesignRuntimePanel {...panelProps} />);
+    await openCode();
     await screen.findByTestId('design-runtime-code-select');
-    expect((screen.getByTestId('design-runtime-code-select') as HTMLSelectElement).value).toBe('code/Card');
-    expect((screen.getByTestId('design-runtime-source-path-0') as HTMLSelectElement).value).toBe('src/Button.tsx');
-    expect((screen.getByTestId('design-runtime-code-id-0') as HTMLInputElement).value).toBe('code/Button');
-    fireEvent.click(screen.getByTestId('design-runtime-compile'));
+    expect((control('design-runtime-code-select') as HTMLSelectElement).value).toBe('code/Card');
+    expect((control('design-runtime-source-path-0') as HTMLSelectElement).value).toBe('src/Button.tsx');
+    expect((control('design-runtime-code-id-0') as HTMLInputElement).value).toBe('code/Button');
+    fireEvent.click(control('design-runtime-compile'));
     await waitFor(() => expect(provider.compileProjectDesignRuntime).toHaveBeenCalledOnce());
     expect(vi.mocked(provider.compileProjectDesignRuntime).mock.calls[0]![1]).toMatchObject({ expectedRevision: 2, selections: [
       { sourcePath: 'src/Button.tsx', exportName: 'Button', componentId: 'button', codeComponentId: 'code/Button', metadataExportName: 'ButtonPolicy' },
@@ -200,14 +358,15 @@ describe('DesignRuntimePanel', () => {
       schemaVersion: 1, code: 'ODDS1003', severity: 'error', message: 'Variant is not allowed.', path: ['props', 'variant'], allowedValues: ['primary', 'secondary'],
     }] });
     render(<DesignRuntimePanel {...panelProps} viewerOnly />);
+    await openCode();
     await screen.findByTestId('design-runtime-component-select');
     expect(screen.getByText(/Read-only access/)).toBeTruthy();
-    expect(screen.getByTestId('design-runtime-compile').closest('fieldset')?.disabled).toBe(true);
-    for (const action of ['bind', 'unbind', 'revalidate']) expect((screen.getByTestId(`design-runtime-${action}`) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByTestId('design-runtime-component-select') as HTMLSelectElement).disabled).toBe(false);
-    fireEvent.click(screen.getByTestId('design-runtime-prop-include-variant'));
-    fireEvent.change(screen.getByTestId('design-runtime-prop-variant'), { target: { value: 'filled' } });
-    fireEvent.click(screen.getByTestId('design-runtime-validate'));
+    expect(control('design-runtime-compile').closest('fieldset')?.disabled).toBe(true);
+    for (const action of ['bind', 'unbind', 'revalidate']) expect((control(`design-runtime-${action}`) as HTMLButtonElement).disabled).toBe(true);
+    expect((control('design-runtime-component-select') as HTMLSelectElement).disabled).toBe(false);
+    fireEvent.click(control('design-runtime-prop-include-variant'));
+    fireEvent.change(control('design-runtime-prop-variant'), { target: { value: 'filled' } });
+    fireEvent.click(control('design-runtime-validate'));
     await screen.findByText('ODDS1003');
     expect(provider.validateProjectDesignRuntimeUsage).toHaveBeenCalledWith(expect.objectContaining({ workspaceContext }), { component: 'ds:test/button', props: { variant: 'filled' } });
     expect(screen.getByText('Allowed values: "primary", "secondary"')).toBeTruthy();
@@ -220,11 +379,12 @@ describe('DesignRuntimePanel', () => {
     unbound.bindings.bindings = [{ schemaVersion: 1, id: 'button-binding', framework: 'react', componentRef: 'ds:test/button', status: 'unbound', verified: false }];
     vi.mocked(provider.deleteProjectDesignRuntimeBinding).mockResolvedValue({ state: unbound });
     render(<DesignRuntimePanel {...panelProps} />);
+    await openCode();
     await screen.findByTestId('design-runtime-unbind');
-    fireEvent.click(screen.getByTestId('design-runtime-unbind'));
-    await waitFor(() => expect(screen.getByTestId('design-runtime-binding-status').textContent).toBe('Unbound'));
-    fireEvent.click(screen.getByTestId('design-runtime-bind'));
-    await waitFor(() => expect(screen.getByTestId('design-runtime-binding-status').textContent).toBe('Bound'));
+    fireEvent.click(control('design-runtime-unbind'));
+    await waitFor(() => expect(control('design-runtime-binding-status').textContent).toBe('Unbound'));
+    fireEvent.click(control('design-runtime-bind'));
+    await waitFor(() => expect(control('design-runtime-binding-status').textContent).toBe('Bound'));
     expect(provider.putProjectDesignRuntimeBinding).toHaveBeenCalledWith(expect.any(Object), 'button-binding', {
       expectedRevision: 2,
       binding: { schemaVersion: 1, id: 'button-binding', framework: 'react', componentRef: 'ds:test/button', status: 'bound', verified: true, codeComponentId: 'code/Button', propMappings: [], slotMappings: [] },
@@ -241,11 +401,12 @@ describe('DesignRuntimePanel', () => {
     const nextProps = boundary === 'project' ? { ...panelProps, projectId: 'project-b' }
       : { ...panelProps, workspaceContext: workspaceContextFixture({ workspaceId: 'workspace-b', workspaceMemberId: 'member-b' }) };
     rerender(<DesignRuntimePanel {...nextProps} />);
-    await screen.findByText('Revision 7');
+    await openCode();
+    await waitFor(() => expect((control('design-runtime-component-select') as HTMLSelectElement).selectedOptions[0]?.textContent).toBe('Current component'));
     const oldState = designRuntimeState(99);
     oldState.registry!.components[0]!.name = 'Old component';
     await act(async () => old.resolve({ state: oldState }));
-    expect(screen.queryByText('Revision 99')).toBeNull();
+    expect((control('design-runtime-component-select') as HTMLSelectElement).selectedOptions[0]?.textContent).toBe('Current component');
     expect(screen.queryByText('Old component')).toBeNull();
     expect(vi.mocked(provider.getProjectDesignRuntime).mock.calls[0]![0].signal?.aborted).toBe(true);
     expect(vi.mocked(provider.getProjectDesignRuntime).mock.calls[1]![0]).toMatchObject({ projectId: nextProps.projectId, workspaceContext: nextProps.workspaceContext });
@@ -255,13 +416,17 @@ describe('DesignRuntimePanel', () => {
     const old = deferred<ProjectDesignRuntimeResponse>();
     vi.mocked(provider.deleteProjectDesignRuntimeBinding).mockReturnValueOnce(old.promise);
     const { rerender } = render(<DesignRuntimePanel {...panelProps} />);
+    await openCode();
     await screen.findByTestId('design-runtime-unbind');
-    fireEvent.click(screen.getByTestId('design-runtime-unbind'));
-    vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state: designRuntimeState(7) });
+    fireEvent.click(control('design-runtime-unbind'));
+    const current = designRuntimeState(7);
+    current.registry!.components[0]!.name = 'Current component';
+    vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state: current });
     rerender(<DesignRuntimePanel {...panelProps} projectId="project-b" />);
-    await screen.findByText('Revision 7');
+    await openCode();
+    await waitFor(() => expect((control('design-runtime-component-select') as HTMLSelectElement).selectedOptions[0]?.textContent).toBe('Current component'));
     await act(async () => old.resolve({ state: designRuntimeState(99) }));
-    expect(screen.queryByText('Revision 99')).toBeNull();
+    expect((control('design-runtime-component-select') as HTMLSelectElement).selectedOptions[0]?.textContent).toBe('Current component');
     expect(screen.queryByText('Changes saved.')).toBeNull();
   });
 
@@ -270,15 +435,16 @@ describe('DesignRuntimePanel', () => {
       code: 'DESIGN_RUNTIME_REVISION_CONFLICT', message: 'Revision changed.', details: { currentRevision: 7 },
     }));
     const { unmount } = render(<DesignRuntimePanel {...panelProps} />);
+    await openCode();
     await screen.findByTestId('design-runtime-component-select');
-    fireEvent.change(screen.getByTestId('design-runtime-export-name-0'), { target: { value: 'DraftButton' } });
+    fireEvent.change(control('design-runtime-export-name-0'), { target: { value: 'DraftButton' } });
     vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state: designRuntimeState(7) });
-    fireEvent.click(screen.getByTestId('design-runtime-compile'));
+    fireEvent.click(control('design-runtime-compile'));
     await screen.findByText(/The registry changed/);
-    expect(screen.getByText('Revision 7')).toBeTruthy();
-    expect((screen.getByTestId('design-runtime-export-name-0') as HTMLInputElement).value).toBe('DraftButton');
+    expect(provider.getProjectDesignRuntime).toHaveBeenCalledTimes(2);
+    expect((control('design-runtime-export-name-0') as HTMLInputElement).value).toBe('DraftButton');
     expect(provider.compileProjectDesignRuntime).toHaveBeenCalledOnce();
-    fireEvent.click(screen.getByTestId('design-runtime-compile'));
+    fireEvent.click(control('design-runtime-compile'));
     await waitFor(() => expect(provider.compileProjectDesignRuntime).toHaveBeenCalledTimes(2));
     expect(vi.mocked(provider.compileProjectDesignRuntime).mock.calls[1]![1].expectedRevision).toBe(7);
     unmount();
@@ -289,12 +455,15 @@ describe('DesignRuntimePanel', () => {
       code: 'DESIGN_RUNTIME_REVISION_CONFLICT', message: 'Revision changed.', details: { currentRevision: 7 },
     }));
     render(<DesignRuntimePanel {...panelProps} />);
+    await openCode();
     await screen.findByTestId('design-runtime-component-select');
     vi.mocked(provider.getProjectDesignRuntime).mockRejectedValueOnce(new Error('Refresh unavailable.'));
-    fireEvent.click(screen.getByTestId('design-runtime-compile'));
+    fireEvent.click(control('design-runtime-compile'));
     await screen.findByText('Revision changed. Refresh unavailable.');
     expect(screen.queryByText(/latest revision is loaded/)).toBeNull();
-    expect(screen.getByText('Revision 1')).toBeTruthy();
     expect(provider.compileProjectDesignRuntime).toHaveBeenCalledOnce();
+    fireEvent.click(control('design-runtime-compile'));
+    await waitFor(() => expect(provider.compileProjectDesignRuntime).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(provider.compileProjectDesignRuntime).mock.calls[1]![1].expectedRevision).toBe(1);
   });
 });

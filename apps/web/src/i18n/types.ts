@@ -31,6 +31,38 @@ export const LOCALE_LABEL: Record<Locale, string> = {
 // flat (not deeply nested) so missing-key TS errors point straight at the
 // offending string instead of a generic object mismatch.
 export interface Dict {
+  "designWorkspace.overview": string;
+  "designWorkspace.more": string;
+  "designWorkspace.startTitle": string;
+  "designWorkspace.startHint": string;
+  "designWorkspace.migrateTitle": string;
+  "designWorkspace.migrateHint": string;
+  "designWorkspace.createTitle": string;
+  "designWorkspace.createHint": string;
+  "designWorkspace.openMigration": string;
+  "designWorkspace.openSources": string;
+  "designWorkspace.existingHint": string;
+  "designWorkspace.componentsCount": string;
+  "designWorkspace.screensCount": string;
+  "designWorkspace.editSources": string;
+  "designWorkspace.advanced": string;
+  "designWorkspace.developerTools": string;
+  "designWorkspace.componentDetails": string;
+  "designWorkspace.connections": string;
+  "designWorkspace.usageChecks": string;
+  "designWorkspace.componentsHint": string;
+  "designWorkspace.previewHint": string;
+  "designWorkspace.importVersion": string;
+  "designWorkspace.importHint": string;
+  "designWorkspace.legacyDetected": string;
+  "designWorkspace.noSourceFiles": string;
+  "designWorkspace.exportHint": string;
+  "designWorkspace.migrationFiles": string;
+  "designWorkspace.migrationDetails": string;
+  "designWorkspace.migrationReview": string;
+  "designWorkspace.packageDetails": string;
+  "designWorkspace.repairTitle": string;
+  "designWorkspace.repairHint": string;
   "reactPreview.type": string;
   "reactPreview.provenance.typescript": string;
   "reactPreview.provenance.default": string;

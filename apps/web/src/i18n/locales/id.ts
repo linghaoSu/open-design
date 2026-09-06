@@ -1,8 +1,10 @@
+import { designWorkspaceFallback } from '../design-workspace-fallback';
 import { reactPreviewFallback } from '../react-preview-fallback';
 import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const id: Dict = {
+  ...designWorkspaceFallback,
   ...reactPreviewFallback,
   ...designMigrationFallback,
 
@@ -150,8 +152,8 @@ export const id: Dict = {
   "designRuntime.addStory": "Tambah cerita",
   "designRuntime.slotMappings": "Pemetaan slot",
   "designRuntime.chooseCodeSlot": "Pilih slot kode",
-  'designRuntime.title': "Runtime desain",
-  'designRuntime.description': "Kompilasi komponen proyek, hubungkan kode, dan periksa nilai properti.",
+  'designRuntime.title': "Sistem desain",
+  'designRuntime.description': "Gunakan kembali komponen, jaga konsistensi halaman, dan siapkan desain untuk pengembangan.",
   'designRuntime.revision': "Revisi {revision}",
   'designRuntime.refresh': "Muat ulang",
   'designRuntime.readOnly': "Akses baca saja: telusuri metadata dan validasi nilai. Pengeditan memerlukan izin tulis.",
@@ -159,8 +161,8 @@ export const id: Dict = {
   'designRuntime.saved': "Perubahan disimpan.",
   'designRuntime.diagnostics': "Diagnostik",
   'designRuntime.allowedValues': "Nilai yang diizinkan",
-  'designRuntime.sources': "Sumber komponen",
-  "designRuntime.sourceHint": "Pilih ekspor React/TypeScript atau Vue SFC. Kompilasi mengganti registri dengan pilihan ini.",
+  'designRuntime.sources': "Berkas komponen",
+  "designRuntime.sourceHint": "Pilih komponen yang akan disertakan. Pilihan ini menggantikan koleksi komponen saat ini.",
   'designRuntime.systemId': "ID sistem desain",
   'designRuntime.sourcePath': "Berkas sumber",
   'designRuntime.chooseSource': "Pilih berkas sumber",
@@ -171,8 +173,8 @@ export const id: Dict = {
   'designRuntime.codeId': "ID komponen kode",
   'designRuntime.packageName': "Paket (opsional)",
   'designRuntime.addSource': "Tambah sumber",
-  'designRuntime.compile': "Kompilasi registri",
-  'designRuntime.empty': "Kompilasi pilihan sumber untuk menelusuri komponen dan pengikatan kodenya.",
+  'designRuntime.compile': "Tambahkan komponen",
+  'designRuntime.empty': "Pilih berkas komponen untuk mulai membangun koleksi Anda.",
   'designRuntime.components': "Komponen desain",
   'designRuntime.component': "Komponen desain",
   'designRuntime.slots': "Slot",

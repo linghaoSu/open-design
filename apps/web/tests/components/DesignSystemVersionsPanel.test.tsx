@@ -139,6 +139,8 @@ describe('DesignSystemVersionsPanel', () => {
     vi.mocked(provider.resolveProjectDesignRuntimeDependency).mockResolvedValue({ revision: 9, resolution: { schemaVersion: 1, ok: false, versions: [], diagnostics: [{ schemaVersion: 1, code: 'ODDS5003', severity: 'error', message: 'Package unavailable' }] } });
     render(<DesignRuntimePanel projectId={scope.projectId} workspaceContext={scope.workspaceContext} files={files} viewerOnly={false} onClose={vi.fn()} />);
     await waitFor(() => expect(input('design-runtime-versions-tab').disabled).toBe(false));
+    fireEvent.click(screen.getByTestId('design-runtime-more').querySelector('summary')!);
+    expect(input('design-runtime-versions-tab')).toBeVisible();
     fireEvent.click(input('design-runtime-versions-tab')); await ready();
     expect(screen.getByText('ODDS5003')).toBeTruthy(); expect(input('versions-clear').disabled).toBe(false);
     expect(provider.clearProjectDesignRuntimeDependency).not.toHaveBeenCalled();

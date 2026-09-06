@@ -1,8 +1,10 @@
+import { designWorkspaceFallback } from '../design-workspace-fallback';
 import { reactPreviewFallback } from '../react-preview-fallback';
 import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const uk: Dict = {
+  ...designWorkspaceFallback,
   ...reactPreviewFallback,
   ...designMigrationFallback,
 
@@ -150,8 +152,8 @@ export const uk: Dict = {
   "designRuntime.addStory": "Додати історію",
   "designRuntime.slotMappings": "Зіставлення слотів",
   "designRuntime.chooseCodeSlot": "Вибрати слот коду",
-  'designRuntime.title': "Середовище виконання дизайну",
-  'designRuntime.description': "Компілюйте компоненти проєкту, зв’язуйте код і перевіряйте значення властивостей.",
+  'designRuntime.title': "Дизайн-система",
+  'designRuntime.description': "Повторно використовуйте компоненти, підтримуйте єдиний стиль сторінок і готуйте дизайн до розробки.",
   'designRuntime.revision': "Редакція {revision}",
   'designRuntime.refresh': "Оновити",
   'designRuntime.readOnly': "Доступ лише для читання: перегляд метаданих і перевірка значень. Для редагування потрібні права запису.",
@@ -159,8 +161,8 @@ export const uk: Dict = {
   'designRuntime.saved': "Зміни збережено.",
   'designRuntime.diagnostics': "Діагностика",
   'designRuntime.allowedValues': "Дозволені значення",
-  'designRuntime.sources': "Джерела компонентів",
-  "designRuntime.sourceHint": "Виберіть експорти React/TypeScript або Vue SFC. Компіляція замінить реєстр цим вибором.",
+  'designRuntime.sources': "Файли компонентів",
+  "designRuntime.sourceHint": "Виберіть компоненти для включення. Цей вибір замінить поточну колекцію компонентів.",
   'designRuntime.systemId': "ID дизайн-системи",
   'designRuntime.sourcePath': "Вихідний файл",
   'designRuntime.chooseSource': "Вибрати вихідний файл",
@@ -171,8 +173,8 @@ export const uk: Dict = {
   'designRuntime.codeId': "ID компонента коду",
   'designRuntime.packageName': "Пакет (необов’язково)",
   'designRuntime.addSource': "Додати джерело",
-  'designRuntime.compile': "Скомпілювати реєстр",
-  'designRuntime.empty': "Скомпілюйте вибрані джерела для перегляду компонентів та їхніх зв’язків із кодом.",
+  'designRuntime.compile': "Додати компоненти",
+  'designRuntime.empty': "Виберіть файли компонентів, щоб почати створювати колекцію.",
   'designRuntime.components': "Компоненти дизайну",
   'designRuntime.component': "Компонент дизайну",
   'designRuntime.slots': "Слоти",

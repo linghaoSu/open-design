@@ -1,8 +1,10 @@
+import { designWorkspaceFallback } from '../design-workspace-fallback';
 import { reactPreviewFallback } from '../react-preview-fallback';
 import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const pl: Dict = {
+  ...designWorkspaceFallback,
   ...reactPreviewFallback,
   ...designMigrationFallback,
 
@@ -150,8 +152,8 @@ export const pl: Dict = {
   "designRuntime.addStory": "Dodaj historię",
   "designRuntime.slotMappings": "Mapowania slotów",
   "designRuntime.chooseCodeSlot": "Wybierz slot kodu",
-  'designRuntime.title': "Środowisko wykonawcze projektu",
-  'designRuntime.description': "Kompiluj komponenty projektu, wiąż kod i sprawdzaj wartości właściwości.",
+  'designRuntime.title': "System projektowy",
+  'designRuntime.description': "Korzystaj ponownie z komponentów, zachowuj spójność stron i przygotuj projekt do wdrożenia.",
   'designRuntime.revision': "Rewizja {revision}",
   'designRuntime.refresh': "Odśwież",
   'designRuntime.readOnly': "Dostęp tylko do odczytu: przeglądaj metadane i sprawdzaj wartości. Edycja wymaga uprawnień zapisu.",
@@ -159,8 +161,8 @@ export const pl: Dict = {
   'designRuntime.saved': "Zapisano zmiany.",
   'designRuntime.diagnostics': "Diagnostyka",
   'designRuntime.allowedValues': "Dozwolone wartości",
-  'designRuntime.sources': "Źródła komponentów",
-  "designRuntime.sourceHint": "Wybierz eksporty React/TypeScript lub Vue SFC. Kompilacja zastępuje rejestr tym wyborem.",
+  'designRuntime.sources': "Pliki komponentów",
+  "designRuntime.sourceHint": "Wybierz komponenty do uwzględnienia. Ten wybór zastąpi bieżącą kolekcję komponentów.",
   'designRuntime.systemId': "ID systemu projektowego",
   'designRuntime.sourcePath': "Plik źródłowy",
   'designRuntime.chooseSource': "Wybierz plik źródłowy",
@@ -171,8 +173,8 @@ export const pl: Dict = {
   'designRuntime.codeId': "ID komponentu kodu",
   'designRuntime.packageName': "Pakiet (opcjonalnie)",
   'designRuntime.addSource': "Dodaj źródło",
-  'designRuntime.compile': "Kompiluj rejestr",
-  'designRuntime.empty': "Skompiluj wybrane źródła, aby przeglądać komponenty i ich powiązania z kodem.",
+  'designRuntime.compile': "Dodaj komponenty",
+  'designRuntime.empty': "Wybierz pliki komponentów, aby rozpocząć tworzenie kolekcji.",
   'designRuntime.components': "Komponenty projektu",
   'designRuntime.component': "Komponent projektu",
   'designRuntime.slots': "Sloty",

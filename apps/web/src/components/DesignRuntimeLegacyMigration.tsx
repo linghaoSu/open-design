@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button } from '@open-design/components';
+import { Button, Input, Select } from '@open-design/components';
 import {
   LegacyDesignSystemMigrationPlanSchema,
   type LegacyDesignSystemMigrationPlan,
@@ -117,23 +117,33 @@ function MigrationContent({ scope, state, files, viewerOnly, externalBusy = fals
 
   return <section className={styles.panel} data-testid="design-runtime-legacy-migration">
     <h3>{t('designMigration.title')}</h3><p className={styles.muted}>{t('designMigration.description')}</p>
+    <section className={styles.step}>
+      <h4><span className={styles.stepNumber}>1</span>{t('designWorkspace.migrationDetails')}</h4>
+      <fieldset disabled={locked} className={styles.sources}>
+        <label className={styles.field}>{t('designVersions.name')}<Input data-testid="legacy-name" value={draft.name} onChange={(event) => update({ name: event.target.value })} /></label>
+        <details className={styles.advanced} data-testid="legacy-advanced"><summary>{t('designWorkspace.advanced')}</summary>
+          <div className={styles.fields}>
+            <label className={styles.field}>{t('designRuntime.systemId')}<Input data-testid="legacy-system-id" value={draft.designSystemId} onChange={(event) => update({ designSystemId: event.target.value })} /></label>
+            <label className={styles.field}>{t('designVersions.version')}<Input data-testid="legacy-version" value={draft.version} onChange={(event) => update({ version: event.target.value })} /></label>
+            <label className={styles.field}>{t('designValidation.mode')}<Select data-testid="legacy-mode" value={draft.mode} onChange={(event) => update({ mode: event.target.value as 'explore' | 'guided' })}>
+              <option value="explore">{t('designVersions.explore')}</option><option value="guided">{t('designVersions.guided')}</option>
+            </Select></label>
+          </div>
+          <details><summary>{t('designMigration.constraints')}</summary><VersionConstraintFields value={draft.constraints} disabled={locked} onChange={(constraints) => update({ constraints })} /></details>
+        </details>
+      </fieldset>
+    </section>
+    <section className={styles.step}>
+    <h4><span className={styles.stepNumber}>2</span>{t('designWorkspace.migrationFiles')}</h4>
     <fieldset disabled={locked} className={styles.sources}>
-      <legend>{t('designMigration.sources')}</legend><p className={styles.muted}>{t('designMigration.sourcesHint')}</p>
-      {!paths.length ? <p>{t('designMigration.noFiles')}</p> : paths.map((name) => <label key={name} className={styles.source}>
-        <input type="checkbox" data-testid={`legacy-source-${name}`} checked={sourcePaths.includes(name)} disabled={requiredPaths.includes(name)} onChange={(event) => update({ sourcePaths: event.target.checked ? [...draft.sourcePaths, name] : draft.sourcePaths.filter((path) => path !== name) })} />
+      <p className={styles.muted}>{t('designMigration.sourcesHint')}</p>
+      <div className={styles.sourceList}>{!paths.length ? <p>{t('designMigration.noFiles')}</p> : paths.map((name) => <label key={name} className={styles.source}>
+        <Input type="checkbox" data-testid={`legacy-source-${name}`} checked={sourcePaths.includes(name)} disabled={requiredPaths.includes(name)} onChange={(event) => update({ sourcePaths: event.target.checked ? [...draft.sourcePaths, name] : draft.sourcePaths.filter((path) => path !== name) })} />
         <code>{name}</code>
-      </label>)}
-      <label className={styles.field}>{t('designMigration.tokenStylesheet')}<select data-testid="legacy-token-stylesheet" value={draft.tokenStylesheet ?? ''} onChange={(event) => update({ tokenStylesheet: event.target.value || undefined })}>
+      </label>)}</div>
+      <label className={styles.field}>{t('designMigration.tokenStylesheet')}<Select data-testid="legacy-token-stylesheet" value={draft.tokenStylesheet ?? ''} onChange={(event) => update({ tokenStylesheet: event.target.value || undefined })}>
         <option value="">{t('designMigration.noStylesheet')}</option>{paths.filter((name) => /\.css$/i.test(name)).map((name) => <option key={name} value={name}>{name}</option>)}
-      </select></label>
-    </fieldset>
-    <fieldset disabled={locked} className={styles.fields}>
-      <label className={styles.field}>{t('designRuntime.systemId')}<input data-testid="legacy-system-id" value={draft.designSystemId} onChange={(event) => update({ designSystemId: event.target.value })} /></label>
-      <label className={styles.field}>{t('designVersions.name')}<input data-testid="legacy-name" value={draft.name} onChange={(event) => update({ name: event.target.value })} /></label>
-      <label className={styles.field}>{t('designVersions.version')}<input data-testid="legacy-version" value={draft.version} onChange={(event) => update({ version: event.target.value })} /></label>
-      <label className={styles.field}>{t('designValidation.mode')}<select data-testid="legacy-mode" value={draft.mode} onChange={(event) => update({ mode: event.target.value as 'explore' | 'guided' })}>
-        <option value="explore">{t('designVersions.explore')}</option><option value="guided">{t('designVersions.guided')}</option>
-      </select></label>
+      </Select></label>
     </fieldset>
     <details><summary>{t('designMigration.codeTitle')}</summary><p className={styles.muted}>{t('designMigration.codeHint')}</p>
       <fieldset disabled={locked} className={styles.sources}>
@@ -144,19 +154,26 @@ function MigrationContent({ scope, state, files, viewerOnly, externalBusy = fals
         }}>{t('designMigration.addComponent')}</Button>
       </fieldset>
     </details>
-    <details><summary>{t('designMigration.constraints')}</summary><VersionConstraintFields value={draft.constraints} disabled={locked} onChange={(constraints) => update({ constraints })} /></details>
+    </section>
+    <section className={styles.step}>
+    <h4><span className={styles.stepNumber}>3</span>{t('designWorkspace.migrationReview')}</h4>
     <p className={styles.muted}>{t('designMigration.readiness')}</p>
     {!parsed.success && sourcePaths.length ? <p className={styles.error} role="alert">{parsed.error.issues.map((issue) => issue.message).join(' ')}</p> : null}
     {viewerOnly ? <p className={styles.muted}>{t('designRuntime.readOnly')}</p> : null}
     <div className={styles.actions}>
-      <Button data-testid="legacy-review" disabled={locked || !state || !parsed.success} onClick={() => void perform(false)}>{t('designMigration.review')}</Button>
-      <Button data-testid="legacy-apply" variant="primary" disabled={locked || viewerOnly || !validReview?.review.canApply} onClick={() => void perform(true)}>{t('designMigration.apply')}</Button>
+      <Button data-testid="legacy-review" variant={validReview ? 'default' : 'primary'} disabled={locked || !state || !parsed.success} onClick={() => void perform(false)}>{t('designMigration.review')}</Button>
     </div>
     {busy ? <p role="status">{t('common.loading')}</p> : null}
     {message ? <p role="status">{message}</p> : null}
     {error ? <p className={styles.error} role="alert">{error}</p> : null}
     <StructureDiagnostics diagnostics={diagnostics} />
-    {validReview ? <MigrationReview review={validReview.review} /> : null}
+    {validReview ? <>
+      <MigrationReview review={validReview.review} />
+      {validReview.review.canApply ? <div className={styles.actions}>
+        <Button data-testid="legacy-apply" variant="primary" disabled={locked || viewerOnly} onClick={() => void perform(true)}>{t('designMigration.apply')}</Button>
+      </div> : null}
+    </> : null}
+    </section>
   </section>;
 }
 
@@ -175,8 +192,10 @@ function MigrationReview({ review }: { review: LegacyDesignSystemMigrationReview
     {!review.compiledComponentRefs.length ? <p data-testid="legacy-token-foundation">{t('designMigration.tokenFoundation')}</p> : null}
     <StructureDiagnostics diagnostics={review.diagnostics} />
     {unresolved.length ? <section><h4>{t('designMigration.unresolved')}</h4><ul>{unresolved.map((record, index) => <li key={index}><code>{record.cssVariable}</code> = <code>{record.sourceValue}</code> · {record.reason}<br /><code>{record.sourcePath}:{record.line}</code></li>)}</ul></section> : null}
-    <section><h4>{t('designMigration.packaged')}</h4><ul data-testid="legacy-packaged-sources">{review.files.map((file) => <li key={file.path}><code>{file.path}</code> · {file.byteLength} B</li>)}</ul></section>
-    {review.candidate ? <DesignSystemVersionDetails value={review.candidate.package} /> : null}
-    <details><summary>{t('designMigration.proof')}</summary><pre>{json({ reviewId: review.id, baseRevision: review.baseRevision, baseDigest: review.baseDigest, planDigest: review.planDigest, sourceDigest: review.sourceDigest, files: review.files })}</pre></details>
+    <details data-testid="legacy-package-details"><summary>{t('designWorkspace.packageDetails')}</summary>
+      <section><h4>{t('designMigration.packaged')}</h4><ul data-testid="legacy-packaged-sources">{review.files.map((file) => <li key={file.path}><code>{file.path}</code> · {file.byteLength} B</li>)}</ul></section>
+      {review.candidate ? <DesignSystemVersionDetails value={review.candidate.package} /> : null}
+      <details><summary>{t('designMigration.proof')}</summary><pre>{json({ reviewId: review.id, baseRevision: review.baseRevision, baseDigest: review.baseDigest, planDigest: review.planDigest, sourceDigest: review.sourceDigest, files: review.files })}</pre></details>
+    </details>
   </div>;
 }

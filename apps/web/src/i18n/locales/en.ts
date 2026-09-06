@@ -1,8 +1,10 @@
+import { designWorkspaceFallback } from '../design-workspace-fallback';
 import { reactPreviewFallback } from '../react-preview-fallback';
 import { designMigrationFallback } from '../design-migration-fallback';
 import type { Dict } from '../types';
 
 export const en: Dict = {
+  ...designWorkspaceFallback,
   ...reactPreviewFallback,
   ...designMigrationFallback,
 
@@ -215,8 +217,8 @@ export const en: Dict = {
   "designRuntime.addStory": "Add story",
   "designRuntime.slotMappings": "Slot mappings",
   "designRuntime.chooseCodeSlot": "Choose a code slot",
-  'designRuntime.title': "Design runtime",
-  'designRuntime.description': "Compile project components, connect code, and check property values.",
+  'designRuntime.title': "Design system",
+  'designRuntime.description': "Reuse components, keep pages consistent, and prepare your design for development.",
   'designRuntime.revision': "Revision {revision}",
   'designRuntime.refresh': "Refresh",
   'designRuntime.readOnly': "Read-only access: browse metadata and validate values. Editing requires write access.",
@@ -224,8 +226,8 @@ export const en: Dict = {
   'designRuntime.saved': "Changes saved.",
   'designRuntime.diagnostics': "Diagnostics",
   'designRuntime.allowedValues': "Allowed values",
-  'designRuntime.sources': "Component sources",
-  "designRuntime.sourceHint": "Choose React/TypeScript exports or Vue SFCs. Compilation replaces the registry with these selections.",
+  'designRuntime.sources': "Component files",
+  "designRuntime.sourceHint": "Choose the components to include. This selection replaces the current component collection.",
   'designRuntime.systemId': "Design system ID",
   'designRuntime.sourcePath': "Source file",
   'designRuntime.chooseSource': "Choose a source file",
@@ -236,8 +238,8 @@ export const en: Dict = {
   'designRuntime.codeId': "Code component ID",
   'designRuntime.packageName': "Package (optional)",
   'designRuntime.addSource': "Add source",
-  'designRuntime.compile': "Compile registry",
-  'designRuntime.empty': "Compile a source selection to browse components and their code bindings.",
+  'designRuntime.compile': "Add components",
+  'designRuntime.empty': "Choose component files to start building your collection.",
   'designRuntime.components': "Design components",
   'designRuntime.component': "Design component",
   'designRuntime.slots': "Slots",

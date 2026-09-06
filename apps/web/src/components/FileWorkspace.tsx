@@ -2183,6 +2183,7 @@ export function FileWorkspace({
   }, [t]);
 
   function focusWorkspaceTab(tabId: string) {
+    setDesignRuntimeOpen(false);
     setUploadError(null);
     if (tabId === DESIGN_SYSTEM_TAB) {
       setPersistedActive(designSystemProject ? DESIGN_SYSTEM_TAB : DESIGN_FILES_TAB);
@@ -2201,6 +2202,7 @@ export function FileWorkspace({
   }
 
   function activateWorkspaceTab(tabId: string) {
+    setDesignRuntimeOpen(false);
     const sketchEntry = sketches[tabId];
     if (sketchEntry && !sketchEntry.persisted) {
       setUploadError(null);
@@ -3537,6 +3539,7 @@ export function FileWorkspace({
   // contract) so they always execute against the latest committed state.
   const tabItemActions = {
     activate(key: string) {
+      setDesignRuntimeOpen(false);
       if (isBrowserTabId(key)) {
         setPersistedActive(key);
         return;
@@ -3956,12 +3959,12 @@ export function FileWorkspace({
           {!initialMaterializationPending && designSystemProject ? (
             <button
               type="button"
-              className={`ws-tab design-system-tab ${activeTab === DESIGN_SYSTEM_TAB ? 'active' : ''}`}
+              className={`ws-tab design-system-tab ${!designRuntimeOpen && activeTab === DESIGN_SYSTEM_TAB ? 'active' : ''}`}
               role="tab"
-              aria-selected={activeTab === DESIGN_SYSTEM_TAB}
+              aria-selected={!designRuntimeOpen && activeTab === DESIGN_SYSTEM_TAB}
               tabIndex={0}
               data-testid="design-system-project-tab"
-              onClick={() => setPersistedActive(DESIGN_SYSTEM_TAB)}
+              onClick={() => focusWorkspaceTab(DESIGN_SYSTEM_TAB)}
               title={t('dsManager.tabDesignSystem')}
             >
               <span className="tab-icon" aria-hidden>
@@ -3972,13 +3975,13 @@ export function FileWorkspace({
           ) : null}
           <button
             type="button"
-            className={`ws-tab design-files-tab ${initialMaterializationPending || designFilesTabActive ? 'active' : ''}`}
+            className={`ws-tab design-files-tab ${!designRuntimeOpen && (initialMaterializationPending || designFilesTabActive) ? 'active' : ''}`}
             role="tab"
-            aria-selected={initialMaterializationPending || designFilesTabActive}
+            aria-selected={!designRuntimeOpen && (initialMaterializationPending || designFilesTabActive)}
             aria-label={designFilesTabTitle}
             tabIndex={0}
             data-testid="design-files-tab"
-            onClick={() => setPersistedActive(DESIGN_FILES_TAB)}
+            onClick={() => focusWorkspaceTab(DESIGN_FILES_TAB)}
             title={designFilesTabTitle}
           >
             <span className="tab-icon" aria-hidden>
@@ -4003,7 +4006,7 @@ export function FileWorkspace({
                   key={browserTab.id}
                   label={browserTitle}
                   title={browserUrl ? `${browserTitle}\n${browserUrl}` : browserTitle}
-                  active={activeTab === browserTab.id}
+                  active={!designRuntimeOpen && activeTab === browserTab.id}
                   onActivate={browserHandlers.onActivate}
                   onClose={browserHandlers.onClose}
                   kind="browser"
@@ -4057,7 +4060,7 @@ export function FileWorkspace({
                 label={label}
                 iconNameOverride={iconNameOverride}
                 syncBadge={tabSyncBadge}
-                active={activeTab === name}
+                active={!designRuntimeOpen && activeTab === name}
                 onActivate={handlers.onActivate}
                 onClose={handlers.onClose}
                 kind={kind}
@@ -4100,13 +4103,13 @@ export function FileWorkspace({
         <div className="ws-tabs-actions">
           {!initialMaterializationPending ? <Button
             data-testid="design-runtime-entry"
-            variant="ghost"
+            variant={designRuntimeOpen ? 'subtle' : 'ghost'}
             aria-expanded={designRuntimeOpen}
             aria-controls="design-runtime-panel"
             onClick={() => setDesignRuntimeOpen((open) => !open)}
           >{t('designRuntime.title')}</Button> : null}
           {!initialMaterializationPending && fileActionsBefore ? (
-            <div className="ws-tabs-file-actions-before">{fileActionsBefore}</div>
+            <div className="ws-tabs-file-actions-before" style={designRuntimeOpen ? { display: 'none' } : undefined}>{fileActionsBefore}</div>
           ) : null}
           {/* Pure portal host. Whatever file is open owns these actions and
               portals them in; with no file open there is nothing to act on, so
@@ -4117,10 +4120,11 @@ export function FileWorkspace({
             id={APP_CHROME_FILE_ACTIONS_ID}
             className="ws-tabs-file-actions"
             data-app-chrome-file-actions="true"
-            hidden={!viewerFileActive}
+            hidden={!viewerFileActive || designRuntimeOpen}
+            style={designRuntimeOpen ? { display: 'none' } : undefined}
           />
           {!initialMaterializationPending && headerActions ? (
-            <div className="ws-tabs-project-actions">{headerActions}</div>
+            <div className="ws-tabs-project-actions" style={designRuntimeOpen ? { display: 'none' } : undefined}>{headerActions}</div>
           ) : null}
         </div>
       </div>
@@ -4187,7 +4191,7 @@ export function FileWorkspace({
           <span>{readonlyNotice ?? t('workspace.readonlyNotice')}</span>
         </div>
       ) : null}
-      <div className="ws-body">
+      <div className="ws-body" style={designRuntimeOpen ? { display: 'none' } : undefined}>
         {/* Banner moved into DesignFilesPanel for the Design Files tab so
             single-click preview (which keeps activeTab on DESIGN_FILES_TAB)
             no longer leaves a stale banner mounted above the preview.
