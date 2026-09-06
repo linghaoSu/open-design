@@ -33,6 +33,7 @@ import { DesignRuntimeLegacyMigration, isLegacyDesignSource } from './DesignRunt
 import { DesignHandoffPanel } from './DesignHandoffPanel';
 import { DesignPreviewPanel, type DesignPreviewSelection } from './DesignPreviewPanel';
 import { Icon } from './Icon';
+import { ReactComponentPreview } from './ReactComponentPreview';
 import styles from './DesignRuntimePanel.module.css';
 
 interface Props {
@@ -41,6 +42,7 @@ interface Props {
   files: readonly { name: string; size?: number; mtime?: number; type?: 'file' | 'dir' }[];
   viewerOnly: boolean;
   onClose(): void;
+  onOpenSource?(sourcePath: string, exportName?: string): void;
 }
 
 type SourceSelection = ProjectDesignRuntimeCompileRequest['selections'][number];
@@ -106,7 +108,7 @@ export function DesignRuntimePanel(props: Props) {
   return <DesignRuntimePanelContent key={scopeKey} {...props} />;
 }
 
-function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerOnly, onClose }: Props) {
+function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerOnly, onClose, onOpenSource }: Props) {
   const t = useT();
   const inputId = useId();
   const sourceFiles = files.map(({ name }) => name).filter((name) => /\.(tsx|ts|vue)$/.test(name) && !name.endsWith('.d.ts')).sort();
@@ -125,6 +127,9 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
   const [structureBusy, setStructureBusy] = useState(false);
   const [tab, setTab] = useState<RuntimeTab>('overview');
   const [connectionsOpen, setConnectionsOpen] = useState(false);
+  const [componentView, setComponentView] = useState<'list' | 'detail'>('list');
+  const detailHeading = useRef<HTMLHeadingElement>(null);
+  const componentList = useRef<HTMLDivElement>(null);
   const moreMenu = useRef<HTMLDetailsElement>(null);
   const [migrationOpened, setMigrationOpened] = useState(false);
   const [previewOpened, setPreviewOpened] = useState(false);
@@ -158,6 +163,20 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
     && candidate.framework === (selectedCode?.framework ?? bindingFramework));
   const visibleComponents = state?.registry?.components.filter((component) =>
     `${component.name} ${component.id}`.toLowerCase().includes(query.toLowerCase())) ?? [];
+  const registryLocked = !!state?.lock.dependencies.length;
+  const previewSource = selectedComponent?.source?.exportName && /\.[jt]sx$/.test(selectedComponent.source.sourcePath ?? '')
+    && files.some((file) => file.type !== 'dir' && file.name === selectedComponent.source?.sourcePath)
+    ? selectedComponent.source : undefined;
+
+  function browseComponent(id: string) {
+    if (id !== componentId) selectComponent(id);
+    setComponentView('detail');
+  }
+
+  useEffect(() => {
+    if (componentView === 'detail') detailHeading.current?.focus();
+    else componentList.current?.querySelector<HTMLButtonElement>('[aria-pressed="true"]')?.focus();
+  }, [componentView, componentId]);
 
   function selectComponent(nextId: string, nextState = state, preferredBinding?: ComponentBinding) {
     setComponentId(nextId);
@@ -177,6 +196,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
   function adoptState(nextState: ProjectDesignRuntimeState, initialize = false) {
     setState(nextState);
     if (initialize) {
+      setTab(nextState.registry ? 'code' : 'overview');
       if (nextState.registry) setDesignSystemId(nextState.registry.id);
       const nextSelections = sourceSelections(nextState);
       if (nextSelections.length) setSelections(nextSelections);
@@ -261,7 +281,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
   }
 
   function compile() {
-    if (viewerOnly || !state) return;
+    if (viewerOnly || !state || registryLocked) return;
     void perform((authority) => compileProjectDesignRuntime(authority, {
       expectedRevision: state.revision, designSystemId, selections,
     }), acceptMutation);
@@ -343,17 +363,18 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
         </li>)}
       </ul> : null}
       <div id={`${inputId}-overview`} role="tabpanel" aria-labelledby={`${inputId}-overview-tab`} hidden={tab !== 'overview'}>
-        {state ? <DesignSystemOverview state={state} hasLegacyFiles={files.some((file) => isLegacyDesignSource(file.name))} hasSourceFiles={sourceFiles.length > 0} disabled={busy || structureBusy} onNavigate={navigate} onRepair={(id, target) => { selectComponent(id, state, target); setConnectionsOpen(true); navigate('code'); }} /> : null}
+        {state ? <DesignSystemOverview state={state} hasLegacyFiles={files.some((file) => isLegacyDesignSource(file.name))} hasSourceFiles={sourceFiles.length > 0} disabled={busy || structureBusy} onNavigate={navigate} onRepair={(id, target) => { selectComponent(id, state, target); setComponentView('detail'); setConnectionsOpen(true); navigate('code'); }} /> : null}
       </div>
       <div id={`${inputId}-code`} role="tabpanel" aria-labelledby={`${inputId}-code-tab`} hidden={tab !== 'code'}>
       <p className={styles.sectionIntro}>{t('designWorkspace.componentsHint')}</p>
+      {registryLocked ? <div className={styles.versionNotice} data-testid="design-runtime-locked-registry"><p>{t('designWorkspace.lockedRegistry')}</p><Button variant="ghost" disabled={busy || structureBusy} data-testid="design-runtime-manage-version" onClick={() => navigate('versions')}>{t('designVersions.title')}<Icon name="arrow-right" size={14} /></Button></div> : null}
       <div className={styles.columns}>
         <details className={styles.sourceSetup} open={!state?.registry} data-testid="design-runtime-source-setup">
         <summary>{t('designWorkspace.editSources')}</summary>
         <form className={styles.card} onSubmit={(event) => { event.preventDefault(); compile(); }}>
           <h3>{t('designRuntime.sources')}</h3>
           <p className={styles.muted}>{t(sourceFiles.length ? 'designRuntime.sourceHint' : 'designWorkspace.noSourceFiles')}</p>
-          <fieldset disabled={viewerOnly || busy || !state}>
+          <fieldset disabled={viewerOnly || busy || !state || registryLocked}>
             <details className={styles.advanced}>
               <summary>{t('designWorkspace.advanced')}</summary>
               <label className={styles.field}>{t('designRuntime.systemId')}
@@ -368,22 +389,28 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
           </fieldset>
         </form>
         </details>
-        <div className={styles.catalog}>
+        <div className={styles.catalog} data-view={componentView} data-empty={!state?.registry?.components.length} data-testid="design-runtime-catalog">
           {!state?.registry ? null : <>
-            <section className={styles.card}>
-              <h3>{t('designRuntime.components')}</h3>
+            <div className={styles.componentList} ref={componentList}>
+              <div className={styles.listHeading}><h3>{t('designRuntime.components')}</h3><span>{state.registry.components.length}</span></div>
               <label className={styles.field}>{t('common.search')}
-                <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} />
+                <input type="search" data-testid="design-runtime-component-search" value={query} onChange={(event) => setQuery(event.target.value)} />
               </label>
-              <label className={styles.field}>{t('designRuntime.component')}
-                <select data-testid="design-runtime-component-select" value={componentId} disabled={busy} onChange={(event) => selectComponent(event.target.value)}>
-                  {selectedComponent && !visibleComponents.includes(selectedComponent) ? <option value={selectedComponent.id}>{selectedComponent.name}</option> : null}
-                  {visibleComponents.map((component) => <option key={component.id} value={component.id}>{component.name}</option>)}
-                </select>
-              </label>
+              <div className={styles.componentRows} aria-label={t('designRuntime.components')}>
+                {visibleComponents.map((component) => <Button key={component.id} variant="ghost" className={styles.componentRow} data-testid={`design-runtime-component-select-${component.id}`} aria-pressed={componentId === component.id} aria-controls={`${inputId}-component-detail`} disabled={busy} onClick={() => browseComponent(component.id)}><Icon name="blocks" size={16} /><span>{component.name}{component.source?.exportName && component.source.exportName !== component.name ? <small>{component.source.exportName}</small> : null}</span><Icon name="chevron-right" size={14} /></Button>)}
+              </div>
+              {!visibleComponents.length ? <p className={styles.emptyList} role="status">{t(state.registry.components.length ? 'designWorkspace.noMatches' : registryLocked ? 'designWorkspace.noVersionComponents' : 'designWorkspace.noComponents')}</p> : null}
+            </div>
+            <div className={styles.componentDetail} id={`${inputId}-component-detail`} role="region" aria-label={t('designWorkspace.componentDetails')}>
+            <Button variant="ghost" className={styles.backToList} data-testid="design-runtime-back-to-components" onClick={() => setComponentView('list')}><Icon name="arrow-left" size={14} />{t('designWorkspace.backToComponents')}</Button>
+            <section className={styles.card}>
               {selectedComponent ? <>
-                <ComponentMetadata component={selectedComponent} />
+                <div className={styles.detailHeading}><h3 ref={detailHeading} tabIndex={-1}>{selectedComponent.name}</h3>
+                  {previewSource && onOpenSource ? <Button variant="ghost" data-testid="design-runtime-preview-source" onClick={() => onOpenSource(previewSource.sourcePath!, previewSource.exportName)}><Icon name="external-link" size={15} />{t('designWorkspace.openSource')}</Button> : null}
+                </div>
+                {previewSource ? <div className={styles.inlinePreview}><ReactComponentPreview layout="component" projectId={projectId} workspaceContext={workspaceContext} sourcePath={previewSource.sourcePath!} sourceIdentity={JSON.stringify(files.filter((file) => file.name === previewSource.sourcePath))} componentPreviewRequest={{ exportName: previewSource.exportName, nonce: 0 }} /></div> : <ComponentMetadata component={selectedComponent} hideName />}
                 <details className={styles.advanced}><summary>{t('designWorkspace.componentDetails')}</summary>
+                {previewSource ? <ComponentMetadata component={selectedComponent} hideName /> : null}
                 <p className={styles.muted}><code>{selectedComponent.id}</code></p>
                 {selectedComponent.source ? <p className={styles.muted}><code>{selectedComponent.source.sourcePath}</code> · {selectedComponent.source.exportName}</p> : null}
                 <h4>{t('designRuntime.slots')}</h4>
@@ -482,6 +509,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
                 <Button data-testid="design-runtime-validate" type="submit">{t('designRuntime.validate')}</Button>
               </fieldset>
             </form></details> : null}
+            </div>
           </>}
         </div>
       </div>
@@ -524,7 +552,6 @@ function DesignSystemOverview({ state, hasLegacyFiles, hasSourceFiles, disabled,
   const connectionIssues = state.bindings.bindings.filter((binding) => binding.status !== 'bound' && componentRefs.has(binding.componentRef));
   return <div className={styles.overview}>
     <div className={styles.overviewHeading}>
-      <span className={styles.overviewIcon}><Icon name="swatchbook" size={24} /></span>
       <h3>{t(hasSystem ? 'designRuntime.components' : 'designWorkspace.startTitle')}</h3>
       <p>{t(hasSystem ? 'designWorkspace.existingHint' : 'designWorkspace.startHint')}</p>
     </div>
@@ -561,10 +588,10 @@ function DesignSystemOverview({ state, hasLegacyFiles, hasSourceFiles, disabled,
   </div>;
 }
 
-function ComponentMetadata({ component }: { component: ComponentDefinition | CodeComponentDefinition }) {
+function ComponentMetadata({ component, hideName = false }: { component: ComponentDefinition | CodeComponentDefinition; hideName?: boolean }) {
   const t = useT();
   return <div className={styles.metadata}>
-    <p><strong>{component.name}</strong></p>
+    {!hideName ? <p><strong>{component.name}</strong></p> : null}
     {'sourcePath' in component ? <p><code>{component.sourcePath}</code> · {component.exportName} · {component.framework}</p> : null}
     <h4>{t('designRuntime.props')}</h4>
     {Object.entries(component.props).length ? <dl className={styles.props}>

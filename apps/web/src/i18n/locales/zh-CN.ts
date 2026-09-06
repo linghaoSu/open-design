@@ -1,6 +1,15 @@
 import type { Dict } from "../types";
 
 export const zhCN: Dict = {
+  "designWorkspace.noMatches": "没有匹配的组件。",
+  "designWorkspace.noComponents": "还没有组件。展开上方「管理组件文件」即可添加。",
+  "designWorkspace.backToComponents": "全部组件",
+  "designWorkspace.migrationStepName": "命名",
+  "designWorkspace.migrationStepFiles": "文件",
+  "designWorkspace.migrationStepReview": "审核",
+  "designWorkspace.lockedRegistry": "此项目正在使用已发布版本。添加或修改组件前，请在版本管理中移除版本依赖，保留当前内容作为可编辑副本。",
+  "designWorkspace.noVersionComponents": "此版本包含设计基础样式，尚无代码组件。",
+  "designWorkspace.openSource": "在文件中打开",
   "designWorkspace.overview": "概览",
   "designWorkspace.more": "更多",
   "designWorkspace.startTitle": "构建一致的设计",

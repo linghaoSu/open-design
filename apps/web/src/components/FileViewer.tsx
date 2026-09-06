@@ -1736,6 +1736,8 @@ interface Props {
   // Bumped nonce asking a deck preview to flip to `slideIndex` (a queued chat
   // send for this file just started processing).
   slideNavRequest?: { slideIndex: number; nonce: number } | null;
+  // Explicit component-library navigation selects this export and returns to Preview.
+  componentPreviewRequest?: { exportName?: string; nonce: number } | null;
   // Read-only viewer of a team-shared project: the viewer can comment but not
   // edit, export, share, download, or send changes to Chat.
   viewerOnly?: boolean;
@@ -1822,6 +1824,7 @@ export const FileViewer = memo(function FileViewer({
   shareRequest,
   downloadRequest,
   slideNavRequest,
+  componentPreviewRequest,
   viewerOnly = false,
   projectName,
   projectDir,
@@ -1932,6 +1935,7 @@ export const FileViewer = memo(function FileViewer({
         projectId={projectId}
         projectKind={projectKind}
         file={file}
+        componentPreviewRequest={componentPreviewRequest}
         onOpenFileReplacing={onOpenFileReplacing}
         projectName={projectName}
         projectDir={projectDir}
@@ -6384,6 +6388,7 @@ function ReactComponentViewer({
   projectId,
   projectKind,
   file,
+  componentPreviewRequest,
   onOpenFileReplacing,
   projectName,
   projectDir,
@@ -6398,6 +6403,7 @@ function ReactComponentViewer({
   projectId: string;
   projectKind: TrackingProjectKind;
   file: ProjectFile;
+  componentPreviewRequest?: { exportName?: string; nonce: number } | null;
   onOpenFileReplacing?: (openName: string, closeName: string) => void;
   projectName?: string;
   projectDir?: string | null;
@@ -6419,6 +6425,9 @@ function ReactComponentViewer({
   workspaceActiveRef.current = workspaceActive;
   const { workspaceContext } = useProjectCollabContext();
   const [mode, setMode] = useState<'preview' | 'source'>('preview');
+  useEffect(() => {
+    if (componentPreviewRequest) setMode('preview');
+  }, [componentPreviewRequest?.nonce, componentPreviewRequest?.exportName]);
   const [source, setSource] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
@@ -7136,6 +7145,7 @@ function ReactComponentViewer({
             sourcePath={file.name}
             sourceIdentity={JSON.stringify([file.mtime, file.size, reloadKey])}
             workspaceContext={workspaceContext}
+            componentPreviewRequest={componentPreviewRequest}
           />
         ) : (
           <CodeWithLines text={source} />

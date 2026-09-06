@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { Locator, Page } from '@playwright/test';
 import type {
   ProjectComponentDefinition, ProjectDesignRuntimeDocumentResponse, ProjectDesignRuntimePublishComponentResponse,
   ProjectDesignRuntimeResponse, ProjectDesignRuntimeStageComponentResponse, ProjectDesignRuntimeValidateResponse,
@@ -16,6 +17,35 @@ import type {
 import { expect, test } from '@/playwright/suite';
 import { applyStandardMocks } from '@/playwright/mock-factory';
 import { T } from '@/timeouts';
+
+// Follow the same disclosures as a user. A nested source control can sit inside
+// source setup, Advanced settings and Storybook examples simultaneously.
+async function revealControl(page: Page, testId: string): Promise<Locator> {
+  const control = page.getByTestId(testId);
+  await expect(control).toBeAttached();
+  const disclosures = page.locator('details').filter({ has: control });
+  for (const disclosure of await disclosures.all()) {
+    if (await disclosure.getAttribute('open') === null) {
+      await disclosure.locator(':scope > summary').click();
+    }
+  }
+  await expect(control).toBeVisible();
+  return control;
+}
+
+async function openRuntimeTab(page: Page, tab: 'code' | 'structure' | 'versions' | 'validation' | 'handoff' | 'preview') {
+  // Secondary tabs are reached through More, which closes after navigation.
+  const button = await revealControl(page, `design-runtime-${tab}-tab`);
+  await button.click();
+  await expect(button).toHaveAttribute('aria-selected', 'true');
+}
+
+async function selectRuntimeComponent(page: Page, componentId: string) {
+  await openRuntimeTab(page, 'code');
+  const row = page.getByTestId(`design-runtime-component-select-${componentId}`);
+  await row.click();
+  await expect(row).toHaveAttribute('aria-pressed', 'true');
+}
 
 test('[P1] structured components compile, publish shared revisions and lock exact versions through the live workspace', async ({ page }, testInfo) => {
   await applyStandardMocks(page);
@@ -48,6 +78,8 @@ export function Button({ variant = 'primary', disabled = false }: ButtonProps) {
   const panel = page.getByTestId('design-runtime-panel');
   await expect(panel).toBeVisible();
   await expect(panel).not.toContainText('designRuntime.');
+  await openRuntimeTab(page, 'code');
+  await revealControl(page, 'design-runtime-system-id');
   await expect(page.getByTestId('design-runtime-system-id')).toBeEnabled();
   await page.getByTestId('design-runtime-system-id').fill('acme');
   await page.getByTestId('design-runtime-source-path-0').selectOption('Button.tsx');
@@ -61,7 +93,8 @@ export function Button({ variant = 'primary', disabled = false }: ButtonProps) {
   expect(state.registry?.components).toHaveLength(1);
   const binding = state.bindings.bindings[0]!;
   expect(binding.status).toBe('bound');
-  await expect(page.getByTestId('design-runtime-component-select')).toHaveValue(state.registry!.components[0]!.id);
+  await selectRuntimeComponent(page, state.registry!.components[0]!.id);
+  await revealControl(page, 'design-runtime-unbind');
   await expect(page.getByTestId('design-runtime-unbind')).toBeEnabled();
 
   const unboundResponse = page.waitForResponse((response) => response.request().method() === 'DELETE'
@@ -80,6 +113,7 @@ export function Button({ variant = 'primary', disabled = false }: ButtonProps) {
   const reboundState = (await rebound.json() as ProjectDesignRuntimeResponse).state;
   expect(reboundState.bindings.bindings[0]!.status).toBe('bound');
 
+  await revealControl(page, 'design-runtime-prop-include-variant');
   await page.getByTestId('design-runtime-prop-include-variant').check();
   await page.getByTestId('design-runtime-prop-variant').fill('primary');
   const validatedResponse = page.waitForResponse((response) => response.request().method() === 'POST'
@@ -93,8 +127,10 @@ export function Button({ variant = 'primary', disabled = false }: ButtonProps) {
   // restart and compare-and-swap invariants are covered by daemon-local tests.
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByTestId('design-runtime-entry').click();
-  await expect(page.getByTestId('design-runtime-component-select')).toHaveValue(state.registry!.components[0]!.id);
+  await selectRuntimeComponent(page, state.registry!.components[0]!.id);
+  await revealControl(page, 'design-runtime-unbind');
   await expect(page.getByTestId('design-runtime-unbind')).toBeEnabled();
+  await revealControl(page, 'design-runtime-export-name-0');
   await expect(page.getByTestId('design-runtime-export-name-0')).toHaveValue('Button');
   const persisted = await page.request.get(prefix);
   expect(persisted.ok(), await persisted.text()).toBeTruthy();
@@ -144,7 +180,7 @@ export function Button({ variant = 'primary', disabled = false }: ButtonProps) {
 
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByTestId('design-runtime-entry').click();
-  await page.getByTestId('design-runtime-structure-tab').click();
+  await openRuntimeTab(page, 'structure');
   const structure = page.getByTestId('project-structure-panel');
   await expect(structure).not.toContainText('projectStructure.');
   await page.getByTestId('structure-component-localButton').click();
@@ -182,11 +218,10 @@ export function Button({ variant = 'primary', disabled = false }: ButtonProps) {
 
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByTestId('design-runtime-entry').click();
-  await page.getByTestId('design-runtime-structure-tab').click();
+  await openRuntimeTab(page, 'structure');
   await page.getByTestId('structure-component-localButton').click();
   await expect(page.getByTestId('structure-prop-default-0')).toHaveValue('secondary');
-  const undoButton = page.getByTestId('structure-undo-1');
-  await structure.locator('details').filter({ has: undoButton }).locator('summary').click();
+  const undoButton = await revealControl(page, 'structure-undo-1');
   const undoResponse = page.waitForResponse((response) => response.request().method() === 'POST'
     && new URL(response.url()).pathname === `${prefix}/project-components/localButton/undo`);
   await undoButton.click();
@@ -208,7 +243,7 @@ export function Button({ variant = 'primary', disabled = false }: ButtonProps) {
 
   // Publish and pin through the live version panel. New source and a newer
   // publication must leave the same project on its reviewed exact snapshot.
-  await page.getByTestId('design-runtime-versions-tab').click();
+  await openRuntimeTab(page, 'versions');
   await page.getByTestId('versions-name').fill('Acme UI');
   await page.getByTestId('versions-version').fill('1.0.0');
   await page.getByTestId('versions-source-Button.tsx').check();
@@ -263,7 +298,7 @@ export function Button({ variant = 'primary', disabled = false }: ButtonProps) {
 
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByTestId('design-runtime-entry').click();
-  await page.getByTestId('design-runtime-versions-tab').click();
+  await openRuntimeTab(page, 'versions');
   await expect(page.getByTestId('versions-lock')).toContainText('1.0.0');
   const resolveLockResponse = page.waitForResponse((response) => response.request().method() === 'GET'
     && new URL(response.url()).pathname === `${prefix}/dependency/resolve`);
@@ -361,6 +396,7 @@ export function Button({ variant = 'primary', disabled = false }: ButtonProps) {
   // Render both reviewed versions before applying the migration. These are real
   // framework components in sandboxed frames, using each side's frozen source.
   await page.getByTestId('upgrade-preview').click();
+  await revealControl(page, 'design-preview-kind');
   await page.getByTestId('design-preview-kind').selectOption('semantic-design');
   const upgradePreviewResponse = page.waitForResponse((response) => response.request().method() === 'POST'
     && new URL(response.url()).pathname === `${prefix}/previews`);
@@ -393,7 +429,7 @@ export function Button({ variant = 'primary', disabled = false }: ButtonProps) {
   await paintPreview('proposed', 'applications');
   await page.screenshot({ path: upgradeVisualScreenshot, fullPage: true });
   await testInfo.attach('Real components from current and proposed exact versions', { path: upgradeVisualScreenshot, contentType: 'image/png' });
-  await page.getByTestId('design-runtime-versions-tab').click();
+  await openRuntimeTab(page, 'versions');
   const applyUpgradeResponse = page.waitForResponse((response) => response.request().method() === 'POST'
     && new URL(response.url()).pathname === `${prefix}/upgrades/apply`);
   await page.getByTestId('upgrade-apply').click();
@@ -406,7 +442,7 @@ export function Button({ variant = 'primary', disabled = false }: ButtonProps) {
   expect(upgradedDocument.screens[1]!.children[1]).toMatchObject({ type: 'instance', overrides: [{ value: 'solid' }] });
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByTestId('design-runtime-entry').click();
-  await page.getByTestId('design-runtime-versions-tab').click();
+  await openRuntimeTab(page, 'versions');
   await expect(page.getByTestId('versions-lock')).toContainText('2.0.0');
   // Future unlocked compilation reads the intentionally adopted new production API.
   const adoptSource = await page.request.post(`/api/projects/${projectId}/files`, { data: { name: 'Button.tsx', content: upgradeSource } });
@@ -428,7 +464,7 @@ export function ApplicationCard() { return <SharedButton />; }`,
     const response = await page.request.post(`/api/projects/${projectId}/files`, { data: { name, content } });
     expect(response.ok(), await response.text()).toBeTruthy();
   }
-  await page.getByTestId('design-runtime-handoff-tab').click();
+  await openRuntimeTab(page, 'handoff');
   await page.getByTestId('handoff-framework').selectOption('react');
   const initialHandoffResponse = page.waitForResponse((response) => response.request().method() === 'POST'
     && new URL(response.url()).pathname === `${prefix}/handoffs`);
@@ -457,7 +493,7 @@ export function ApplicationCard() { return <SharedButton />; }`,
   expect(boundLocalState.codeIndex).toEqual(upgradedState.codeIndex);
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByTestId('design-runtime-entry').click();
-  await page.getByTestId('design-runtime-handoff-tab').click();
+  await openRuntimeTab(page, 'handoff');
   const readyHandoffResponse = page.waitForResponse((response) => response.request().method() === 'POST'
     && new URL(response.url()).pathname === `${prefix}/handoffs`);
   await page.getByTestId('handoff-create').click();
@@ -490,7 +526,7 @@ export function ApplicationCard() { return <SharedButton />; }`,
 
   // Persist the project mode through its public settings UI, then validate
   // actual project bytes against the immutable package policy after reopening.
-  await page.getByTestId('design-runtime-validation-tab').click();
+  await openRuntimeTab(page, 'validation');
   await expect(page.getByTestId('validation-mode')).toBeEnabled();
   await page.getByTestId('validation-mode').selectOption('guided');
   const modeResponse = page.waitForResponse((response) => response.request().method() === 'PUT'
@@ -503,7 +539,7 @@ export function ApplicationCard() { return <SharedButton />; }`,
   expect(guidedState.lock).toEqual(upgradedState.lock);
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByTestId('design-runtime-entry').click();
-  await page.getByTestId('design-runtime-validation-tab').click();
+  await openRuntimeTab(page, 'validation');
   await expect(page.getByTestId('validation-mode')).toHaveValue('guided');
   await page.getByTestId('validation-source-Validation.html').check();
   const artifactValidationResponse = page.waitForResponse((response) => response.request().method() === 'POST'
@@ -534,7 +570,7 @@ export function ApplicationCard() { return <SharedButton />; }`,
   const strictValidation = await strictValidationResponse;
   expect(strictValidation.ok(), await strictValidation.text()).toBeTruthy();
   expect((await strictValidation.json() as ProjectDesignRuntimeValidateArtifactsResponse).result).toMatchObject({ mode: 'strict', accepted: false, strictReady: false });
-  await page.getByTestId('design-runtime-versions-tab').click();
+  await openRuntimeTab(page, 'versions');
 
   const clearResponse = page.waitForResponse((response) => response.request().method() === 'DELETE'
     && new URL(response.url()).pathname === `${prefix}/dependency`);
@@ -583,21 +619,25 @@ export const Populated = { args: { title: 'Vue applications' } };`,
   }
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByTestId('design-runtime-entry').click();
+  await openRuntimeTab(page, 'code');
+  await revealControl(page, 'design-runtime-add-source');
   await page.getByTestId('design-runtime-add-source').click();
   await page.getByTestId('design-runtime-source-path-1').selectOption('ReactCard.tsx');
   await page.getByTestId('design-runtime-export-name-1').fill('Card');
+  await revealControl(page, 'design-runtime-metadata-export-1');
   await page.getByTestId('design-runtime-metadata-export-1').fill('CardSlots');
-  await panel.locator('details').filter({ has: page.getByTestId('design-runtime-add-story-source-1') }).locator('summary').click();
+  await revealControl(page, 'design-runtime-add-story-source-1');
   await page.getByTestId('design-runtime-add-story-source-1').click();
   await page.getByTestId('design-runtime-story-source-1-0').selectOption('ReactCard.stories.ts');
   await page.getByTestId('design-runtime-story-export-1-0-0').fill('Populated');
   const reactStoryId = await page.getByTestId('design-runtime-story-id-1-0-0').inputValue();
   await page.getByTestId('design-runtime-add-source').click();
+  await revealControl(page, 'design-runtime-framework-2');
   await page.getByTestId('design-runtime-framework-2').selectOption('vue');
   await page.getByTestId('design-runtime-source-path-2').selectOption('VueCard.vue');
   await expect(page.getByTestId('design-runtime-export-name-2')).toHaveValue('default');
   await page.getByTestId('design-runtime-metadata-export-2').fill('VueSlots');
-  await panel.locator('details').filter({ has: page.getByTestId('design-runtime-add-story-source-2') }).locator('summary').click();
+  await revealControl(page, 'design-runtime-add-story-source-2');
   await page.getByTestId('design-runtime-add-story-source-2').click();
   await page.getByTestId('design-runtime-story-source-2-0').selectOption('VueCard.stories.ts');
   await page.getByTestId('design-runtime-story-export-2-0-0').fill('Populated');
@@ -617,7 +657,8 @@ export const Populated = { args: { title: 'Vue applications' } };`,
   expect(vueCard.props.title!.default).toBe('Vue summary');
   expect(mixedState.document).toEqual(upgradedDocument);
   const cardBinding = mixedState.bindings.bindings.find((entry) => entry.componentRef === `ds:acme/${reactCard.id}`)!;
-  await page.getByTestId('design-runtime-component-select').selectOption(reactCard.id);
+  await selectRuntimeComponent(page, reactCard.id);
+  await revealControl(page, 'design-runtime-unbind');
   const cardUnbindResponse = page.waitForResponse((response) => response.request().method() === 'DELETE'
     && new URL(response.url()).pathname === `${prefix}/bindings/${encodeURIComponent(cardBinding.id)}`);
   await page.getByTestId('design-runtime-unbind').click();
@@ -633,7 +674,8 @@ export const Populated = { args: { title: 'Vue applications' } };`,
     .toMatchObject({ status: 'bound', slotMappings: [{ designSlot: 'body', codeSlot: 'children' }] });
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByTestId('design-runtime-entry').click();
-  await page.getByTestId('design-runtime-component-select').selectOption(vueCard.id);
+  await selectRuntimeComponent(page, vueCard.id);
+  await revealControl(page, 'design-runtime-slot-mapping-body');
   await expect(page.getByTestId('design-runtime-slot-mapping-body')).toHaveValue('default');
   await expect(page.getByTestId('design-runtime-unbind')).toBeEnabled();
   const compilerScreenshot = testInfo.outputPath('mixed-source-compilation.png');
@@ -662,7 +704,7 @@ export const Populated = { args: { title: 'Vue applications' } };`,
   const patternPublication = await patternPublicationResponse.json() as ProjectDesignRuntimePublishVersionResponse;
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByTestId('design-runtime-entry').click();
-  await page.getByTestId('design-runtime-versions-tab').click();
+  await openRuntimeTab(page, 'versions');
   await page.getByTestId('versions-select').selectOption(JSON.stringify(['acme', '3.0.0']));
   await page.getByTestId('versions-range').fill('^3.0.0');
   const patternLockResponse = page.waitForResponse((response) => response.request().method() === 'POST'
@@ -672,7 +714,7 @@ export const Populated = { args: { title: 'Vue applications' } };`,
   expect(patternLock.ok(), await patternLock.text()).toBeTruthy();
   const patternState = (await patternLock.json() as ProjectDesignRuntimeResponse).state;
   expect(patternState.lock.dependencies[0]).toMatchObject({ version: '3.0.0', digest: patternPublication.version.digest });
-  await page.getByTestId('design-runtime-structure-tab').click();
+  await openRuntimeTab(page, 'structure');
   await page.getByTestId('structure-screen-applications').click();
   await page.getByTestId('structure-patterns-open').click();
   await page.getByTestId('pattern-search').fill('resource');
@@ -719,7 +761,7 @@ export const Populated = { args: { title: 'Vue applications' } };`,
   expect(savedPatternState.document!.screens.find((screen) => screen.id === 'dashboard')).toEqual(patternState.document!.screens.find((screen) => screen.id === 'dashboard'));
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByTestId('design-runtime-entry').click();
-  await page.getByTestId('design-runtime-structure-tab').click();
+  await openRuntimeTab(page, 'structure');
   const reopenedPattern = await page.request.get(prefix);
   expect(reopenedPattern.ok(), await reopenedPattern.text()).toBeTruthy();
   expect((await reopenedPattern.json() as ProjectDesignRuntimeResponse).state.document).toEqual(savedPatternState.document);
@@ -727,7 +769,7 @@ export const Populated = { args: { title: 'Vue applications' } };`,
 
   // The next generation can declare future files against saved semantic screens.
   // Keep authoring separate from validation of the files the agent later writes.
-  await page.getByTestId('design-runtime-validation-tab').click();
+  await openRuntimeTab(page, 'validation');
   await page.getByTestId('generation-targets-open').click();
   const generationTargets = { schemaVersion: 1 as const, outputs: [
     { sourcePath: 'Applications.tsx', exportName: 'Applications', screenId: 'applications' },
@@ -747,7 +789,7 @@ export const Populated = { args: { title: 'Vue applications' } };`,
   expect((await savedTargets.json() as ProjectDesignRuntimeResponse).state.generationTargets).toEqual(generationTargets);
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByTestId('design-runtime-entry').click();
-  await page.getByTestId('design-runtime-validation-tab').click();
+  await openRuntimeTab(page, 'validation');
   await page.getByTestId('generation-targets-open').click();
   for (const [index, output] of generationTargets.outputs.entries()) {
     await expect(page.getByTestId(`generation-target-path-${index}`)).toHaveValue(output.sourcePath);
@@ -787,7 +829,7 @@ export const Populated = { args: { title: 'Vue applications' } };`,
   expect(templateStaged.impact.usages.affectedScreens.map((screen) => screen.screenId).sort()).toEqual(['applications', 'dashboard']);
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByTestId('design-runtime-entry').click();
-  await page.getByTestId('design-runtime-structure-tab').click();
+  await openRuntimeTab(page, 'structure');
   await page.getByTestId('structure-component-localButton').click();
   await page.getByTestId('structure-review-impact').click();
   await expect(page.getByTestId('structure-preview')).toBeEnabled({ timeout: T.medium });
@@ -818,6 +860,7 @@ export const Populated = { args: { title: 'Vue applications' } };`,
   await paintPreview('proposed', 'applications');
   await page.screenshot({ path: sharedVisualScreenshot, fullPage: true });
   await testInfo.attach('Shared template change across two real rendered screens', { path: sharedVisualScreenshot, contentType: 'image/png' });
+  await revealControl(page, 'design-preview-kind');
   await page.getByTestId('design-preview-kind').selectOption('production-handoff');
   const staleImplementationResponse = page.waitForResponse((response) => response.request().method() === 'POST'
     && new URL(response.url()).pathname === `${prefix}/previews`);
@@ -840,8 +883,10 @@ export const Populated = { args: { title: 'Vue applications' } };`,
   expect(savedVueDocument.ok(), await savedVueDocument.text()).toBeTruthy();
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.getByTestId('design-runtime-entry').click();
-  await page.getByTestId('design-runtime-preview-tab').click();
+  await openRuntimeTab(page, 'preview');
+  await revealControl(page, 'design-preview-framework');
   await page.getByTestId('design-preview-framework').selectOption('vue');
+  await revealControl(page, 'design-preview-kind');
   await page.getByTestId('design-preview-kind').selectOption('semantic-design');
   await page.getByTestId('design-preview-screen-applications').uncheck();
   await page.getByTestId('design-preview-screen-dashboard').uncheck();

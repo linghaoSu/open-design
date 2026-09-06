@@ -72,6 +72,7 @@ import { useKitModuleUpload } from '../runtime/kit-upload';
 import {
   appendResourceQuery,
   workspaceIdentityCacheKey,
+  workspaceAccountScopedCacheKey,
 } from '../collab/workspace-identity';
 import {
   DesignKitView,
@@ -1512,6 +1513,11 @@ export function FileWorkspace({
   const draggedTabNameRef = useRef<string | null>(null);
   const browserTabSequenceRef = useRef(0);
   const openFileRef = useRef<(name: string) => void>(() => {});
+  const componentPreviewScope = JSON.stringify([projectId, workspaceAccountScopedCacheKey(workspaceContext)]);
+  const componentPreviewSequence = useRef(0);
+  const [componentPreviewRequest, setComponentPreviewRequest] = useState<{
+    scope: string; name: string; request: { exportName?: string; nonce: number };
+  } | null>(null);
   const designFilesNavProjectIdRef = useRef(projectId);
   const designFilesNavRef = useRef<DesignFilesNavState>(createDefaultDesignFilesNavState());
   if (designFilesNavProjectIdRef.current !== projectId) {
@@ -2210,6 +2216,12 @@ export function FileWorkspace({
       return;
     }
     focusWorkspaceTab(tabId);
+  }
+
+  function openComponentSource(sourcePath: string, exportName?: string) {
+    if (!/\.(jsx|tsx)$/i.test(sourcePath) || !files.some((file) => file.name === sourcePath && file.type !== 'dir')) return;
+    setComponentPreviewRequest({ scope: componentPreviewScope, name: sourcePath, request: { exportName, nonce: ++componentPreviewSequence.current } });
+    focusWorkspaceTab(sourcePath);
   }
 
   function activateWorkspaceTabByOffset(offset: number) {
@@ -3366,6 +3378,11 @@ export function FileWorkspace({
       }
       onFileSaved={refreshFilesWithoutResult}
       onOpenFileReplacing={stableOpenFileReplacing}
+      componentPreviewRequest={
+        componentPreviewRequest?.scope === componentPreviewScope && componentPreviewRequest.name === file.name
+          ? componentPreviewRequest.request
+          : null
+      }
       commentPortalId={workspaceActive ? commentPortalId : undefined}
       onCommentModeChange={workspaceActive ? onCommentModeChange : undefined}
       shareRequest={
@@ -4134,6 +4151,7 @@ export function FileWorkspace({
         files={files}
         viewerOnly={viewerOnly}
         onClose={() => setDesignRuntimeOpen(false)}
+        onOpenSource={openComponentSource}
       /> : null}
       {!initialMaterializationPending && launcherOpen ? (
         <TabLauncherMenu

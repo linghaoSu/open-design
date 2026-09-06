@@ -2,6 +2,15 @@ import type { Dict } from './types';
 
 /** English fallback for the design workspace until each locale translates it. */
 export const designWorkspaceFallback: Pick<Dict, Extract<keyof Dict, `designWorkspace.${string}`>> = {
+  "designWorkspace.noMatches": "No components match your search.",
+  "designWorkspace.noComponents": "No components yet. Choose component files above to add your first.",
+  "designWorkspace.backToComponents": "All components",
+  "designWorkspace.migrationStepName": "Name",
+  "designWorkspace.migrationStepFiles": "Files",
+  "designWorkspace.migrationStepReview": "Review",
+  "designWorkspace.lockedRegistry": "This project uses a published version. Manage versions to make an editable copy before adding or changing components.",
+  "designWorkspace.noVersionComponents": "This version contains design foundations, with no code components.",
+  "designWorkspace.openSource": "Open in Files",
   "designWorkspace.overview": "Overview",
   "designWorkspace.more": "More",
   "designWorkspace.startTitle": "Build a consistent design",

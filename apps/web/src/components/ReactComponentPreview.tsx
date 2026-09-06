@@ -17,6 +17,8 @@ interface Props {
   sourcePath: string;
   sourceIdentity: string;
   workspaceContext: WorkspaceCollabContext | null;
+  componentPreviewRequest?: { exportName?: string; nonce: number } | null;
+  layout?: 'workspace' | 'component';
 }
 
 function RuntimeFrame({ bundle, values, retry, title }: { bundle: DesignPreviewBundle; values: PreviewProps; retry: number; title: string }) {
@@ -68,14 +70,14 @@ function editorText(control: ComponentPreviewControl, value: JsonValue | undefin
 }
 
 export function ReactComponentPreview(props: Props) {
-  const identity = JSON.stringify([props.projectId, workspaceAccountScopedCacheKey(props.workspaceContext), props.sourcePath, props.sourceIdentity]);
+  const identity = JSON.stringify([props.projectId, workspaceAccountScopedCacheKey(props.workspaceContext), props.sourcePath, props.sourceIdentity, props.componentPreviewRequest?.nonce, props.componentPreviewRequest?.exportName]);
   return <PreviewContent key={identity} {...props} />;
 }
 
-function PreviewContent({ projectId, sourcePath, workspaceContext }: Props) {
+function PreviewContent({ projectId, sourcePath, workspaceContext, componentPreviewRequest, layout = 'workspace' }: Props) {
   const t = useT();
   const editorId = useId();
-  const [exportName, setExportName] = useState<string>();
+  const [exportName, setExportName] = useState<string | undefined>(componentPreviewRequest?.exportName);
   const [result, setResult] = useState<ComponentPreviewResponse | null>(null);
   const [values, setValues] = useState<PreviewProps>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -117,14 +119,16 @@ function PreviewContent({ projectId, sourcePath, workspaceContext }: Props) {
     setValues((old) => { const next = { ...old }; if (result && Object.hasOwn(result.effectiveProps, name)) next[name] = result.effectiveProps[name]!; else delete next[name]; return next; });
   }
   const reset = () => { setValues({ ...result?.effectiveProps }); setDrafts({}); setInvalid({}); setRetry((old) => old + 1); };
+  const exportSelector = <label className={styles.export}>{t('reactPreview.export')}<select aria-label={t('reactPreview.export')} value={exportName ?? result?.selectedExport ?? ''} disabled={busy || !result?.exports.length} onChange={(event) => setExportName(event.target.value)}>
+    {exportName && !result?.exports.includes(exportName) ? <option value={exportName}>{exportName}</option> : null}
+    {!result?.exports.length ? <option value="">—</option> : result.exports.map((name) => <option key={name} value={name}>{name}</option>)}
+  </select></label>;
 
-  return <section className={styles.panel} data-testid="react-component-preview">
+  return <section className={`${styles.panel}${layout === 'component' ? ` ${styles.component}` : ''}`} data-testid="react-component-preview" data-layout={layout}>
     <div className={styles.toolbar}>
-      <label className={styles.export}>{t('reactPreview.export')}<select aria-label={t('reactPreview.export')} value={exportName ?? result?.selectedExport ?? ''} disabled={busy || !result?.exports.length} onChange={(event) => setExportName(event.target.value)}>
-        {!result?.exports.length ? <option value="">—</option> : result.exports.map((name) => <option key={name} value={name}>{name}</option>)}
-      </select></label>
-      <Button disabled={!result?.bundle} onClick={reset}>{t('reactPreview.reset')}</Button>
-      <Button disabled={busy} onClick={() => result?.bundle ? setRetry((old) => old + 1) : setBuildRetry((old) => old + 1)}>{t('reactPreview.retry')}</Button>
+      {layout === 'component' ? <details className={styles.exportOptions}><summary>{t('reactPreview.export')}</summary>{exportSelector}</details> : exportSelector}
+      <Button className={layout === 'component' ? styles.compactAction : undefined} disabled={!result?.bundle} onClick={reset}>{t('reactPreview.reset')}</Button>
+      <Button className={layout === 'component' ? styles.compactAction : undefined} disabled={busy} onClick={() => result?.bundle ? setRetry((old) => old + 1) : setBuildRetry((old) => old + 1)}>{t('reactPreview.retry')}</Button>
     </div>
     {busy ? <p role="status">{t('reactPreview.building')}</p> : null}
     {failure ? <p role="alert" className={styles.error}>{failure}</p> : null}

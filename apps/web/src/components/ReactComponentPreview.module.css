@@ -20,3 +20,18 @@
 .diagnostics ul{padding-left:20px}
 .unavailable{font-size:13px;padding:12px;flex:1}
 @media(max-width:800px){.content{flex-direction:column;overflow:auto}.props{flex:none;max-height:230px;border-right:0;border-bottom:1px solid var(--border);padding:0 0 12px}.runtime{min-height:300px;flex:1}.panel{overflow:auto}}
+
+/* Embedded component details own their scrolling; this layout follows their
+   available width independently of the standalone viewer's viewport rules. */
+.panel.component { container-type: inline-size; height: auto; min-width: 0; overflow: visible; padding: 0; gap: 12px; }
+.component .toolbar { align-items: center; gap: 6px; }
+.component .compactAction { height: 30px; min-height: 30px; padding: 4px 9px; font-size: 12px; }
+.exportOptions { flex: 1; min-width: 0; font-size: 12px; color: var(--text-muted); }
+.exportOptions > summary { cursor: pointer; overflow-wrap: anywhere; }
+.exportOptions[open] { flex-basis: 100%; }
+.exportOptions .export { margin-top: 8px; min-width: 0; }
+.component .content { flex: none; flex-direction: column; min-width: 0; overflow: visible; gap: 16px; }
+.component .runtime { order: -1; flex: none; min-height: 0; }
+.component .canvas { flex: none; height: 200px; min-height: 180px; }
+.component .props { flex: none; max-height: none; overflow: visible; border: 0; border-top: 1px solid var(--border); padding: 14px 0 0; }
+.component .unavailable { order: -1; flex: none; }

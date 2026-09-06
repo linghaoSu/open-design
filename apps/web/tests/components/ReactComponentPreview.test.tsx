@@ -19,6 +19,57 @@ function report(status: string, revision = 1, overrides: Partial<MessageEventIni
 }
 
 describe('standalone React component preview', () => {
+  it('embeds real preview and props with a collapsed export selector without restarting the frame when layout changes', async () => {
+    const request = { exportName: 'CompactCard', nonce: 0 };
+    vi.mocked(provider.createReactComponentPreview).mockResolvedValue(componentPreviewFixture({ requestedExport: 'CompactCard', selectedExport: 'CompactCard' }));
+    const view = render(<ReactComponentPreview {...props} layout="component" componentPreviewRequest={request} />);
+    await screen.findByTestId('react-component-preview-frame');
+    const originalFrame = frame();
+    const picker = screen.getByLabelText('Component export');
+    expect(picker).not.toBeVisible();
+    expect(picker.closest('details')?.open).toBe(false);
+    expect(screen.getByLabelText('title')).toBeVisible();
+    expect(provider.createReactComponentPreview).toHaveBeenLastCalledWith(expect.any(Object), { sourcePath: 'Card.tsx', exportName: 'CompactCard' });
+    const post = vi.spyOn(originalFrame.contentWindow!, 'postMessage');
+    fireEvent.change(screen.getByLabelText('title'), { target: { value: 'Inline title' } });
+    fireEvent.change(screen.getByLabelText('items'), { target: { value: '[{"label":"Inline item"}]' } });
+    expect(post.mock.calls.at(-1)?.[0].props).toMatchObject({ title: 'Inline title', items: [{ label: 'Inline item' }] });
+    expect(provider.createReactComponentPreview).toHaveBeenCalledOnce();
+    view.rerender(<ReactComponentPreview {...props} componentPreviewRequest={request} />);
+    expect(screen.getByLabelText('Component export')).toBeVisible();
+    expect(frame()).toBe(originalFrame);
+    expect(screen.getByLabelText('title')).toHaveValue('Inline title');
+    fireEvent.click(screen.getByRole('button', { name: 'Reset props' }));
+    expect(post.mock.calls.at(-1)?.[0].props).toEqual(componentPreviewFixture().effectiveProps);
+    expect(provider.createReactComponentPreview).toHaveBeenCalledOnce();
+  });
+  it('opens the requested named export and reapplies repeated requests for the same file', async () => {
+    vi.mocked(provider.createReactComponentPreview).mockResolvedValue(componentPreviewFixture({ requestedExport: 'CompactCard', selectedExport: 'CompactCard' }));
+    const view = render(<ReactComponentPreview {...props} componentPreviewRequest={{ exportName: 'CompactCard', nonce: 1 }} />);
+    await screen.findByLabelText('title');
+    expect(provider.createReactComponentPreview).toHaveBeenLastCalledWith(expect.any(Object), { sourcePath: 'Card.tsx', exportName: 'CompactCard' });
+    expect(screen.getByLabelText('Component export')).toHaveValue('CompactCard');
+    fireEvent.change(screen.getByLabelText('title'), { target: { value: 'Previous request draft' } });
+    view.rerender(<ReactComponentPreview {...props} componentPreviewRequest={{ exportName: 'CompactCard', nonce: 2 }} />);
+    await waitFor(() => expect(screen.getByLabelText('title')).toHaveValue('Sample title'));
+    expect(provider.createReactComponentPreview).toHaveBeenCalledTimes(2);
+  });
+  it.each(['workspace', 'component'] as const)('keeps an unavailable requested export with diagnostics instead of falling back in %s layout', async (layout) => {
+    vi.mocked(provider.createReactComponentPreview).mockResolvedValue(componentPreviewFixture({
+      requestedExport: 'MissingCard', selectedExport: null, bundle: null, controls: [], effectiveProps: {}, mockProps: {}, callbacks: [],
+      diagnostics: [{ schemaVersion: 1, code: 'ODDS8002', severity: 'error', message: 'Export MissingCard is not a component candidate.' }],
+    }));
+    render(<ReactComponentPreview {...props} layout={layout} componentPreviewRequest={{ exportName: 'MissingCard', nonce: 1 }} />);
+    expect(await screen.findByText('Export MissingCard is not a component candidate.')).toBeVisible();
+    expect(provider.createReactComponentPreview).toHaveBeenLastCalledWith(expect.any(Object), { sourcePath: 'Card.tsx', exportName: 'MissingCard' });
+    expect(screen.getByLabelText('Component export')).toHaveValue('MissingCard');
+    expect(screen.queryByTestId('react-component-preview-frame')).toBeNull();
+    if (layout === 'component') fireEvent.click(screen.getByLabelText('Component export').closest('details')!.querySelector('summary')!);
+    vi.mocked(provider.createReactComponentPreview).mockResolvedValue(componentPreviewFixture({ requestedExport: 'CompactCard', selectedExport: 'CompactCard' }));
+    fireEvent.change(screen.getByLabelText('Component export'), { target: { value: 'CompactCard' } });
+    await screen.findByTestId('react-component-preview-frame');
+    expect(provider.createReactComponentPreview).toHaveBeenLastCalledWith(expect.any(Object), { sourcePath: 'Card.tsx', exportName: 'CompactCard' });
+  });
   it('automatically loads mocks, preserves source defaults, and edits typed props without recompiling', async () => {
     render(<ReactComponentPreview {...props} />);
     await screen.findByTestId('react-component-preview-frame');

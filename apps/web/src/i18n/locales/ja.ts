@@ -1,6 +1,15 @@
 import type { Dict } from '../types';
 
 export const ja: Dict = {
+  "designWorkspace.noMatches": "検索に一致するコンポーネントがありません。",
+  "designWorkspace.noComponents": "まだコンポーネントはありません。上のファイル管理から追加できます。",
+  "designWorkspace.backToComponents": "コンポーネント一覧",
+  "designWorkspace.migrationStepName": "名前",
+  "designWorkspace.migrationStepFiles": "ファイル",
+  "designWorkspace.migrationStepReview": "レビュー",
+  "designWorkspace.lockedRegistry": "公開済みバージョンを使用しています。コンポーネントの追加・変更には、バージョン管理で依存関係を解除し編集可能なコピーにしてください。",
+  "designWorkspace.noVersionComponents": "このバージョンにはデザイン基盤が含まれていますが、コードコンポーネントはありません。",
+  "designWorkspace.openSource": "ファイルで開く",
   "designWorkspace.overview": "概要",
   "designWorkspace.more": "その他",
   "designWorkspace.startTitle": "一貫したデザインを作成",

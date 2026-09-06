@@ -38,7 +38,9 @@ import {
 import { IframeKeepAliveProvider } from '../../src/components/IframeKeepAlivePool';
 import { navigate } from '../../src/router';
 import * as designRuntimeProvider from '../../src/providers/design-runtime';
-import { emptyDesignRuntimeState } from '../helpers/design-runtime-fixtures';
+import { designRuntimeState, emptyDesignRuntimeState } from '../helpers/design-runtime-fixtures';
+import { componentPreviewFixture } from '../helpers/react-component-preview-fixtures';
+import * as componentPreviewProvider from '../../src/providers/react-component-preview';
 
 describe('settleManualEditExit', () => {
   it.each([
@@ -1361,6 +1363,40 @@ describe('FileWorkspace upload input', () => {
 });
 
 describe('FileWorkspace launcher tab creation', () => {
+  it('opens the component source and exact export from Design system, including a repeated request from Source mode', async () => {
+    const sourceFile: ProjectFile = { ...workspaceFile('src/Button.tsx'), kind: 'code', mime: 'text/tsx' };
+    mockedFetchProjectFileText.mockResolvedValue('export function Button({ title }: { title: string }) { return <button>{title}</button>; }');
+    const state = designRuntimeState();
+    state.codeIndex.components.push({ ...state.codeIndex.components[0]!, id: 'code/Replacement', name: 'Replacement', sourcePath: 'src/Replacement.tsx', exportName: 'Replacement' });
+    state.bindings.bindings[0] = { ...state.bindings.bindings[0]!, status: 'bound', verified: true, codeComponentId: 'code/Replacement' };
+    vi.spyOn(designRuntimeProvider, 'getProjectDesignRuntime').mockResolvedValue({ state });
+    const preview = vi.spyOn(componentPreviewProvider, 'createReactComponentPreview').mockImplementation(async (_scope, request) => componentPreviewFixture({
+      projectId: 'project-1', sourcePath: sourceFile.name, exports: ['Button', 'CompactCard'],
+      ...(request.exportName ? { requestedExport: request.exportName } : {}), selectedExport: request.exportName ?? 'Button',
+    }));
+    function Harness() {
+      const [tabsState, setTabsState] = useState<OpenTabsState>({ tabs: [], active: null });
+      return <FileWorkspace projectId="project-1" projectKind="prototype" files={[sourceFile]} liveArtifacts={[]}
+        onRefreshFiles={vi.fn()} isDeck={false} tabsState={tabsState} onTabsStateChange={setTabsState} />;
+    }
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId('design-runtime-entry'));
+    fireEvent.click(await screen.findByTestId('design-runtime-preview-source'));
+    await screen.findByTestId('react-component-preview-frame');
+    expect(screen.queryByTestId('design-runtime-panel')).toBeNull();
+    expect(screen.getByRole('tab', { name: /Button.tsx/ })).toHaveAttribute('aria-selected', 'true');
+    expect(preview).toHaveBeenLastCalledWith(expect.objectContaining({ projectId: 'project-1' }), { sourcePath: 'src/Button.tsx', exportName: 'Button' });
+    expect(screen.getByLabelText('Component export')).toHaveValue('Button');
+    fireEvent.change(screen.getByLabelText('Component export'), { target: { value: 'CompactCard' } });
+    await waitFor(() => expect(preview.mock.calls.at(-1)?.[1].exportName).toBe('CompactCard'));
+    fireEvent.click(screen.getByRole('button', { name: 'Code' }));
+    expect(screen.queryByTestId('react-component-preview-frame')).toBeNull();
+    fireEvent.click(screen.getByTestId('design-runtime-entry'));
+    fireEvent.click(await screen.findByTestId('design-runtime-preview-source'));
+    await screen.findByTestId('react-component-preview-frame');
+    expect(screen.getByLabelText('Component export')).toHaveValue('Button');
+    expect(preview.mock.calls.at(-1)?.[1]).toEqual({ sourcePath: 'src/Button.tsx', exportName: 'Button' });
+  });
   it('opens Design system in the workspace while retaining the active HTML frame and restores file actions on close', async () => {
     const file = workspaceFile('artifact.html');
     mockedFetchProjectFileText.mockResolvedValue('<html><body>artifact</body></html>');

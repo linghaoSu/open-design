@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectDesignRuntimeResponse } from '@open-design/contracts';
 import { DesignRuntimePanel } from '../../src/components/DesignRuntimePanel';
+import { ReactComponentPreview } from '../../src/components/ReactComponentPreview';
 import * as provider from '../../src/providers/design-runtime';
 import { designRuntimeState, emptyDesignRuntimeState } from '../helpers/design-runtime-fixtures';
 import { workspaceContextFixture } from '../helpers/workspace-context';
@@ -14,6 +15,7 @@ vi.mock('../../src/providers/design-runtime', async () => ({
   revalidateProjectDesignRuntimeBinding: vi.fn(), resolveProjectDesignRuntimeBinding: vi.fn(),
   validateProjectDesignRuntimeUsage: vi.fn(),
 }));
+vi.mock('../../src/components/ReactComponentPreview', () => ({ ReactComponentPreview: vi.fn(() => <div data-testid="inline-component-preview" />) }));
 
 const workspaceContext = workspaceContextFixture({ workspaceId: 'workspace-a', workspaceMemberId: 'member-a' });
 const panelProps = {
@@ -81,9 +83,9 @@ describe('DesignRuntimePanel', () => {
 
   it('shows registered components while leaving registration, binding and usage forms collapsed', async () => {
     render(<DesignRuntimePanel {...panelProps} />);
-    await openCode();
+    await waitFor(() => expect(screen.getByTestId('design-runtime-code-tab')).toHaveAttribute('aria-selected', 'true'));
 
-    expect(screen.getByTestId('design-runtime-component-select')).toBeVisible();
+    expect(screen.getByTestId('design-runtime-component-select-button')).toBeVisible();
     for (const id of ['design-runtime-compile', 'design-runtime-bind', 'design-runtime-validate']) {
       expect(screen.getByTestId(id)).not.toBeVisible();
       expect(screen.getByTestId(id).closest('details')?.open).toBe(false);
@@ -92,6 +94,103 @@ describe('DesignRuntimePanel', () => {
     expect(provider.compileProjectDesignRuntime).not.toHaveBeenCalled();
     expect(provider.putProjectDesignRuntimeBinding).not.toHaveBeenCalled();
     expect(provider.validateProjectDesignRuntimeUsage).not.toHaveBeenCalled();
+  });
+
+  it('keeps the selected component and its draft through search and list/detail navigation', async () => {
+    render(<DesignRuntimePanel {...panelProps} />);
+    await openCode();
+    const row = screen.getByTestId('design-runtime-component-select-button');
+    fireEvent.click(row);
+    expect(screen.getByTestId('design-runtime-catalog')).toHaveAttribute('data-view', 'detail');
+    expect(screen.getByRole('heading', { name: 'Button', level: 3 })).toHaveFocus();
+    const draft = control('design-runtime-value-transform-variant') as HTMLTextAreaElement;
+    fireEvent.change(draft, { target: { value: '{ "valueTransform":' } });
+    fireEvent.click(screen.getByTestId('design-runtime-back-to-components'));
+    expect(row).toHaveFocus();
+    fireEvent.change(screen.getByTestId('design-runtime-component-search'), { target: { value: 'no match' } });
+    expect(screen.getByText('No components match your search.')).toBeVisible();
+    expect(screen.queryByTestId('design-runtime-component-select-button')).toBeNull();
+    fireEvent.change(screen.getByTestId('design-runtime-component-search'), { target: { value: '' } });
+    fireEvent.click(screen.getByTestId('design-runtime-component-select-button'));
+    expect(control('design-runtime-value-transform-variant')).toBe(draft);
+    expect(draft.value).toBe('{ "valueTransform":');
+    expect(provider.putProjectDesignRuntimeBinding).not.toHaveBeenCalled();
+  });
+
+  it('opens the selected local JSX/TSX export for real preview without using an alternate binding target', async () => {
+    const onOpenSource = vi.fn();
+    render(<DesignRuntimePanel {...panelProps} onOpenSource={onOpenSource} />);
+    await openCode();
+    fireEvent.click(screen.getByTestId('design-runtime-preview-source'));
+    expect(onOpenSource).toHaveBeenCalledWith('src/Button.tsx', 'Button');
+  });
+
+  it('renders the actual source preview inline with current scope and keeps it mounted across navigation', async () => {
+    render(<DesignRuntimePanel {...panelProps} />);
+    await openCode();
+    const preview = screen.getByTestId('inline-component-preview');
+    expect(vi.mocked(ReactComponentPreview).mock.calls.at(-1)?.[0]).toMatchObject({ layout: 'component', projectId: panelProps.projectId, workspaceContext, sourcePath: 'src/Button.tsx', componentPreviewRequest: { exportName: 'Button', nonce: 0 } });
+    fireEvent.click(screen.getByTestId('design-runtime-overview-tab'));
+    expect(preview).not.toBeVisible();
+    fireEvent.click(screen.getByTestId('design-runtime-code-tab'));
+    expect(screen.getByTestId('inline-component-preview')).toBe(preview);
+    expect(preview).toBeVisible();
+  });
+
+  it.each(['package/Button.tsx', 'src/Button.ts'])('does not offer an unavailable source preview for %s', async (sourcePath) => {
+    const state = designRuntimeState();
+    state.registry!.components[0]!.source = { kind: 'typescript', sourcePath, exportName: 'Button' };
+    vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state });
+    render(<DesignRuntimePanel {...panelProps} onOpenSource={vi.fn()} />);
+    await openCode();
+    expect(screen.queryByTestId('design-runtime-preview-source')).toBeNull();
+    expect(screen.queryByTestId('inline-component-preview')).toBeNull();
+  });
+
+  it('does not silently preview another export when the component source has no export identity', async () => {
+    const state = designRuntimeState();
+    delete state.registry!.components[0]!.source!.exportName;
+    vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state });
+    render(<DesignRuntimePanel {...panelProps} onOpenSource={vi.fn()} />);
+    await openCode();
+    expect(screen.queryByTestId('design-runtime-preview-source')).toBeNull();
+    expect(screen.queryByTestId('inline-component-preview')).toBeNull();
+  });
+
+  it('opens an existing token-only system on the component empty state', async () => {
+    const state = designRuntimeState();
+    state.registry!.components = [];
+    vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state });
+    render(<DesignRuntimePanel {...panelProps} />);
+    await waitFor(() => expect(screen.getByTestId('design-runtime-code-tab')).toHaveAttribute('aria-selected', 'true'));
+    expect(screen.getByText('No components yet. Choose component files above to add your first.')).toBeVisible();
+    expect(screen.getByTestId('design-runtime-start-migration')).not.toBeVisible();
+  });
+
+  it('explains an active token-only version and disables registration until its dependency is managed', async () => {
+    const state = designRuntimeState();
+    state.registry!.components = [];
+    state.lock.dependencies = [{ designSystemId: 'test', version: '1.0.0', digest: `sha256:${'a'.repeat(64)}`, source: { type: 'bundle', digest: `sha256:${'b'.repeat(64)}` } }];
+    vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state });
+    render(<DesignRuntimePanel {...panelProps} />);
+    await openCode();
+    expect(screen.getByText('This version contains design foundations, with no code components.')).toBeVisible();
+    expect(screen.getByTestId('design-runtime-manage-version')).toBeVisible();
+    expect(control('design-runtime-compile')).toBeDisabled();
+    fireEvent.submit(screen.getByTestId('design-runtime-compile').closest('form')!);
+    expect(provider.compileProjectDesignRuntime).not.toHaveBeenCalled();
+  });
+
+  it('chooses the first view after a failed initial read is explicitly retried, without resetting later navigation', async () => {
+    vi.mocked(provider.getProjectDesignRuntime).mockRejectedValueOnce(new Error('Offline'));
+    render(<DesignRuntimePanel {...panelProps} />);
+    await screen.findByRole('alert');
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(screen.getByTestId('design-runtime-code-tab')).toHaveAttribute('aria-selected', 'true'));
+    fireEvent.click(screen.getByTestId('design-runtime-overview-tab'));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled());
+    expect(screen.getByTestId('design-runtime-overview-tab')).toHaveAttribute('aria-selected', 'true');
   });
 
   it('opens the first registry connection problem on its exact framework target without changing bindings', async () => {
@@ -114,13 +213,15 @@ describe('DesignRuntimePanel', () => {
     render(<DesignRuntimePanel {...panelProps} files={[...panelProps.files, { name: 'src/Card.vue' }]} />);
     await waitFor(() => expect((screen.getByTestId('design-runtime-repair-connections') as HTMLButtonElement).disabled).toBe(false));
 
+    fireEvent.click(screen.getByTestId('design-runtime-overview-tab'));
     expect(screen.getByText('1 connections need to be checked before use.')).toBeVisible();
-    expect((screen.getByTestId('design-runtime-component-select') as HTMLSelectElement).value).toBe('button');
+    expect(screen.getByTestId('design-runtime-component-select-button')).toHaveAttribute('aria-pressed', 'true');
     expect((screen.getByTestId('design-runtime-connections') as HTMLDetailsElement).open).toBe(false);
+    fireEvent.click(screen.getByTestId('design-runtime-overview-tab'));
     fireEvent.click(screen.getByTestId('design-runtime-repair-connections'));
 
     expect(screen.getByTestId('design-runtime-code-tab').getAttribute('aria-selected')).toBe('true');
-    expect((screen.getByTestId('design-runtime-component-select') as HTMLSelectElement).value).toBe('card');
+    expect(screen.getByTestId('design-runtime-component-select-card')).toHaveAttribute('aria-pressed', 'true');
     expect((screen.getByTestId('design-runtime-connections') as HTMLDetailsElement).open).toBe(true);
     expect(screen.getByTestId('design-runtime-code-select')).toBeVisible();
     expect((screen.getByTestId('design-runtime-code-select') as HTMLSelectElement).value).toBe('code/VueCard');
@@ -146,6 +247,7 @@ describe('DesignRuntimePanel', () => {
     await waitFor(() => expect((screen.getByTestId('design-runtime-repair-connections') as HTMLButtonElement).disabled).toBe(false));
     expect(screen.getByTestId('design-runtime-binding-status')).toHaveTextContent('Bound');
 
+    fireEvent.click(screen.getByTestId('design-runtime-overview-tab'));
     fireEvent.click(screen.getByTestId('design-runtime-repair-connections'));
 
     expect(screen.getByTestId('design-runtime-code-tab').getAttribute('aria-selected')).toBe('true');
@@ -207,7 +309,7 @@ describe('DesignRuntimePanel', () => {
     vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state });
     render(<DesignRuntimePanel {...panelProps} />);
     await openCode();
-    await screen.findByTestId('design-runtime-component-select');
+    await screen.findByTestId('design-runtime-component-select-button');
     expect((control('design-runtime-value-transform-variant') as HTMLTextAreaElement).value).toContain('valueTransform');
     expect((control('design-runtime-value-transform-disabled') as HTMLTextAreaElement).value).toContain('values');
     fireEvent.click(control('design-runtime-bind'));
@@ -221,7 +323,7 @@ describe('DesignRuntimePanel', () => {
     vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state });
     render(<DesignRuntimePanel {...panelProps} />);
     await openCode();
-    await screen.findByTestId('design-runtime-component-select');
+    await screen.findByTestId('design-runtime-component-select-button');
     fireEvent.click(control('design-runtime-validate'));
     await waitFor(() => expect(provider.validateProjectDesignRuntimeUsage).toHaveBeenCalledOnce());
     expect(vi.mocked(provider.validateProjectDesignRuntimeUsage).mock.calls[0]![1].props).toEqual({ [name]: false });
@@ -359,11 +461,11 @@ describe('DesignRuntimePanel', () => {
     }] });
     render(<DesignRuntimePanel {...panelProps} viewerOnly />);
     await openCode();
-    await screen.findByTestId('design-runtime-component-select');
+    await screen.findByTestId('design-runtime-component-select-button');
     expect(screen.getByText(/Read-only access/)).toBeTruthy();
     expect(control('design-runtime-compile').closest('fieldset')?.disabled).toBe(true);
     for (const action of ['bind', 'unbind', 'revalidate']) expect((control(`design-runtime-${action}`) as HTMLButtonElement).disabled).toBe(true);
-    expect((control('design-runtime-component-select') as HTMLSelectElement).disabled).toBe(false);
+    expect((control('design-runtime-component-select-button') as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(control('design-runtime-prop-include-variant'));
     fireEvent.change(control('design-runtime-prop-variant'), { target: { value: 'filled' } });
     fireEvent.click(control('design-runtime-validate'));
@@ -402,11 +504,11 @@ describe('DesignRuntimePanel', () => {
       : { ...panelProps, workspaceContext: workspaceContextFixture({ workspaceId: 'workspace-b', workspaceMemberId: 'member-b' }) };
     rerender(<DesignRuntimePanel {...nextProps} />);
     await openCode();
-    await waitFor(() => expect((control('design-runtime-component-select') as HTMLSelectElement).selectedOptions[0]?.textContent).toBe('Current component'));
+    await waitFor(() => expect(control('design-runtime-component-select-button')).toHaveTextContent('Current componentButton'));
     const oldState = designRuntimeState(99);
     oldState.registry!.components[0]!.name = 'Old component';
     await act(async () => old.resolve({ state: oldState }));
-    expect((control('design-runtime-component-select') as HTMLSelectElement).selectedOptions[0]?.textContent).toBe('Current component');
+    expect(control('design-runtime-component-select-button')).toHaveTextContent('Current componentButton');
     expect(screen.queryByText('Old component')).toBeNull();
     expect(vi.mocked(provider.getProjectDesignRuntime).mock.calls[0]![0].signal?.aborted).toBe(true);
     expect(vi.mocked(provider.getProjectDesignRuntime).mock.calls[1]![0]).toMatchObject({ projectId: nextProps.projectId, workspaceContext: nextProps.workspaceContext });
@@ -424,9 +526,9 @@ describe('DesignRuntimePanel', () => {
     vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state: current });
     rerender(<DesignRuntimePanel {...panelProps} projectId="project-b" />);
     await openCode();
-    await waitFor(() => expect((control('design-runtime-component-select') as HTMLSelectElement).selectedOptions[0]?.textContent).toBe('Current component'));
+    await waitFor(() => expect(control('design-runtime-component-select-button')).toHaveTextContent('Current componentButton'));
     await act(async () => old.resolve({ state: designRuntimeState(99) }));
-    expect((control('design-runtime-component-select') as HTMLSelectElement).selectedOptions[0]?.textContent).toBe('Current component');
+    expect(control('design-runtime-component-select-button')).toHaveTextContent('Current componentButton');
     expect(screen.queryByText('Changes saved.')).toBeNull();
   });
 
@@ -436,7 +538,7 @@ describe('DesignRuntimePanel', () => {
     }));
     const { unmount } = render(<DesignRuntimePanel {...panelProps} />);
     await openCode();
-    await screen.findByTestId('design-runtime-component-select');
+    await screen.findByTestId('design-runtime-component-select-button');
     fireEvent.change(control('design-runtime-export-name-0'), { target: { value: 'DraftButton' } });
     vi.mocked(provider.getProjectDesignRuntime).mockResolvedValue({ state: designRuntimeState(7) });
     fireEvent.click(control('design-runtime-compile'));
@@ -456,7 +558,7 @@ describe('DesignRuntimePanel', () => {
     }));
     render(<DesignRuntimePanel {...panelProps} />);
     await openCode();
-    await screen.findByTestId('design-runtime-component-select');
+    await screen.findByTestId('design-runtime-component-select-button');
     vi.mocked(provider.getProjectDesignRuntime).mockRejectedValueOnce(new Error('Refresh unavailable.'));
     fireEvent.click(control('design-runtime-compile'));
     await screen.findByText('Revision changed. Refresh unavailable.');

@@ -1,4 +1,8 @@
-.panel, .review { display: grid; gap: 14px; min-width: 0; }
+.panel, .review { display: grid; gap: 20px; min-width: 0; }
+.panel { max-width: 760px; margin-inline: auto; }
+.heading { display: grid; gap: 8px; }
+.heading h3 { font-size: 20px; font-weight: 600; letter-spacing: -0.3px; }
+.heading .muted { max-width: 600px; font-size: 13px; }
 .panel h3, .panel h4, .panel p, .panel dl { margin: 0; }
 .panel p, .panel li { line-height: 1.5; }
 .panel fieldset { margin: 0; border: 0; padding: 0; min-width: 0; }
@@ -20,8 +24,22 @@
 .counts dd { margin: 4px 0 0; font-size: 20px; font-weight: 600; }
 .review { border-top: 1px solid var(--border); padding-top: 16px; }
 .error { color: var(--red, #b42318); }
-.step { display: grid; gap: 14px; min-width: 0; padding: 18px; border: 1px solid var(--border); border-radius: 10px; }
-.step > h4 { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.progress { display: flex; margin: 4px 0 0; padding: 0; list-style: none; gap: 16px; }
+.progressStep { display: flex; flex: 1; align-items: center; min-width: 0; gap: 8px; padding-bottom: 14px; border-bottom: 2px solid var(--border-soft); color: var(--text-muted); font-size: 12px; }
+.progressStep[aria-current='step'] { color: var(--text-strong); border-color: var(--accent); font-weight: 600; }
+.progressStep[data-complete='true'] { border-color: var(--border); }
 .stepNumber { display: inline-grid; place-items: center; width: 23px; height: 23px; flex: 0 0 23px; border-radius: 50%; background: var(--bg-subtle); color: var(--text-muted); font-size: 12px; }
+.progressStep[aria-current='step'] .stepNumber { background: var(--accent-soft); color: var(--text-strong); }
+.step { display: grid; align-content: start; gap: 18px; min-width: 0; min-height: 180px; padding: 8px 0; }
+.step[hidden] { display: none; }
+.step > h4 { color: var(--text-strong); font-size: 16px; font-weight: 600; }
+.step > h4:focus { outline: none; }
+.navigation { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 18px; border-top: 1px solid var(--border-soft); }
+.navigation > .actions { justify-content: flex-end; }
 .advanced { margin-top: 2px; padding-top: 8px; border-top: 1px solid var(--border-soft); }
 .advanced > .fields { margin: 12px 0; }
+@media (max-width: 480px) {
+  .progress { gap: 8px; }
+  .progressStep { gap: 6px; }
+  .navigation { align-items: flex-start; }
+}
