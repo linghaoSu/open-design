@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { Button } from '@open-design/components';
+import { Button, Input, VisuallyHidden } from '@open-design/components';
 import type {
   CodeComponentDefinition,
   ComponentBinding,
@@ -161,8 +161,9 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
   const componentRef = selectedComponent && state?.registry ? `ds:${state.registry.id}/${selectedComponent.id}` : '';
   const binding = state?.bindings.bindings.find((candidate) => candidate.componentRef === componentRef
     && candidate.framework === (selectedCode?.framework ?? bindingFramework));
+  const searchQuery = query.trim().toLowerCase();
   const visibleComponents = state?.registry?.components.filter((component) =>
-    `${component.name} ${component.id}`.toLowerCase().includes(query.toLowerCase())) ?? [];
+    `${component.name} ${component.source?.exportName ?? ''} ${component.id}`.toLowerCase().includes(searchQuery)) ?? [];
   const registryLocked = !!state?.lock.dependencies.length;
   const previewSource = selectedComponent?.source?.exportName && /\.[jt]sx$/.test(selectedComponent.source.sourcePath ?? '')
     && files.some((file) => file.type !== 'dir' && file.name === selectedComponent.source?.sourcePath)
@@ -366,7 +367,7 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
         {state ? <DesignSystemOverview state={state} hasLegacyFiles={files.some((file) => isLegacyDesignSource(file.name))} hasSourceFiles={sourceFiles.length > 0} disabled={busy || structureBusy} onNavigate={navigate} onRepair={(id, target) => { selectComponent(id, state, target); setComponentView('detail'); setConnectionsOpen(true); navigate('code'); }} /> : null}
       </div>
       <div id={`${inputId}-code`} role="tabpanel" aria-labelledby={`${inputId}-code-tab`} hidden={tab !== 'code'}>
-      <p className={styles.sectionIntro}>{t('designWorkspace.componentsHint')}</p>
+      {!state?.registry ? <p className={styles.sectionIntro}>{t('designWorkspace.componentsHint')}</p> : null}
       {registryLocked ? <div className={styles.versionNotice} data-testid="design-runtime-locked-registry"><p>{t('designWorkspace.lockedRegistry')}</p><Button variant="ghost" disabled={busy || structureBusy} data-testid="design-runtime-manage-version" onClick={() => navigate('versions')}>{t('designVersions.title')}<Icon name="arrow-right" size={14} /></Button></div> : null}
       <div className={styles.columns}>
         <details className={styles.sourceSetup} open={!state?.registry} data-testid="design-runtime-source-setup">
@@ -392,9 +393,9 @@ function DesignRuntimePanelContent({ projectId, workspaceContext, files, viewerO
         <div className={styles.catalog} data-view={componentView} data-empty={!state?.registry?.components.length} data-testid="design-runtime-catalog">
           {!state?.registry ? null : <>
             <div className={styles.componentList} ref={componentList}>
-              <div className={styles.listHeading}><h3>{t('designRuntime.components')}</h3><span>{state.registry.components.length}</span></div>
-              <label className={styles.field}>{t('common.search')}
-                <input type="search" data-testid="design-runtime-component-search" value={query} onChange={(event) => setQuery(event.target.value)} />
+              <div className={styles.listHeading}><h3>{t('designRuntime.components')}</h3><span data-testid="design-runtime-component-count" aria-live="polite">{searchQuery ? `${visibleComponents.length} / ${state.registry.components.length}` : state.registry.components.length}</span></div>
+              <label className={styles.componentSearch}><VisuallyHidden>{t('common.search')}</VisuallyHidden><Icon name="search" size={15} />
+                <Input type="search" placeholder={t('common.search')} data-testid="design-runtime-component-search" value={query} onChange={(event) => setQuery(event.target.value)} />
               </label>
               <div className={styles.componentRows} aria-label={t('designRuntime.components')}>
                 {visibleComponents.map((component) => <Button key={component.id} variant="ghost" className={styles.componentRow} data-testid={`design-runtime-component-select-${component.id}`} aria-pressed={componentId === component.id} aria-controls={`${inputId}-component-detail`} disabled={busy} onClick={() => browseComponent(component.id)}><Icon name="blocks" size={16} /><span>{component.name}{component.source?.exportName && component.source.exportName !== component.name ? <small>{component.source.exportName}</small> : null}</span><Icon name="chevron-right" size={14} /></Button>)}

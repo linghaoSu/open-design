@@ -72,6 +72,7 @@ export const ja: Dict = {
   "reactPreview.resetProp": "サンプル値に戻す",
   "reactPreview.unavailable": "プレビューの問題を解決して再試行するか、別のエクスポートを選択してください。",
   "designMigration.title": "移行",
+  "designMigration.htmlReference": "HTML ファイルは見た目の参考として保持され、コードコンポーネントには変換されません。",
   "designMigration.description": "既存のデザインシステムファイルをレビューし、構造化バージョンを公開して有効にします。",
   "designMigration.sources": "プロジェクトのソース",
   "designMigration.sourcesHint": "保持するファイルを選択します。CSS変数はトークンに変換でき、DESIGN.mdとHTMLは参照用ソースとして保持されます。",

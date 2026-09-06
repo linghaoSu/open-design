@@ -72,6 +72,7 @@ export const zhCN: Dict = {
   "reactPreview.resetProp": "重置样例值",
   "reactPreview.unavailable": "请解决预览详情中的问题，然后重试或选择其他导出。",
   "designMigration.title": "迁移",
+  "designMigration.htmlReference": "HTML 文件仅保留为视觉参考，不会转换为代码组件。",
   "designMigration.description": "审核现有设计系统文件，再发布并启用结构化版本。",
   "designMigration.sources": "项目源文件",
   "designMigration.sourcesHint": "选择要保存在包中的文件。CSS 变量可转换为 token；DESIGN.md 和 HTML 保留为源参考。",

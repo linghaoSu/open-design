@@ -23,15 +23,35 @@
 
 /* Embedded component details own their scrolling; this layout follows their
    available width independently of the standalone viewer's viewport rules. */
-.panel.component { container-type: inline-size; height: auto; min-width: 0; overflow: visible; padding: 0; gap: 12px; }
-.component .toolbar { align-items: center; gap: 6px; }
+.panel.component { container-type: inline-size; height: auto; min-width: 0; overflow: visible; padding: 0; gap: 10px; }
+.component .toolbar { align-items: end; gap: 6px; }
 .component .compactAction { height: 30px; min-height: 30px; padding: 4px 9px; font-size: 12px; }
-.exportOptions { flex: 1; min-width: 0; font-size: 12px; color: var(--text-muted); }
-.exportOptions > summary { cursor: pointer; overflow-wrap: anywhere; }
-.exportOptions[open] { flex-basis: 100%; }
-.exportOptions .export { margin-top: 8px; min-width: 0; }
-.component .content { flex: none; flex-direction: column; min-width: 0; overflow: visible; gap: 16px; }
+.previewDetails { min-width: 0; font-size: 12px; line-height: 1.5; color: var(--text-muted); border-top: 1px solid var(--border); padding-top: 8px; }
+.previewDetails > summary { cursor: pointer; overflow-wrap: anywhere; }
+.previewDetails .toolbar { margin-top: 10px; }
+.previewDetails .export { min-width: 0; }
+.previewDetails ul { padding-left: 20px; overflow-wrap: anywhere; }
+.propDetails { display: grid; gap: 10px; margin: 12px 0 0; }
+.propDetails > div { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.propDetails dt { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; }
+.propDetails dd { display: flex; flex-direction: column; margin: 0; }
+.component .content { flex: none; flex-direction: column; min-width: 0; overflow: visible; gap: 12px; }
 .component .runtime { order: -1; flex: none; min-height: 0; }
-.component .canvas { flex: none; height: 200px; min-height: 180px; }
-.component .props { flex: none; max-height: none; overflow: visible; border: 0; border-top: 1px solid var(--border); padding: 14px 0 0; }
+.component .canvas { flex: none; height: 180px; min-height: 180px; }
+.component .runtimeError { display: flex; flex-wrap: wrap; align-items: start; gap: 6px 10px; }
+.component .runtimeError .error { flex: 1 1 180px; }
+.component .props { flex: none; max-height: none; overflow: visible; border: 0; padding: 0; }
+.propsHeading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.propsHeading h3 { margin: 0; }
+.component .mockHint { margin: 2px 0 10px; }
+.component .prop { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: 6px 12px; margin-bottom: 10px; }
+.component .prop:last-child { margin-bottom: 0; }
+.component .prop label { font-size: 12px; }
+.component .prop label code { font: inherit; padding: 0; background: transparent; }
+.component .prop input, .component .prop select, .component .prop textarea { padding: 6px 8px; font-size: 12px; }
+.component .prop > p, .component .resetProp { grid-column: 1 / -1; }
+.component .resetProp { justify-self: start; }
 .component .unavailable { order: -1; flex: none; }
+@container (min-width: 360px) {
+  .component .prop { grid-template-columns: minmax(0, 100px) minmax(0, 1fr); }
+}

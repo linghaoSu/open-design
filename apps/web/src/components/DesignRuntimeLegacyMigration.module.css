@@ -10,10 +10,12 @@
 .panel code, .panel pre { overflow-wrap: anywhere; white-space: pre-wrap; font-size: 12px; }
 .panel pre { padding: 12px; background: var(--bg-subtle); border-radius: 6px; max-height: 320px; overflow: auto; }
 .sources { display: grid; gap: 10px; }
-.sourceList { display: grid; gap: 10px; max-height: 240px; overflow: auto; padding: 2px; }
-.source { display: flex; gap: 8px; align-items: start; min-width: 0; }
+.sourceList { display: grid; max-height: 240px; overflow: auto; padding: 2px; }
+.source { display: flex; gap: 10px; align-items: start; min-width: 0; padding: 12px 0; border-bottom: 1px solid var(--border-soft); }
+.source:last-child { border-bottom: 0; }
 .source input[type='checkbox'] { flex: 0 0 14px; width: 14px; height: 14px; min-height: 14px; margin: 2px 0 0; padding: 0; }
-.source code { flex: 1; min-width: 0; }
+.source code { flex: 1; min-width: 0; padding: 0; background: transparent; }
+.sourceType { flex: 0 0 auto; color: var(--text-muted); font-size: 11px; line-height: 1.5; }
 .fields, .counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
 .field { display: grid; gap: 6px; min-width: 0; font-weight: 500; }
 .field input, .field select { box-sizing: border-box; width: 100%; min-width: 0; }
@@ -34,7 +36,10 @@
 .step[hidden] { display: none; }
 .step > h4 { color: var(--text-strong); font-size: 16px; font-weight: 600; }
 .step > h4:focus { outline: none; }
-.navigation { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 18px; border-top: 1px solid var(--border-soft); }
+.footer { display: grid; gap: 16px; padding-top: 18px; border-top: 1px solid var(--border-soft); }
+.referenceNote { display: grid; gap: 6px; color: var(--text-muted); font-size: 12px; }
+.referenceNote ul { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; padding: 0; list-style: none; }
+.navigation { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .navigation > .actions { justify-content: flex-end; }
 .advanced { margin-top: 2px; padding-top: 8px; border-top: 1px solid var(--border-soft); }
 .advanced > .fields { margin: 12px 0; }

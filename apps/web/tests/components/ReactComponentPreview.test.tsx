@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReactComponentPreview } from '../../src/components/ReactComponentPreview';
 import { COMPONENT_PREVIEW_CHANNEL } from '../../src/components/react-component-preview-frame';
@@ -29,6 +29,12 @@ describe('standalone React component preview', () => {
     expect(picker).not.toBeVisible();
     expect(picker.closest('details')?.open).toBe(false);
     expect(screen.getByLabelText('title')).toBeVisible();
+    expect(screen.getByText('Type: string · TypeScript')).not.toBeVisible();
+    expect(screen.getByRole('button', { name: 'Retry preview' })).not.toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Preview props' }).parentElement).toContainElement(screen.getByRole('button', { name: 'Reset props' }));
+    fireEvent.click(picker.closest('details')!.querySelector('summary')!);
+    expect(screen.getByText('Type: string · TypeScript')).toBeVisible();
+    fireEvent.click(picker.closest('details')!.querySelector('summary')!);
     expect(provider.createReactComponentPreview).toHaveBeenLastCalledWith(expect.any(Object), { sourcePath: 'Card.tsx', exportName: 'CompactCard' });
     const post = vi.spyOn(originalFrame.contentWindow!, 'postMessage');
     fireEvent.change(screen.getByLabelText('title'), { target: { value: 'Inline title' } });
@@ -41,6 +47,23 @@ describe('standalone React component preview', () => {
     expect(screen.getByLabelText('title')).toHaveValue('Inline title');
     fireEvent.click(screen.getByRole('button', { name: 'Reset props' }));
     expect(post.mock.calls.at(-1)?.[0].props).toEqual(componentPreviewFixture().effectiveProps);
+    expect(provider.createReactComponentPreview).toHaveBeenCalledOnce();
+  });
+  it('keeps component render errors and retry visible while preview details stay collapsed', async () => {
+    render(<ReactComponentPreview {...props} layout="component" />);
+    await screen.findByTestId('react-component-preview-frame');
+    const originalFrame = frame();
+    const post = vi.spyOn(originalFrame.contentWindow!, 'postMessage'); fireEvent.load(originalFrame);
+    const revision = post.mock.calls.at(-1)![0].revision as number;
+    report('error', revision);
+    expect(screen.getByRole('alert')).toBeVisible();
+    expect(screen.getByLabelText('Component export').closest('details')?.open).toBe(false);
+    const retry = within(screen.getByRole('alert').parentElement!).getByRole('button', { name: 'Retry preview' });
+    expect(retry).toBeVisible(); fireEvent.click(retry);
+    report('rendered', revision + 1);
+    expect(frame()).toBe(originalFrame);
+    expect(screen.getByTestId('react-component-preview-status')).toHaveAttribute('data-status', 'rendered');
+    expect(screen.queryByRole('alert')).toBeNull();
     expect(provider.createReactComponentPreview).toHaveBeenCalledOnce();
   });
   it('opens the requested named export and reapplies repeated requests for the same file', async () => {
@@ -64,7 +87,10 @@ describe('standalone React component preview', () => {
     expect(provider.createReactComponentPreview).toHaveBeenLastCalledWith(expect.any(Object), { sourcePath: 'Card.tsx', exportName: 'MissingCard' });
     expect(screen.getByLabelText('Component export')).toHaveValue('MissingCard');
     expect(screen.queryByTestId('react-component-preview-frame')).toBeNull();
-    if (layout === 'component') fireEvent.click(screen.getByLabelText('Component export').closest('details')!.querySelector('summary')!);
+    if (layout === 'component') {
+      expect(screen.getByLabelText('Component export')).toBeVisible();
+      expect(screen.getByRole('button', { name: 'Retry preview' })).toBeVisible();
+    }
     vi.mocked(provider.createReactComponentPreview).mockResolvedValue(componentPreviewFixture({ requestedExport: 'CompactCard', selectedExport: 'CompactCard' }));
     fireEvent.change(screen.getByLabelText('Component export'), { target: { value: 'CompactCard' } });
     await screen.findByTestId('react-component-preview-frame');

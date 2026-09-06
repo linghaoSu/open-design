@@ -66,6 +66,7 @@ function MigrationContent({ scope, state, files, viewerOnly, externalBusy = fals
   const sourcePaths = [...new Set([...draft.sourcePaths, ...requiredPaths])].sort();
   const parsed = LegacyDesignSystemMigrationPlanSchema.safeParse({ ...draft, sourcePaths });
   const validReview = reviewed && reviewed.state === state && reviewed.sourceIdentity === sourceIdentity && reviewed.draft === draft ? reviewed : null;
+  const reviewedHtmlSources = validReview?.review.preservedSourcePaths.filter((path) => /\.html?$/i.test(path)) ?? [];
   const issues = parsed.success ? [] : parsed.error.issues;
   const nameFields = ['designSystemId', 'name', 'version', 'mode', 'constraints', 'codeCompatibility'];
   const nameIssues = issues.filter((issue) => nameFields.includes(String(issue.path[0])));
@@ -159,10 +160,14 @@ function MigrationContent({ scope, state, files, viewerOnly, externalBusy = fals
     <h4 id={`${id}-files`} tabIndex={-1} ref={(node) => { stepHeadings.current.files = node; }}>{t('designWorkspace.migrationFiles')}</h4>
     <fieldset disabled={locked} className={styles.sources}>
       <p className={styles.muted}>{t('designMigration.sourcesHint')}</p>
-      <div className={styles.sourceList}>{!paths.length ? <p>{t('designMigration.noFiles')}</p> : paths.map((name) => <label key={name} className={styles.source}>
-        <Input type="checkbox" data-testid={`legacy-source-${name}`} checked={sourcePaths.includes(name)} disabled={requiredPaths.includes(name)} onChange={(event) => update({ sourcePaths: event.target.checked ? [...draft.sourcePaths, name] : draft.sourcePaths.filter((path) => path !== name) })} />
-        <code>{name}</code>
-      </label>)}</div>
+      <div className={styles.sourceList}>{!paths.length ? <p>{t('designMigration.noFiles')}</p> : paths.map((name) => {
+        const fileType = name.match(/\.([a-z0-9]{1,12})$/i)?.[1]?.toUpperCase();
+        return <label key={name} className={styles.source}>
+          <Input type="checkbox" data-testid={`legacy-source-${name}`} checked={sourcePaths.includes(name)} disabled={requiredPaths.includes(name)} onChange={(event) => update({ sourcePaths: event.target.checked ? [...draft.sourcePaths, name] : draft.sourcePaths.filter((path) => path !== name) })} />
+          <code>{name}</code>
+          {fileType ? <span className={styles.sourceType} data-testid={`legacy-source-type-${name}`} aria-hidden="true">{fileType}</span> : null}
+        </label>;
+      })}</div>
       <label className={styles.field}>{t('designMigration.tokenStylesheet')}<Select data-testid="legacy-token-stylesheet" value={draft.tokenStylesheet ?? ''} onChange={(event) => update({ tokenStylesheet: event.target.value || undefined })}>
         <option value="">{t('designMigration.noStylesheet')}</option>{paths.filter((name) => /\.css$/i.test(name)).map((name) => <option key={name} value={name}>{name}</option>)}
       </Select></label>
@@ -189,12 +194,18 @@ function MigrationContent({ scope, state, files, viewerOnly, externalBusy = fals
     <StructureDiagnostics diagnostics={diagnostics} />
     {validReview ? <MigrationReview review={validReview.review} /> : null}
     </section>
-    <footer className={styles.navigation}>
+    <footer className={styles.footer}>
+      {step === 'review' && validReview?.review.canApply && reviewedHtmlSources.length ? <aside className={styles.referenceNote} data-testid="legacy-html-reference" id={`${id}-html-reference`}>
+        <p>{t('designMigration.htmlReference')}</p>
+        <ul>{reviewedHtmlSources.map((path) => <li key={path}><code>{path}</code></li>)}</ul>
+      </aside> : null}
+      <div className={styles.navigation}>
       <Button data-testid="legacy-back" variant="ghost" disabled={locked || stepIndex === 0} onClick={() => setStep(migrationSteps[stepIndex - 1]!)}>{t('designFiles.back')}</Button>
       {step !== 'review' ? <Button data-testid="legacy-continue" variant="primary" disabled={locked || (step === 'name' ? nameIssues.length > 0 : !parsed.success)} onClick={() => setStep(migrationSteps[stepIndex + 1]!)}>{t('questions.continue')}</Button> : <div className={styles.actions}>
         <Button data-testid="legacy-review" variant={validReview?.review.canApply ? 'default' : 'primary'} disabled={locked || !state || !parsed.success} onClick={() => void perform(false)}>{t('designMigration.review')}</Button>
-        {validReview?.review.canApply ? <Button data-testid="legacy-apply" variant="primary" disabled={locked || viewerOnly} onClick={() => void perform(true)}>{t('designMigration.apply')}</Button> : null}
+        {validReview?.review.canApply ? <Button data-testid="legacy-apply" variant="primary" aria-describedby={reviewedHtmlSources.length ? `${id}-html-reference` : undefined} disabled={locked || viewerOnly} onClick={() => void perform(true)}>{t('designMigration.apply')}</Button> : null}
       </div>}
+      </div>
     </footer>
   </section>;
 }

@@ -103,6 +103,7 @@ export interface Dict {
   "reactPreview.unavailable": string;
   "designMigration.title": string;
   "designMigration.description": string;
+  "designMigration.htmlReference": string;
   "designMigration.sources": string;
   "designMigration.sourcesHint": string;
   "designMigration.tokenStylesheet": string;

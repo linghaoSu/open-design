@@ -3,6 +3,7 @@ import type { Dict } from './types';
 /** English fallback for this migration namespace until each locale translates it. */
 export const designMigrationFallback: Pick<Dict, Extract<keyof Dict, `designMigration.${string}`>> = {
   "designMigration.title": "Migration",
+  "designMigration.htmlReference": "HTML files are preserved as visual references. They do not become code components.",
   "designMigration.description": "Review existing design system files, then publish and activate a structured version.",
   "designMigration.sources": "Project sources",
   "designMigration.sourcesHint": "Select the files to preserve in the package. CSS variables can become tokens; DESIGN.md and HTML remain source references.",

@@ -109,8 +109,17 @@ describe('DesignRuntimePanel', () => {
     expect(row).toHaveFocus();
     fireEvent.change(screen.getByTestId('design-runtime-component-search'), { target: { value: 'no match' } });
     expect(screen.getByText('No components match your search.')).toBeVisible();
+    expect(screen.getByTestId('design-runtime-component-count')).toHaveTextContent('0 / 1');
     expect(screen.queryByTestId('design-runtime-component-select-button')).toBeNull();
-    fireEvent.change(screen.getByTestId('design-runtime-component-search'), { target: { value: '' } });
+    fireEvent.click(screen.getByTestId('design-runtime-overview-tab'));
+    fireEvent.click(screen.getByTestId('design-runtime-code-tab'));
+    expect(screen.getByTestId('design-runtime-component-count')).toHaveTextContent('0 / 1');
+    fireEvent.change(screen.getByTestId('design-runtime-component-search'), { target: { value: '  Button  ' } });
+    fireEvent.click(screen.getByTestId('design-runtime-component-select-button'));
+    expect(screen.getByTestId('design-runtime-component-count')).toHaveTextContent('1 / 1');
+    fireEvent.click(screen.getByTestId('design-runtime-back-to-components'));
+    fireEvent.change(screen.getByTestId('design-runtime-component-search'), { target: { value: '   ' } });
+    expect(screen.getByTestId('design-runtime-component-count')).toHaveTextContent(/^1$/);
     fireEvent.click(screen.getByTestId('design-runtime-component-select-button'));
     expect(control('design-runtime-value-transform-variant')).toBe(draft);
     expect(draft.value).toBe('{ "valueTransform":');

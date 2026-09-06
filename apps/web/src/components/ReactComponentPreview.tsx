@@ -21,7 +21,7 @@ interface Props {
   layout?: 'workspace' | 'component';
 }
 
-function RuntimeFrame({ bundle, values, retry, title }: { bundle: DesignPreviewBundle; values: PreviewProps; retry: number; title: string }) {
+function RuntimeFrame({ bundle, values, retry, title, onRetry }: { bundle: DesignPreviewBundle; values: PreviewProps; retry: number; title: string; onRetry?: () => void }) {
   const t = useT();
   const ref = useRef<HTMLIFrameElement>(null);
   const nonce = useMemo(() => crypto.randomUUID(), []);
@@ -57,7 +57,7 @@ function RuntimeFrame({ bundle, values, retry, title }: { bundle: DesignPreviewB
 
   return <div className={styles.runtime}>
     <p className={styles.status} role="status" data-testid="react-component-preview-status" data-status={status}>{t(`reactPreview.${status}`)}</p>
-    {error ? <p className={styles.error} role="alert">{error}</p> : null}
+    {error ? <div className={styles.runtimeError}><p className={styles.error} role="alert">{error}</p>{onRetry ? <Button className={styles.compactAction} onClick={onRetry}>{t('reactPreview.retry')}</Button> : null}</div> : null}
     <div className={styles.canvas}><PreviewDrawOverlay><iframe ref={ref} title={title}
       data-testid="react-component-preview-frame" sandbox="allow-scripts allow-downloads" referrerPolicy="no-referrer"
       className={styles.frame} srcDoc={srcDoc} onLoad={send} /></PreviewDrawOverlay></div>
@@ -119,25 +119,30 @@ function PreviewContent({ projectId, sourcePath, workspaceContext, componentPrev
     setValues((old) => { const next = { ...old }; if (result && Object.hasOwn(result.effectiveProps, name)) next[name] = result.effectiveProps[name]!; else delete next[name]; return next; });
   }
   const reset = () => { setValues({ ...result?.effectiveProps }); setDrafts({}); setInvalid({}); setRetry((old) => old + 1); };
+  const retryPreview = () => result?.bundle ? setRetry((old) => old + 1) : setBuildRetry((old) => old + 1);
+  const valueOrigin = (control: ComponentPreviewControl) => control.hasDefault && !Object.hasOwn(values, control.name) ? t('reactPreview.sourceDefault') : Object.hasOwn(drafts, control.name) ? t('reactPreview.edited') : Object.hasOwn(values, control.name) ? t('reactPreview.sample') : t('reactPreview.unset');
   const exportSelector = <label className={styles.export}>{t('reactPreview.export')}<select aria-label={t('reactPreview.export')} value={exportName ?? result?.selectedExport ?? ''} disabled={busy || !result?.exports.length} onChange={(event) => setExportName(event.target.value)}>
     {exportName && !result?.exports.includes(exportName) ? <option value={exportName}>{exportName}</option> : null}
     {!result?.exports.length ? <option value="">—</option> : result.exports.map((name) => <option key={name} value={name}>{name}</option>)}
   </select></label>;
 
   return <section className={`${styles.panel}${layout === 'component' ? ` ${styles.component}` : ''}`} data-testid="react-component-preview" data-layout={layout}>
-    <div className={styles.toolbar}>
-      {layout === 'component' ? <details className={styles.exportOptions}><summary>{t('reactPreview.export')}</summary>{exportSelector}</details> : exportSelector}
-      <Button className={layout === 'component' ? styles.compactAction : undefined} disabled={!result?.bundle} onClick={reset}>{t('reactPreview.reset')}</Button>
-      <Button className={layout === 'component' ? styles.compactAction : undefined} disabled={busy} onClick={() => result?.bundle ? setRetry((old) => old + 1) : setBuildRetry((old) => old + 1)}>{t('reactPreview.retry')}</Button>
-    </div>
+    {layout === 'workspace' ? <div className={styles.toolbar}>
+      {exportSelector}
+      <Button disabled={!result?.bundle} onClick={reset}>{t('reactPreview.reset')}</Button>
+      <Button disabled={busy} onClick={retryPreview}>{t('reactPreview.retry')}</Button>
+    </div> : null}
     {busy ? <p role="status">{t('reactPreview.building')}</p> : null}
     {failure ? <p role="alert" className={styles.error}>{failure}</p> : null}
     {result ? <>
-      <p className={styles.hint}>{t('reactPreview.mockHint')}</p>
-      {result.diagnostics.length ? <details className={styles.diagnostics} open={!result.bundle}><summary>{t('reactPreview.diagnostics')}</summary><ul>{result.diagnostics.map((item, index) => <li key={index}>{item.message}</li>)}</ul></details> : null}
+      {layout === 'workspace' ? <p className={styles.hint}>{t('reactPreview.mockHint')}</p> : null}
+      {layout === 'workspace' && result.diagnostics.length ? <details className={styles.diagnostics} open={!result.bundle}><summary>{t('reactPreview.diagnostics')}</summary><ul>{result.diagnostics.map((item, index) => <li key={index}>{item.message}</li>)}</ul></details> : null}
       <div className={styles.content}>
         <aside className={styles.props} aria-label={t('reactPreview.props')}>
-          <h3>{t('reactPreview.props')}</h3>
+          {layout === 'component' ? <>
+            <div className={styles.propsHeading}><h3>{t('reactPreview.props')}</h3><Button variant="ghost" className={styles.compactAction} disabled={!result.bundle} onClick={reset}>{t('reactPreview.reset')}</Button></div>
+            <p className={`${styles.hint} ${styles.mockHint}`}>{t('reactPreview.mockHint')}</p>
+          </> : <h3>{t('reactPreview.props')}</h3>}
           {!result.controls.length ? <p>{t('reactPreview.noProps')}</p> : null}
           {result.controls.map((control) => {
             const sourceDefault = control.hasDefault && !Object.hasOwn(values, control.name);
@@ -147,9 +152,11 @@ function PreviewContent({ projectId, sourcePath, workspaceContext, componentPrev
             const invalidValue = Object.hasOwn(invalid, control.name) && invalid[control.name] === true;
             const id = `${editorId}-prop-${control.name}`;
             return <div className={styles.prop} key={control.name}>
-              <label htmlFor={id}><code>{control.name}</code>{control.required ? <span className={styles.badge}>{t('reactPreview.required')}</span> : null}</label>
-              <span className={styles.hint}>{t('reactPreview.type', { kind: control.kind })} · {t(`reactPreview.provenance.${control.provenance}`)}</span>
-              <span className={styles.hint}>{sourceDefault ? t('reactPreview.sourceDefault') : Object.hasOwn(drafts, control.name) ? t('reactPreview.edited') : Object.hasOwn(values, control.name) ? t('reactPreview.sample') : t('reactPreview.unset')}</span>
+              <label htmlFor={id}><code>{control.name}</code>{layout === 'workspace' && control.required ? <span className={styles.badge}>{t('reactPreview.required')}</span> : null}</label>
+              {layout === 'workspace' ? <>
+                <span className={styles.hint}>{t('reactPreview.type', { kind: control.kind })} · {t(`reactPreview.provenance.${control.provenance}`)}</span>
+                <span className={styles.hint}>{valueOrigin(control)}</span>
+              </> : null}
               {control.kind === 'function' ? <p className={styles.hint}>{sourceDefault ? t('reactPreview.sourceDefault') : hasCallbackMock ? t('reactPreview.callback') : t('reactPreview.unset')}</p>
                 : control.kind === 'boolean' ? <select id={id} aria-label={control.name} value={text} onChange={(event) => change(control, event.target.value)}><option value="" disabled>{t('reactPreview.unset')}</option><option value="true">true</option><option value="false">false</option></select>
                 : control.kind === 'enum' ? <select id={id} aria-label={control.name} value={text} onChange={(event) => change(control, event.target.value)}><option value="" disabled>{t('reactPreview.unset')}</option>{control.options?.map((option, index) => <option key={index} value={JSON.stringify(option)}>{typeof option === 'string' ? option : JSON.stringify(option)}</option>)}</select>
@@ -161,8 +168,17 @@ function PreviewContent({ projectId, sourcePath, workspaceContext, componentPrev
             </div>;
           })}
         </aside>
-        {result.bundle ? <RuntimeFrame key={JSON.stringify([result.sourceDigest, result.selectedExport, result.bundle.digest])} bundle={result.bundle} values={values} retry={retry} title={sourcePath} /> : <p className={styles.unavailable}>{t('reactPreview.unavailable')}</p>}
+        {result.bundle ? <RuntimeFrame key={JSON.stringify([result.sourceDigest, result.selectedExport, result.bundle.digest])} bundle={result.bundle} values={values} retry={retry} title={sourcePath} onRetry={layout === 'component' ? retryPreview : undefined} /> : <p className={styles.unavailable}>{t('reactPreview.unavailable')}</p>}
       </div>
     </> : null}
+    {layout === 'component' ? <details className={styles.previewDetails} open={Boolean(failure || (result && !result.bundle))}>
+      <summary>{t('reactPreview.diagnostics')}</summary>
+      <div className={styles.toolbar}>{exportSelector}<Button className={styles.compactAction} disabled={busy} onClick={retryPreview}>{t('reactPreview.retry')}</Button></div>
+      {result?.diagnostics.length ? <ul>{result.diagnostics.map((item, index) => <li key={index}>{item.message}</li>)}</ul> : null}
+      {result?.controls.length ? <dl className={styles.propDetails}>{result.controls.map((control) => <div key={control.name}>
+        <dt><code>{control.name}</code>{control.required ? <span className={styles.badge}>{t('reactPreview.required')}</span> : null}</dt>
+        <dd><span>{t('reactPreview.type', { kind: control.kind })} · {t(`reactPreview.provenance.${control.provenance}`)}</span><span>{valueOrigin(control)}</span></dd>
+      </div>)}</dl> : null}
+    </details> : null}
   </section>;
 }

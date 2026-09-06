@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DesignRuntimeLegacyMigration } from '../../src/components/DesignRuntimeLegacyMigration';
 import * as provider from '../../src/providers/design-runtime';
@@ -47,6 +47,8 @@ describe('legacy migration panel', () => {
     fireEvent.change(name, { target: { value: 'Preserved system name' } });
 
     goToStep('files');
+    expect(screen.getByTestId('legacy-source-type-src/Button.tsx')).toHaveTextContent('TSX');
+    expect(screen.getByTestId('legacy-source-type-components.html')).toHaveTextContent('HTML');
     fireEvent.click(source);
     expect(source.checked).toBe(true);
     expect(name).not.toBeVisible();
@@ -83,6 +85,7 @@ describe('legacy migration panel', () => {
     await review();
     const request = vi.mocked(provider.reviewProjectDesignRuntimeLegacyMigration).mock.calls[1]![1];
     expect(request.plan.sourcePaths).toEqual(['DESIGN.md', 'tokens.css']);
+    expect(screen.queryByTestId('legacy-html-reference')).toBeNull();
     fireEvent.click(element('legacy-apply'));
     await waitFor(() => expect(input.onState).toHaveBeenCalledOnce());
     expect(provider.applyProjectDesignRuntimeLegacyMigration).toHaveBeenCalledExactlyOnceWith(expect.objectContaining(scope), legacyMigrationFixture(request.plan).proof);
@@ -92,6 +95,7 @@ describe('legacy migration panel', () => {
     expect(element('legacy-token-stylesheet').value).toBe('tokens.css'); expect(screen.queryByTestId('legacy-apply')).toBeNull();
     expect((screen.getByTestId('legacy-advanced') as HTMLDetailsElement).open).toBe(false);
     expect(element('legacy-name').closest('details')).toBeNull();
+    expect(screen.queryByTestId('legacy-html-reference')).toBeNull();
     await review();
     const request = vi.mocked(provider.reviewProjectDesignRuntimeLegacyMigration).mock.calls[0]![1];
     expect(request.plan.sourcePaths).toEqual(['DESIGN.md', 'components.html', 'tokens.css']); expect(request.plan.selections).toEqual([]);
@@ -99,6 +103,17 @@ describe('legacy migration panel', () => {
     expect(screen.getByTestId('legacy-token-foundation').textContent).toContain('not Strict ready'); expect(screen.getByText('--shadow')).toBeTruthy();
     expect(screen.getByTestId('legacy-packaged-sources').textContent).toContain('components.html'); expect(provider.applyProjectDesignRuntimeLegacyMigration).not.toHaveBeenCalled();
     expect((screen.getByTestId('legacy-package-details') as HTMLDetailsElement).open).toBe(false);
+    const reference = screen.getByTestId('legacy-html-reference');
+    const apply = element('legacy-apply');
+    expect(reference).toBeVisible();
+    expect(reference).toHaveTextContent('HTML files are preserved as visual references. They do not become code components.');
+    expect(reference).toHaveTextContent('components.html');
+    expect(reference).not.toHaveTextContent('tokens.css');
+    expect(reference.closest('footer')).toBe(apply.closest('footer'));
+    expect(reference.compareDocumentPosition(apply) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(apply).toHaveAttribute('aria-describedby', reference.id);
+    expect(apply).toBeEnabled();
+    expect(within(apply.closest('footer')!).queryByRole('checkbox')).toBeNull();
     expect(screen.getByTestId('legacy-review-result').compareDocumentPosition(element('legacy-apply')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(element('legacy-apply')); fireEvent.click(element('legacy-apply'));
     await waitFor(() => expect(input.onState).toHaveBeenCalledOnce());
