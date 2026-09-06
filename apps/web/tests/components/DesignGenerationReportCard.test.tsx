@@ -11,6 +11,29 @@ import type { ChatMessage } from '@open-design/contracts';
 afterEach(cleanup);
 
 describe('design generation report', () => {
+  it('keeps blockers visible ahead of a long warning list and retains every diagnostic in expandable evidence', () => {
+    const report = generationReport('initial', 0, 'repair_required');
+    report.diagnostics = [
+      ...Array.from({ length: 100 }, (_, index) => ({ schemaVersion: 1 as const, code: 'ODDS6002' as const, severity: 'warning' as const, message: `Static warning ${index}` })),
+      { schemaVersion: 1, code: 'ODDS5003', severity: 'error', message: 'Activate a published design version.', location: { sourcePath: 'Page.tsx', line: 8, column: 2 } },
+    ];
+    const original = structuredClone(report);
+    render(<DesignGenerationReportCard message={{ id: 'message', role: 'assistant', content: '', designGeneration: report,
+      designGenerationTask: generationTask({ status: 'blocked', latestReport: report }) }} />);
+    const visible = screen.getByTestId('design-generation-diagnostics');
+    expect(visible.querySelectorAll('li')).toHaveLength(3);
+    expect(visible.querySelector('li')).toHaveTextContent('Activate a published design version.');
+    expect(visible.querySelector('li')).toHaveTextContent('Page.tsx:8:2');
+    const more = screen.getByTestId('design-generation-more-diagnostics');
+    expect(more).not.toHaveAttribute('open');
+    expect(more.querySelectorAll('li')).toHaveLength(98);
+    fireEvent.click(more.querySelector('summary')!);
+    expect(more).toHaveAttribute('open');
+    expect(more).toHaveTextContent('Static warning 99');
+    expect(JSON.parse(screen.getByTestId('design-generation-report-json').textContent!).report).toEqual(original);
+    expect(report).toEqual(original);
+  });
+
   it('keeps a passing physical report unconfirmed without a logical success projection', () => {
     render(<DesignGenerationReportCard message={{ id: 'message', role: 'assistant', content: '', designGeneration: { ...generationReport('initial', 0, 'advisory'), mode: 'explore' } }} />);
     expect(screen.getByTestId('design-generation-status').dataset.status).toBe('unconfirmed');

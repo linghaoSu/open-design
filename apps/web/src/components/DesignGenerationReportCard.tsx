@@ -16,6 +16,12 @@ export function DesignGenerationReportCard({ message }: { message: ChatMessage }
     seenDiagnostics.add(identity);
     return true;
   });
+  // Put actionable blockers first without changing the recorded report or hiding evidence.
+  const rankedDiagnostics = [...diagnostics].sort((left, right) => Number(right.severity === 'error') - Number(left.severity === 'error'));
+  const renderDiagnostic = (diagnostic: typeof diagnostics[number], index: number) => <li key={index} data-severity={diagnostic.severity}>
+    <code>{diagnostic.code}</code> {diagnostic.message}
+    {diagnostic.location ? <span> · {diagnostic.location.sourcePath}:{diagnostic.location.line}:{diagnostic.location.column}</span> : null}
+  </li>;
   const status = task?.status ?? (report?.decision === 'canceled' ? 'canceled'
     : report?.decision === 'blocked' || report?.decision === 'repair_required' ? 'blocked' : 'unconfirmed');
   const statusLabels = {
@@ -38,12 +44,13 @@ export function DesignGenerationReportCard({ message }: { message: ChatMessage }
           : report.decision === 'not_applicable' ? t('designGeneration.notApplicable')
             : report.decision === 'repair_required' ? t('designGeneration.repairRequired') : statusLabels[report.decision]}</p>
       <p>{report.inventory.complete ? t('designGeneration.inventoryComplete') : t('designGeneration.inventoryIncomplete')}</p>
-      {diagnostics.length ? <ul data-testid="design-generation-diagnostics" className={styles.diagnostics}>
-        {diagnostics.map((diagnostic, index) => <li key={index} data-severity={diagnostic.severity}>
-          <code>{diagnostic.code}</code> {diagnostic.message}
-          {diagnostic.location ? <span> · {diagnostic.location.sourcePath}:{diagnostic.location.line}:{diagnostic.location.column}</span> : null}
-        </li>)}
+      {rankedDiagnostics.length ? <ul data-testid="design-generation-diagnostics" className={styles.diagnostics}>
+        {rankedDiagnostics.slice(0, 3).map(renderDiagnostic)}
       </ul> : null}
+      {rankedDiagnostics.length > 3 ? <details className={styles.moreDiagnostics} data-testid="design-generation-more-diagnostics">
+        <summary>{t('designFiles.showMore', { n: rankedDiagnostics.length - 3 })}</summary>
+        <ul className={styles.diagnostics}>{rankedDiagnostics.slice(3).map(renderDiagnostic)}</ul>
+      </details> : null}
       <details data-testid="design-generation-details"><summary data-testid="design-generation-expand">{t('designGeneration.evidence')}</summary>
         <p>{t('designGeneration.reportHint')}</p>
         <p>{t('designGeneration.changed')}: {report.inventory.changed.join(', ') || t('designGeneration.none')}</p>

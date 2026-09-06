@@ -3,6 +3,7 @@ import { constants, type Dirent, type Stats } from 'node:fs';
 import { lstat, open, readdir, realpath, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { SourcePathSchema, type DesignGenerationInventory, type DesignValidationSource, type ValidationDiagnostic } from '@open-design/contracts';
+import { decodeDesignRuntimeSource } from './source-text.js';
 
 export interface GenerationInventoryEntry { path: string; digest: string | null; size: number; language: DesignValidationSource['language'] | null }
 export type GenerationInventory = DesignGenerationInventory;
@@ -101,8 +102,8 @@ export async function captureGenerationInventory(projectRoot: string, limits: Ge
         if (!after.isFile() || after.dev !== before.dev || after.ino !== before.ino || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs || after.size !== before.size || bytes.length !== before.size) {
           diagnostics.push(generationInventoryDiagnostic('A project source changed while its bytes were being read.', sourcePath)); continue;
         }
-        // An invalid UTF-8 replacement is not the source the author wrote.
-        const sourceText = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+        // Keep exact UTF-8 bytes (including BOM/CRLF) for frozen-source proof.
+        const sourceText = decodeDesignRuntimeSource(bytes);
         files.push({ path: sourcePath, digest: generationDigest(bytes), size: bytes.length, language });
         if (language) sources.push({ sourcePath, language, sourceText });
       } catch { diagnostics.push(generationInventoryDiagnostic('A project source could not be read as stable UTF-8 bytes.', sourcePath)); }

@@ -5,6 +5,7 @@ import { load } from 'cheerio';
 import postcss from 'postcss';
 import { posix } from 'node:path';
 import type { CodeComponentDefinition, DesignValidationOutput, DesignValidationSource, JsonScalar, ValidationDiagnostic } from '@open-design/contracts';
+import { CompilerError, extractReactComponentImplementation } from './react-compiler.js';
 
 export interface SourceLocation { sourcePath: string; line: number; column: number }
 export type AnalyzedDesignNode = { type: 'text'; text: string; location: SourceLocation }
@@ -21,12 +22,15 @@ export interface SourceAnalysisContext {
   codes: readonly CodeComponentDefinition[];
   /** Byte values are supplied only after the caller re-verifies package/source evidence. */
   provenCodeSources: ReadonlyMap<string, string>;
+  /** Dependency bytes from the same verified source proof, never ambient project files. */
+  provenCodeSourceFiles?: ReadonlyMap<string, ReadonlyMap<string, string>>;
   frozenSources: ReadonlyMap<string, string>;
   /** Internal host inventory paths; omitted public validation audits every supplied source. */
   auditPaths?: readonly string[];
 }
 interface Imported { path: string; exported: string; code?: CodeComponentDefinition; runtime?: boolean }
-interface Module { source: DesignValidationSource; program: t.Program; imports: Map<string, Imported>; exports: Map<string, t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression> }
+type ComponentFunction = t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression;
+interface Module { source: DesignValidationSource; program: t.Program; imports: Map<string, Imported>; exports: Map<string, ComponentFunction>; forwardRefs: Set<string> }
 const nativeTags = new Set('html head body title meta link style script main header footer nav section article aside div span p pre code blockquote ul ol li dl dt dd table thead tbody tfoot tr th td caption colgroup col form fieldset legend label button input select option optgroup textarea a img picture source video audio canvas svg path circle rect line polyline polygon g defs use symbol h1 h2 h3 h4 h5 h6 br hr strong em b i small s u details summary dialog progress meter output time abbr figure figcaption'.split(' '));
 const canonical = (value: unknown): string => JSON.stringify(value);
 
@@ -77,6 +81,40 @@ export function analyzeDesignSources(context: SourceAnalysisContext, outputs: re
     return undefined;
   }
   function recordFunction(module: Module, exported: string, node: t.Node | null | undefined): void {
+    if (node?.type === 'CallExpression') {
+      const codes = context.codes.filter((code) => code.framework === 'react' && code.sourcePath === module.source.sourcePath && code.exportName === exported
+        && context.provenCodeSources.get(code.id) === module.source.sourceText);
+      if (codes.length === 1) {
+        const code = codes[0]!;
+        try {
+          const sourceFiles = context.provenCodeSourceFiles?.get(code.id);
+          const implementation = extractReactComponentImplementation({ sourceText: module.source.sourceText, sourcePath: code.sourcePath,
+            exportName: exported, codeComponentId: code.id, ...(code.packageName ? { packageName: code.packageName } : {}),
+            ...(sourceFiles ? { sourceFiles } : {}) });
+          // Keep the original AST identity so unrendered-JSX auditing still observes
+          // every other branch. The compiler's fresh parse is proof, not a replacement tree.
+          const findOriginal = (candidate: t.Node): ComponentFunction | undefined => {
+            if ((candidate.type === 'FunctionDeclaration' || candidate.type === 'FunctionExpression' || candidate.type === 'ArrowFunctionExpression')
+              && candidate.start === implementation.component.start && candidate.end === implementation.component.end) return candidate;
+            for (const value of Object.values(candidate)) for (const child of Array.isArray(value) ? value : [value]) {
+              if (child && typeof child === 'object' && 'type' in child && typeof child.type === 'string') {
+                const found = findOriginal(child as t.Node); if (found) return found;
+              }
+            }
+            return undefined;
+          };
+          const original = findOriginal(node);
+          if (original) {
+            node = original;
+            if (implementation.forwardRef) module.forwardRefs.add(exported);
+          }
+        } catch (error) {
+          fail('ODDS6002', `Export ${exported} has no supported verified React implementation: ${error instanceof Error ? error.message : String(error)}`,
+            error instanceof CompilerError ? { sourcePath: error.sourcePath, line: error.line ?? 1, column: error.column ?? 1 } : location(module.source.sourcePath, node));
+          return;
+        }
+      }
+    }
     if (node?.type === 'FunctionDeclaration' || node?.type === 'FunctionExpression' || node?.type === 'ArrowFunctionExpression') {
       if (module.exports.has(exported)) fail('ODDS6002', `Ambiguous export ${exported}.`, location(module.source.sourcePath, node));
       module.exports.set(exported, node);
@@ -86,7 +124,7 @@ export function analyzeDesignSources(context: SourceAnalysisContext, outputs: re
     let program: t.Program;
     try { program = parse(content, { sourceType: 'module', plugins: ['typescript', 'jsx'] }).program; }
     catch (error) { fail('ODDS6001', `Source could not be parsed: ${error instanceof Error ? error.message : String(error)}`, location(source.sourcePath)); return undefined; }
-    const module: Module = { source, program, imports: new Map(), exports: new Map() }; modules.set(source.sourcePath, module);
+    const module: Module = { source, program, imports: new Map(), exports: new Map(), forwardRefs: new Set() }; modules.set(source.sourcePath, module);
     const provenVue = source.language === 'vue' && context.codes.some((code) => code.sourcePath === source.sourcePath && context.provenCodeSources.get(code.id) === source.sourceText);
     const macro = (node: t.Node | null | undefined): boolean => node?.type === 'CallExpression' && node.callee.type === 'Identifier' && ['defineProps', 'withDefaults', 'defineSlots'].includes(node.callee.name);
     for (const statement of program.body) {
@@ -220,7 +258,8 @@ export function analyzeDesignSources(context: SourceAnalysisContext, outputs: re
     if (!fn) { fail('ODDS6003', `Selected export ${exported} is not a static component function.`, location(module.source.sourcePath)); return []; }
     activeCalls.add(key); renderedFunctions.add(key);
     const environment = new Map<string, JsonScalar | Record<string, JsonScalar>>();
-    if (fn.async || fn.generator || fn.params.length && (!suppliedProps || fn.params.length !== 1)) fail('ODDS6002', 'Functions require synchronous static rendering and an explicitly materialized production props input.', location(module.source.sourcePath, fn));
+    const staticRefParameter = module.forwardRefs.has(exported) && fn.params.length === 2 && fn.params[1]?.type === 'Identifier';
+    if (fn.async || fn.generator || fn.params.length && (!suppliedProps || fn.params.length !== 1 && !staticRefParameter)) fail('ODDS6002', 'Functions require synchronous static rendering and an explicitly materialized production props input.', location(module.source.sourcePath, fn));
     const parameter = suppliedProps ? fn.params[0] : undefined;
     if (parameter?.type === 'Identifier') environment.set(parameter.name, suppliedProps!);
     else if (parameter?.type === 'ObjectPattern') {

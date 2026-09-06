@@ -69,6 +69,12 @@ export function extractReactCodeComponent(input: ReactSourceInput): CodeComponen
   return readReactComponent(input).codeComponent;
 }
 
+/** Resolve the render function with the same wrapper, mutation and props proof as registration. */
+export function extractReactComponentImplementation(input: ReactSourceInput): { component: ComponentFunction; forwardRef: boolean } {
+  const { component, forwardRef } = readReactComponent(input);
+  return { component, forwardRef: forwardRef === true };
+}
+
 export function compileReactComponent(input: CompileReactComponentInput): CompileReactComponentResult {
   const { ast, ctx, component, codeComponent } = readReactComponent(input);
   const source = provenance(component, input);
@@ -243,7 +249,7 @@ function readReactComponent(input: ReactSourceInput) {
       ...(input.packageName === undefined ? {} : { packageName: input.packageName }),
       props, ...(Object.keys(slots).length ? { slots } : {}), source,
     });
-    return { ast, ctx, component, codeComponent };
+    return { ast, ctx, component, codeComponent, forwardRef };
   } catch (error) {
     ctx.fail(`Invalid component metadata: ${error instanceof Error ? error.message : String(error)}`, component);
   }

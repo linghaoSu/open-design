@@ -78,10 +78,11 @@ export function validateStructuredDesign(input: ValidateStructuredDesignRequest,
   const frozenSources = new Map<string, string>();
   if (version) for (const file of version.package.source.files) if (file.encoding === 'utf8') frozenSources.set(file.path, file.content);
   const provenCodeSources = new Map<string, string>();
+  const provenCodeSourceFiles = new Map<string, ReadonlyMap<string, string>>();
   const proofPaths = new Map<string, string>();
   for (const code of codes) {
     const frozen = version?.package.codeIndex.components.some((entry) => entry.id === code.id) ? frozenSources.get(code.sourcePath) : undefined;
-    if (frozen !== undefined) { provenCodeSources.set(code.id, frozen); continue; }
+    if (frozen !== undefined) { provenCodeSources.set(code.id, frozen); provenCodeSourceFiles.set(code.id, frozenSources); continue; }
     const evidence = snapshot.projectSources.filter((source) => source.codeComponentId === code.id);
     const sourceIssues = verifyProjectCodeSources({ schemaVersion: 1, id: request.projectId, components: [code] }, evidence);
     issues.push(...sourceIssues);
@@ -89,6 +90,7 @@ export function validateStructuredDesign(input: ValidateStructuredDesignRequest,
       if (proofPaths.has(code.sourcePath) && proofPaths.get(code.sourcePath) !== evidence[0].sourceText) issues.push(diagnostic('ODDS6005', 'Project code source paths must identify one exact byte snapshot.'));
       proofPaths.set(code.sourcePath, evidence[0].sourceText);
       provenCodeSources.set(code.id, evidence[0].sourceText);
+      provenCodeSourceFiles.set(code.id, new Map(evidence[0].sourceFiles?.map((file) => [file.sourcePath, file.sourceText])));
     }
   }
   const availableRoles = { react: new Set<DesignControlRole>(), vue: new Set<DesignControlRole>() }; const boundCodes = new Set<string>();
@@ -125,7 +127,7 @@ export function validateStructuredDesign(input: ValidateStructuredDesignRequest,
     if (node.type === 'component') Object.values(node.slots ?? {}).forEach((children) => children.forEach(visitTokens));
   };
   (resolvedDocument ?? snapshot.document)?.screens.forEach((screen) => screen.children.forEach(visitTokens));
-  const source = analyzeDesignSources({ sources: request.sources, codes, provenCodeSources, frozenSources, ...(host ? { auditPaths: host.auditPaths } : {}) }, request.outputs);
+  const source = analyzeDesignSources({ sources: request.sources, codes, provenCodeSources, provenCodeSourceFiles, frozenSources, ...(host ? { auditPaths: host.auditPaths } : {}) }, request.outputs);
   issues.push(...source.diagnostics); coverage.source = source.complete && request.outputs.length > 0; coverage.imports = source.importsComplete;
   coverage.styles = true;
   for (const style of source.styles) {
@@ -172,7 +174,11 @@ export function validateStructuredDesign(input: ValidateStructuredDesignRequest,
     for (const framework of ['react', 'vue'] as const) {
       const selected = source.outputs.filter((entry) => request.sources.find((file) => file.sourcePath === entry.output.sourcePath)?.language === (framework === 'react' ? 'tsx' : 'vue'));
       if (!selected.length) continue;
-      const { tokens: _tokens, ...handoffSnapshot } = snapshot;
+      const { tokens: _tokens, projectSources, ...sharedSnapshot } = snapshot;
+      // Validation also proves unlocked design-system code from current bytes.
+      // Handoff's project evidence belongs only to its project-owned code index.
+      const projectCodeIds = new Set(snapshot.projectCodeIndex.components.map((code) => code.id));
+      const handoffSnapshot = { ...sharedSnapshot, projectSources: projectSources.filter((source) => projectCodeIds.has(source.codeComponentId)) };
       const handoff = createHandoff({ id: 'validation', projectId: request.projectId, projectRevision: request.projectRevision, framework, snapshot: { ...handoffSnapshot, document: snapshot.document } });
       const calls = handoff.manifest ? materializeHandoffCalls(handoff.manifest) : undefined;
       issues.push(...(calls?.diagnostics ?? handoff.diagnostics));

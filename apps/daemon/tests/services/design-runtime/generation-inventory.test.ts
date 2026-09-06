@@ -1,15 +1,73 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, realpath, rename, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 import { captureGenerationInventory, generationInventoryChanges, generationInventoryIO } from '../../../src/services/design-runtime/generation-inventory.js';
+import { validateStructuredDesign } from '../../../src/services/design-runtime/design-validation.js';
+import { createDesignSystemVersion, createProjectDesignSystemLock } from '../../../src/services/design-runtime/design-system-version.js';
+import { validationFixture } from '../../fixtures/design-runtime/validation-benchmark.js';
 
 const roots: string[] = [];
 async function root() { const value = await realpath(await mkdtemp(path.join(os.tmpdir(), 'od-generation-inventory-'))); roots.push(value); return value; }
 afterEach(async () => { for (const value of roots.splice(0)) await rm(value, { recursive: true, force: true }); });
 
 describe('complete generation source inventory', () => {
+  it('preserves BOM and CRLF in source text and hashes their original bytes independently', async () => {
+    const dir = await root();
+    const originals = new Map([
+      ['bom.html', '\uFEFF<main>Exact bytes</main>\r\n'],
+      ['crlf.html', '<main>Exact bytes</main>\r\n'],
+      ['lf.html', '<main>Exact bytes</main>\n'],
+    ]);
+    for (const [name, text] of originals) await writeFile(path.join(dir, name), text);
+    const captured = await captureGenerationInventory(dir);
+    expect(captured.inventory.complete).toBe(true);
+    for (const [name, text] of originals) {
+      const bytes = Buffer.from(text, 'utf8');
+      expect(captured.sources.find((source) => source.sourcePath === name)?.sourceText).toBe(text);
+      expect(captured.inventory.files.find((file) => file.path === name)).toMatchObject({
+        size: bytes.length, digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+      });
+    }
+    expect(new Set(captured.inventory.files.map((file) => file.digest)).size).toBe(3);
+    await writeFile(path.join(dir, 'invalid.tsx'), Buffer.from([0xef, 0xbb, 0xbf, 0xc3, 0x28]));
+    const invalid = await captureGenerationInventory(dir);
+    expect(invalid.inventory.complete).toBe(false);
+    expect(invalid.sources.some((source) => source.sourcePath === 'invalid.tsx')).toBe(false);
+    expect(invalid.inventory.diagnostics).toContainEqual(expect.objectContaining({ code: 'ODDS6005', location: { sourcePath: 'invalid.tsx', line: 1, column: 1 } }));
+  });
+
+  it.each(['library/button.tsx', 'library/button.module.css'])('validates captured frozen BOM sources exactly and rejects changed bytes in %s', async (changedPath) => {
+    const dir = await root(); const request = validationFixture();
+    const pkg = structuredClone(request.snapshot.versions[0]!.package);
+    for (const file of pkg.source.files) file.content = `\uFEFF${file.content}\r\n`;
+    pkg.source.files.push({ path: 'library/button.module.css', encoding: 'utf8', content: '\uFEFF.button { color: #fa0000; padding: 13px; }\r\n' });
+    const version = createDesignSystemVersion(pkg);
+    request.snapshot.versions = [version]; request.snapshot.lock = createProjectDesignSystemLock(request.projectId, [version]);
+    const write = async (name: string, content: string) => { await mkdir(path.dirname(path.join(dir, name)), { recursive: true }); await writeFile(path.join(dir, name), content); };
+    for (const file of pkg.source.files) await write(file.path, file.content);
+    const baseline = await captureGenerationInventory(dir);
+    request.sources[0]!.sourceText = `import '../library/button.module.css';\n${request.sources[0]!.sourceText}`;
+    for (const source of request.sources) await write(source.sourcePath, source.sourceText);
+    const captured = await captureGenerationInventory(dir);
+    const changes = generationInventoryChanges(baseline.inventory, captured.inventory);
+    expect(captured.inventory.complete).toBe(true);
+    request.sources = captured.sources;
+    expect(validateStructuredDesign(request, { auditPaths: changes.changed })).toMatchObject({
+      accepted: true, strictReady: true, diagnostics: [], metrics: { rawColors: 0, rawSpacing: 0 },
+    });
+    await write(changedPath, pkg.source.files.find((file) => file.path === changedPath)!.content.replace(/\r\n/g, '\n'));
+    const changed = await captureGenerationInventory(dir);
+    const changedFiles = generationInventoryChanges(baseline.inventory, changed.inventory).changed;
+    expect(changedFiles).toContain(changedPath);
+    request.sources = changed.sources;
+    expect(validateStructuredDesign(request, { auditPaths: changedFiles })).toMatchObject({ accepted: false, strictReady: false,
+      diagnostics: expect.arrayContaining([expect.objectContaining({ code: 'ODDS6005', location: expect.objectContaining({ sourcePath: changedPath }) })]),
+    });
+  });
+
   it('hashes Vue and hidden source bytes and detects same-size same-mtime rewrites', async () => {
     const dir = await root(); await mkdir(path.join(dir, '.pages')); const file = path.join(dir, '.pages', 'View.vue');
     await writeFile(file, '<template>first</template>'); await utimes(file, 1000, 1000);

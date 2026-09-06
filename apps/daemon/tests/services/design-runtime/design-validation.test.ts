@@ -43,6 +43,53 @@ describe('structural design validation', () => {
     expect(result.metrics.rawSpacing).toBe(0); // Frozen Field implementation contains raw padding.
   });
 
+  it('separates unlocked base-source proof from project-owned handoff proof while retaining the exact-lock requirement', () => {
+    const request = validationFixture('react');
+    const version = request.snapshot.versions[0]!;
+    request.snapshot.projectSources = request.snapshot.baseCodeIndex.components.map((code) => ({
+      codeComponentId: code.id, sourceText: version.package.source.files.find((file) => file.path === code.sourcePath)!.content,
+    }));
+    request.snapshot.versions = [];
+    request.snapshot.lock.dependencies = [];
+    request.snapshot.dependencies.dependencies = [];
+    expect(request.snapshot.projectCodeIndex.components).toEqual([]);
+
+    const result = validateStructuredDesign(request);
+    expect(result.coverage.bindings).toBe(true);
+    expect(result.diagnostics.filter((issue) => issue.code === 'ODDS7004')).toEqual([]);
+    expect(result).toMatchObject({ accepted: false, strictReady: false, diagnostics: expect.arrayContaining([
+      expect.objectContaining({ code: 'ODDS5003', message: expect.stringContaining('explicitly lock') }),
+    ]) });
+    // The handoff boundary itself remains strict about project evidence ownership.
+    const { tokens: _tokens, ...snapshot } = request.snapshot;
+    const handoff = createHandoff({ id: 'unlocked', projectId: request.projectId, projectRevision: request.projectRevision,
+      framework: 'react', snapshot: { ...snapshot, document: snapshot.document! } });
+    expect(handoff.diagnostics).toContainEqual(expect.objectContaining({ code: 'ODDS7004', message: expect.stringContaining('uniquely') }));
+  });
+
+  it.each(['base', 'project'] as const)('still proves the current %s code contract before adapting mixed evidence to handoff', (owner) => {
+    const request = localFixture('react');
+    const version = request.snapshot.versions[0]!;
+    request.snapshot.projectSources.push(...request.snapshot.baseCodeIndex.components.map((code) => ({
+      codeComponentId: code.id, sourceText: version.package.source.files.find((file) => file.path === code.sourcePath)!.content,
+    })));
+    request.snapshot.versions = [];
+    request.snapshot.lock.dependencies = [];
+    request.snapshot.dependencies.dependencies = [];
+    const valid = validateStructuredDesign(request);
+    expect(valid.coverage.bindings).toBe(true);
+    expect(valid.diagnostics.filter((issue) => issue.code === 'ODDS7004')).toEqual([]);
+    expect(valid.diagnostics).toContainEqual(expect.objectContaining({ code: 'ODDS5003' }));
+
+    const code = (owner === 'base' ? request.snapshot.baseCodeIndex : request.snapshot.projectCodeIndex).components[0]!;
+    request.snapshot.projectSources.find((entry) => entry.codeComponentId === code.id)!.sourceText =
+      `export function ${code.exportName}(props:{changedRequiredContract:number}){return null;}`;
+    const stale = validateStructuredDesign(request);
+    expect(stale).toMatchObject({ accepted: false, strictReady: false, coverage: { bindings: false }, diagnostics: expect.arrayContaining([
+      expect.objectContaining({ code: 'ODDS7004', message: expect.stringContaining(code.id) }),
+    ]) });
+  });
+
   it.each(['react', 'vue'] as const)('accepts canonical %s literal object emission and rejects modified props or slot order', (framework) => {
     const request = validationFixture(framework);
     const { tokens: _tokens, ...snapshot } = request.snapshot;
