@@ -23,6 +23,7 @@ import { pathExists } from "./fs.js";
 import { resolveMacInstallIdentity } from "./identity.js";
 import { readPackagedVersion } from "./manifest.js";
 import { sanitizeNamespace } from "./paths.js";
+import { assertMacDeveloperIdSignature } from "./sign.js";
 import type { ElectronBuilderTarget, MacBuildOutput, MacPaths } from "./types.js";
 
 async function assertWebStandaloneOutput(config: ToolPackConfig): Promise<void> {
@@ -87,7 +88,11 @@ export async function runElectronBuilder(
   config: ToolPackConfig,
   paths: MacPaths,
   targets: ElectronBuilderTarget[],
+  verifySignedApp = assertMacDeveloperIdSignature,
 ): Promise<void> {
+  if (config.macNotarize && !config.signed) {
+    throw new Error("tools-pack mac --notarize requires --signed");
+  }
   const namespaceToken = sanitizeNamespace(config.namespace);
   const identity = resolveMacInstallIdentity(config);
   const packagedVersion = await readPackagedVersion(config);
@@ -127,6 +132,9 @@ export async function runElectronBuilder(
       domToPptxBundleResource(config),
     ],
     files: [...ELECTRON_BUILDER_FILE_PATTERNS],
+    // Electron-builder otherwise falls back to ad hoc signing on arm64 when
+    // a Developer ID identity is unavailable, even for an explicit --signed.
+    forceCodeSigning: config.signed,
     mac: {
       category: "public.app-category.developer-tools",
       electronLanguages: MAC_ELECTRON_LANGUAGES,
@@ -136,6 +144,8 @@ export async function runElectronBuilder(
       hardenedRuntime: config.signed,
       icon: macResources.icon,
       identity: config.signed ? undefined : null,
+      // Explicit distribution also prevents fallback to Mac Developer identities.
+      type: "distribution",
       notarize: config.macNotarize ? undefined : false,
       target: targets,
     },
@@ -183,6 +193,7 @@ export async function runElectronBuilder(
       ...(webStandaloneHookConfigPath == null ? {} : { [WEB_STANDALONE_HOOK_CONFIG_ENV]: webStandaloneHookConfigPath }),
     },
   });
+  if (config.signed) await verifySignedApp(paths.appPath);
   await assertNodePtyRuntime({
     appRoot: join(paths.appPath, "Contents", "Resources", "app"),
     arch: resolveNodePtyRuntimeArch(process.arch),

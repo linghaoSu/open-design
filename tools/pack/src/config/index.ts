@@ -275,6 +275,9 @@ export function resolveToolPackConfig(
   platform: ToolPackPlatform,
   options: ToolPackCliOptions = {},
 ): ToolPackConfig {
+  if (platform === "mac" && options.notarize === true && options.signed !== true) {
+    throw new Error("tools-pack mac --notarize requires --signed");
+  }
   const appVersion = resolveToolPackAppVersion(options.appVersion);
   const namespace = resolveNamespace({
     contract: OPEN_DESIGN_SIDECAR_CONTRACT,

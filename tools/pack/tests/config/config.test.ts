@@ -76,6 +76,18 @@ describe("resolveToolPackConfig Vela CLI requirement", () => {
   });
 });
 
+describe("resolveToolPackConfig mac signing requirements", () => {
+  it.each([undefined, false])("rejects notarization without explicit signing (%s)", (signed) => {
+    expect(() => resolveToolPackConfig("mac", { notarize: true, ...(signed === undefined ? {} : { signed }) }))
+      .toThrow(/--notarize requires --signed/);
+  });
+
+  it("retains explicitly unsigned local builds and accepts signed notarized builds", () => {
+    expect(resolveToolPackConfig("mac", { signed: false })).toMatchObject({ signed: false, macNotarize: false });
+    expect(resolveToolPackConfig("mac", { signed: true, notarize: true })).toMatchObject({ signed: true, macNotarize: true });
+  });
+});
+
 describe("resolveToolPackConfig win build target", () => {
   it("accepts the portable zip target and rejects unsupported values", () => {
     expect(resolveToolPackConfig("win", { to: "zip" }).to).toBe("zip");

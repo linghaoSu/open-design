@@ -3,7 +3,7 @@ import os, { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ToolPackConfig } from "@/config/index.js";
 import {
@@ -365,7 +365,7 @@ describe("renderMacPackagedConfig", () => {
 });
 
 describe("runElectronBuilder", () => {
-  async function prepareElectronBuilderConfig(root: string, overrides: Partial<ToolPackConfig>) {
+  async function prepareElectronBuilderConfig(root: string, overrides: Partial<ToolPackConfig>, verifySignedApp = vi.fn(async (_appPath: string) => {})) {
     const cliPath = join(root, "fake-electron-builder.mjs");
 
     const config = makeConfig(root, {
@@ -400,12 +400,18 @@ describe("runElectronBuilder", () => {
       "utf8",
     );
 
-    await runElectronBuilder(config, paths, ["dir"]);
+    await runElectronBuilder(config, paths, ["dir"], verifySignedApp);
+    if (config.signed) expect(verifySignedApp).toHaveBeenCalledWith(paths.appPath);
+    else expect(verifySignedApp).not.toHaveBeenCalled();
 
     return JSON.parse(await readFile(paths.appBuilderConfigPath, "utf8")) as {
       afterSign?: string;
+      forceCodeSigning?: boolean;
       mac?: {
         notarize?: boolean;
+        identity?: string | null;
+        type?: string;
+        hardenedRuntime?: boolean;
       };
     };
   }
@@ -429,6 +435,55 @@ describe("runElectronBuilder", () => {
 
       expect(builderConfig.afterSign).toBeUndefined();
       expect(builderConfig.mac?.notarize).toBe(false);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  it("requires Developer ID distribution signing instead of electron-builder's ad hoc or development fallback", async () => {
+    const root = await mkdtemp(join(tmpdir(), "open-design-tools-pack-mac-"));
+    try {
+      const builderConfig = await prepareElectronBuilderConfig(root, { signed: true, macNotarize: false });
+      // These are the downstream signing contract: forceCodeSigning forbids
+      // arm64 ad hoc fallback; explicit distribution forbids Mac Developer fallback.
+      expect(builderConfig.forceCodeSigning).toBe(true);
+      expect(builderConfig.mac).toMatchObject({ type: "distribution", hardenedRuntime: true });
+      expect(builderConfig.mac).not.toHaveProperty("identity");
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  it("preserves the explicitly unsigned local beta path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "open-design-tools-pack-mac-"));
+    try {
+      const builderConfig = await prepareElectronBuilderConfig(root, { signed: false, macNotarize: false });
+      expect(builderConfig.forceCodeSigning).toBe(false);
+      expect(builderConfig.mac).toMatchObject({ identity: null, hardenedRuntime: false, notarize: false });
+      expect(builderConfig.afterSign).toBeUndefined();
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects an invalid unsigned notarization request before writing a builder configuration", async () => {
+    const root = await mkdtemp(join(tmpdir(), "open-design-tools-pack-mac-"));
+    try {
+      const config = makeConfig(root, { signed: false, macNotarize: true, webOutputMode: "server" });
+      const paths = resolveMacPaths(config);
+      await expect(runElectronBuilder(config, paths, ["dir"])).rejects.toThrow(/--notarize requires --signed/);
+      await expect(readFile(paths.appBuilderConfigPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  it("fails the build when the final signed app fails verification even after electron-builder exits successfully", async () => {
+    const root = await mkdtemp(join(tmpdir(), "open-design-tools-pack-mac-"));
+    try {
+      const verify = vi.fn(async (_appPath: string) => { throw new Error("Developer ID requirement failed"); });
+      await expect(prepareElectronBuilderConfig(root, { signed: true }, verify)).rejects.toThrow("Developer ID requirement failed");
+      expect(verify).toHaveBeenCalledOnce();
     } finally {
       await rm(root, { force: true, recursive: true });
     }
