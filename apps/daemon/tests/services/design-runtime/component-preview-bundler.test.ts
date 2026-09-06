@@ -16,6 +16,34 @@ const sources = new Map<string, Uint8Array>([
 const read = async (path: string) => { const value = sources.get(path); if (!value) throw new Error('Missing'); return value; };
 
 describe('standalone component preview bundle', () => {
+  it('renders CSS Module class mappings and keeps ordinary CSS global', async () => {
+    const sourceText = `import {forwardRef} from 'react';import styles from './button.module.css';import other from './badge.module.css';import './global.css';
+export const Button=forwardRef(function Button({children},ref){return <button ref={ref} className={styles.button+' '+styles.primary}><span className={other.button}>{children}</span></button>});`;
+    const files = new Map([
+      ['button.module.css', '.button{display:inline-flex;height:36px}.primary{background-color:rgb(30,40,50)}'],
+      ['badge.module.css', '.button{color:rgb(70,80,90)}'],
+      ['global.css', 'button{border-radius:7px}'],
+    ]);
+    const built = await bundleComponentPreview({ sourcePath: 'Button.tsx', sourceText, exportName: 'Button', props: { children: 'Styled button' }, callbacks: [] },
+      { readProjectSource: async (path) => { const value = files.get(path); if (value === undefined) throw new Error('Missing'); return value; } });
+    expect(built.diagnostics).toEqual([]); expect(built.bundle).not.toBeNull();
+    const dom = new JSDOM('<div id="od-preview-root"></div>', { runScripts: 'outside-only' });
+    try {
+      const style = dom.window.document.createElement('style'); style.textContent = built.bundle!.css; dom.window.document.head.append(style);
+      dom.window.eval(built.bundle!.javascript);
+      await vi.waitFor(() => expect(dom.window.document.querySelector('button')?.textContent).toBe('Styled button'));
+      const button = dom.window.document.querySelector('button')!; const badge = button.querySelector('span')!;
+      expect(button.className).not.toContain('undefined'); expect(button.classList).toHaveLength(2);
+      expect([...button.classList]).not.toContain(badge.className);
+      expect(dom.window.getComputedStyle(button).display).toBe('inline-flex');
+      expect(dom.window.getComputedStyle(button).height).toBe('36px');
+      expect(dom.window.getComputedStyle(button).backgroundColor).toBe('rgb(30, 40, 50)');
+      expect(dom.window.getComputedStyle(button).borderRadius).toBe('7px');
+      expect(dom.window.getComputedStyle(badge).color).toBe('rgb(70, 80, 90)');
+      for (const path of files.keys()) expect(built.sourceEvidence.some((item) => item.sourcePath === path && item.origin === 'current-project')).toBe(true);
+    } finally { dom.window.close(); }
+  });
+
   it('reports missing Provider context and renders a real local wrapper with imported props and editable JSON overrides', async () => {
     const files = new Map([
       ['types.ts', `export type CardProps={items:{label:string}[];variant:'compact'|'wide'};`],

@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createRequire } from 'node:module';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -13,8 +14,34 @@ import { emitHandoffCode } from '../../../src/services/design-runtime/handoff-em
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
 const unavailable = async () => { throw new Error('Unavailable project source'); };
+// The daemon's existing DOM test runtime ships without TypeScript declarations.
+const { JSDOM } = createRequire(import.meta.url)('jsdom');
 
 describe('verified preview bundling', () => {
+  it('renders CSS Module mappings in actual emitted production handoff code', async () => {
+    const input = localHandoffFixture(); const { snapshot } = input;
+    const path = snapshot.projectCodeIndex.components[0]!.sourcePath;
+    const source = `import styles from './card.module.css';\n${snapshot.projectSources[0]!.sourceText.replace('<article>', '<article className={styles.card}>')}`;
+    snapshot.projectSources[0]!.sourceText = source;
+    const manifest = createHandoff(input).manifest!; expect(manifest.ready).toBe(true);
+    const file = emitHandoffCode({ manifest, outputs: [{ screenId: 'main', sourcePath: 'src/Screen.tsx', exportName: 'Screen' }] }).files[0]!;
+    const cssPath = 'src/components/card.module.css';
+    const result = await bundleDesignPreview(file, snapshot, 'production-handoff', { readProjectSource: async (candidate) => candidate === path ? source : candidate === cssPath ? '.card{display:grid;padding:12px;color:rgb(40,50,60)}' : unavailable() });
+    expect(result.diagnostics).toEqual([]); expect(result.bundle).not.toBeNull();
+    const dom = new JSDOM('<div id="od-preview-root"></div>', { runScripts: 'outside-only' });
+    try {
+      const style = dom.window.document.createElement('style'); style.textContent = result.bundle!.css; dom.window.document.head.append(style);
+      dom.window.eval(result.bundle!.javascript);
+      await vi.waitFor(() => expect(dom.window.document.querySelectorAll('article')).toHaveLength(2));
+      const card = dom.window.document.querySelector('article')!;
+      expect(card.textContent).toBe('filled'); expect(card.className).not.toBe('');
+      expect(dom.window.getComputedStyle(card).display).toBe('grid');
+      expect(dom.window.getComputedStyle(card).padding).toBe('12px');
+      expect(dom.window.getComputedStyle(card).color).toBe('rgb(40, 50, 60)');
+      expect(result.sourceEvidence.some((entry) => entry.sourcePath === cssPath && entry.origin === 'current-project')).toBe(true);
+    } finally { dom.window.close(); }
+  });
+
   it.each(['react', 'vue'] as const)('bundles actual frozen %s source with explicitly identified tool runtime, without executing source', async (framework) => {
     const { input, request } = previewFixture(framework); input.targetPackages = [{ name: '@acme/ui', installation: { status: 'unknown' } }];
     const side = prepareDesignPreview(input, request).sides[0]!;

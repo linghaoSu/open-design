@@ -75,8 +75,10 @@ describe("mac standalone prebundle policy", () => {
     expect(MAC_PREBUNDLE_POLICIES.daemonCli.externals).toEqual([
       "@ffmpeg-installer/ffmpeg",
       "@open-design/sidecar",
+      "@vue/compiler-sfc",
       "better-sqlite3",
       "blake3-wasm",
+      "esbuild",
       "fsevents",
       "hyperframes",
       "node-pty",
@@ -84,8 +86,10 @@ describe("mac standalone prebundle policy", () => {
     expect(MAC_PREBUNDLE_POLICIES.daemonSidecar.externals).toEqual([
       "@ffmpeg-installer/ffmpeg",
       "@open-design/sidecar",
+      "@vue/compiler-sfc",
       "better-sqlite3",
       "blake3-wasm",
+      "esbuild",
       "fsevents",
       "hyperframes",
       "node-pty",
@@ -97,11 +101,16 @@ describe("mac standalone prebundle policy", () => {
     // the daemon dies at boot with ERR_MODULE_NOT_FOUND (issue #4638).
     expect(MAC_PREBUNDLE_RUNTIME_DEPENDENCIES).toEqual({
       "@ffmpeg-installer/ffmpeg": "1.1.0",
+      "@vue/compiler-sfc": "3.5.42",
       "better-sqlite3": "12.10.0",
       "blake3-wasm": "2.1.5",
+      "esbuild": "0.28.0",
       "hyperframes": "0.8.1",
       "node-pty": "1.1.0",
+      "react": "18.3.1",
+      "react-dom": "18.3.1",
       "sharp": "0.35.3",
+      "vue": "3.5.42",
     });
     expect(MAC_PREBUNDLE_COPIED_RUNTIME_DEPENDENCIES).toEqual({ "fsevents": "2.3.3" });
     expect(MAC_PREBUNDLED_DAEMON_CLI_RELATIVE_PATH).toBe("app/prebundled/daemon/daemon-cli.mjs");
@@ -133,6 +142,31 @@ describe("mac standalone prebundle policy", () => {
       expect(Object.keys(result.metafile.inputs).some((input) => input.includes("/node_modules/fsevents/"))).toBe(
         false,
       );
+    },
+  );
+
+  it(
+    "preserves Vue's optional preprocessor loading and esbuild's native binary boundary",
+    async () => {
+      const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
+      const result = await build({
+        bundle: true,
+        external: [...MAC_PREBUNDLE_POLICIES.daemonSidecar.externals],
+        format: "esm",
+        logLevel: "silent",
+        metafile: true,
+        platform: "node",
+        stdin: {
+          contents: 'export { parse, compileScript, compileStyle } from "@vue/compiler-sfc"; export { context } from "esbuild";',
+          loader: "js",
+          resolveDir: join(workspaceRoot, "apps", "daemon"),
+        },
+        target: MAC_PREBUNDLE_ESBUILD_TARGET,
+        write: false,
+      });
+      expect(Object.keys(result.metafile.inputs)).toEqual(["<stdin>"]);
+      expect(result.outputFiles[0]?.text).toContain('from "@vue/compiler-sfc"');
+      expect(result.outputFiles[0]?.text).toContain('from "esbuild"');
     },
   );
 

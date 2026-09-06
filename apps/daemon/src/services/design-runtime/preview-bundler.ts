@@ -237,7 +237,10 @@ async function bundlePreview(file: PreviewEntry, policy: PreviewSourcePolicy, au
           data = module.contents ?? await readBounded(join(module.package!.root, module.path)); loaded.set(args.path, data); record(module, data);
           if (module.origin === 'installed-package') installed.set(join(module.package!.root, module.path), data);
         }
-        const extension = extname(module.path).toLowerCase(); const loader = module.loader ?? loaderFor(extension);
+        const extension = extname(module.path).toLowerCase();
+        // Preserve CSS Module exports and scoped selectors in every preview
+        // entry point; ordinary stylesheets retain their global CSS semantics.
+        const loader = module.loader ?? (/\.module\.css$/i.test(module.path) ? 'local-css' : loaderFor(extension));
         if (loader === 'dataurl') {
           // Esbuild sees an opaque virtual ID, so preserve MIME from the proven source path.
           return { contents: `export default ${JSON.stringify(`data:${assetMime[extension]};base64,${Buffer.from(data).toString('base64')}`)};`, loader: 'js' };

@@ -25,11 +25,18 @@ export const MAC_PREBUNDLE_ENTRYPOINTS_DIR_NAME = "prebundle-entrypoints";
 // that. Keep every entry equal to the daemon's corresponding exact pin.
 export const MAC_PREBUNDLE_RUNTIME_DEPENDENCIES = {
   "@ffmpeg-installer/ffmpeg": "1.1.0",
+  "@vue/compiler-sfc": "3.5.42",
   "better-sqlite3": "12.10.0",
   "blake3-wasm": "2.1.5",
+  "esbuild": "0.28.0",
   "hyperframes": "0.8.1",
   "node-pty": "1.1.0",
+  // Preview reads the framework source files at runtime. They must exist in
+  // the installed app even though daemon code does not import React or Vue.
+  "react": "18.3.1",
+  "react-dom": "18.3.1",
   "sharp": "0.35.3",
+  "vue": "3.5.42",
 } as const;
 
 // npm 11 synthesizes a `node-gyp rebuild` install step for fsevents even
@@ -63,13 +70,17 @@ export const MAC_PREBUNDLE_POLICIES = {
     label: "packaged main",
   },
   daemonCli: {
-    externals: ["@ffmpeg-installer/ffmpeg", "@open-design/sidecar", "better-sqlite3", "blake3-wasm", "fsevents", "hyperframes", "node-pty"],
+    // SFC loads optional template engines lazily; esbuild resolves its own
+    // native binary relative to its package. Neither can be inlined safely.
+    externals: ["@ffmpeg-installer/ffmpeg", "@open-design/sidecar", "@vue/compiler-sfc", "better-sqlite3", "blake3-wasm", "esbuild", "fsevents", "hyperframes", "node-pty"],
     forbiddenInputs: [
       "/node_modules/@open-design/daemon/",
       "/node_modules/@ffmpeg-installer/ffmpeg/",
+      "/node_modules/@vue/compiler-sfc/",
       "/node_modules/better-sqlite3/",
       "/node_modules/blake3-wasm/",
       "/node_modules/electron/",
+      "/node_modules/esbuild/",
       "/node_modules/fsevents/",
       "/node_modules/hyperframes/",
       "/node_modules/next/",
@@ -81,13 +92,15 @@ export const MAC_PREBUNDLE_POLICIES = {
     label: "daemon cli",
   },
   daemonSidecar: {
-    externals: ["@ffmpeg-installer/ffmpeg", "@open-design/sidecar", "better-sqlite3", "blake3-wasm", "fsevents", "hyperframes", "node-pty"],
+    externals: ["@ffmpeg-installer/ffmpeg", "@open-design/sidecar", "@vue/compiler-sfc", "better-sqlite3", "blake3-wasm", "esbuild", "fsevents", "hyperframes", "node-pty"],
     forbiddenInputs: [
       "/node_modules/@open-design/daemon/",
       "/node_modules/@ffmpeg-installer/ffmpeg/",
+      "/node_modules/@vue/compiler-sfc/",
       "/node_modules/better-sqlite3/",
       "/node_modules/blake3-wasm/",
       "/node_modules/electron/",
+      "/node_modules/esbuild/",
       "/node_modules/fsevents/",
       "/node_modules/hyperframes/",
       "/node_modules/next/",

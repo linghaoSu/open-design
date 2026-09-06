@@ -18,6 +18,8 @@ corepack pnpm tools-pack mac start --namespace design-loom --app-version 0.1.0-b
 
 `install` 使用工具管理的独立安装位置。也可以打开生成的 DMG，将 **Design Loom.app** 安装到自己的应用目录。使用 `tools-pack mac logs`、`stop` 时保持同一 namespace 和 `--app-version 0.1.0-beta.1`。公开分发时需另外准备签名与公证；本地构建和原生运行验收不等同于这一发行手续。
 
+日常使用请双击安装后的 **Design Loom.app**。工具启动使用专门的测试数据空间，双击启动使用应用自己的数据空间；二者各自持久保存项目。验收后的示例项目将保留在双击启动的应用中。
+
 第一次启动时选择本地编码代理，例如已安装并登录的 Codex，也可以使用自己的 API 配置。OpenDesign Cloud 属于第三方服务，保留真实提供方名称。
 
 ## 日常工作入口
