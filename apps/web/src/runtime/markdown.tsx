@@ -551,6 +551,22 @@ function renderColorToken(value: string, key: string): ReactNode {
   );
 }
 
+// Angle brackets delimit a CommonMark destination; percent-encoded brackets
+// remain part of the URL. Only the Markdown parser removes this syntax, so
+// routing and literal on-disk names keep their existing normalization rules.
+function markdownDestination(raw: string): string {
+  return raw.startsWith('<') && raw.endsWith('>')
+    ? raw.slice(1, -1).replace(/\\([!-/:-@[-`{-~])/g, '$1')
+    : raw;
+}
+
+function isSafeMarkdownLinkHref(href: string): boolean {
+  // Browsers ignore ASCII whitespace/control characters in executable schemes.
+  // Unwrapping Markdown must not turn those destinations into active links.
+  const protocol = href.replace(/[\u0000-\u0020\u007f]/g, '');
+  return !/^(?:javascript|vbscript|data):/i.test(protocol);
+}
+
 // Inline pass: tokenize into runs of `code`, **bold**, *italic*, links,
 // and plain text. We walk the string with a regex that matches whichever
 // delimiter shows up next; everything between delimiters becomes a text
@@ -575,7 +591,7 @@ function renderInline(text: string, options?: RenderMarkdownOptions): ReactNode 
   //     leaving italic to win turns the URL into an italic-fragmented mess.
   //  5. bold (**a** / __a__) before italic (*a* / _a_).
   const re =
-    /(`[^`]+`)|!\[([^\]]*)\]\(([^)\s]+)\)|\[([^\]]+)\]\(([^)\s]+)\)|(https?:\/\/[^\s)<>]+)|(\*\*[^*]+\*\*)|(__[^_]+__)|(\*[^*\n]+\*)|(_[^_\n]+_)/g;
+    /(`[^`]+`)|!\[([^\]]*)\]\((<(?:\\.|[^\\<>\r\n])*?>|[^)\s<>]+)\)|\[([^\]]+)\]\((<(?:\\.|[^\\<>\r\n])*?>|[^)\s<>]+)\)|(https?:\/\/[^\s)<>]+)|(\*\*[^*]+\*\*)|(__[^_]+__)|(\*[^*\n]+\*)|(_[^_\n]+_)/g;
   let lastIndex = 0;
   let m: RegExpExecArray | null;
   let key = 0;
@@ -587,7 +603,7 @@ function renderInline(text: string, options?: RenderMarkdownOptions): ReactNode 
       out.push(renderInlineCodeSpan(m[1].slice(1, -1), key++));
     } else if (m[3] !== undefined) {
       // Image: m[2] = alt (may be empty), m[3] = src
-      const src = m[3];
+      const src = markdownDestination(m[3]);
       const alt = m[2] || '';
       if (isSafeMarkdownImageSrc(src)) {
         out.push(
@@ -607,7 +623,12 @@ function renderInline(text: string, options?: RenderMarkdownOptions): ReactNode 
         pushText(out, alt, key++, options);
       }
     } else if (m[4] && m[5]) {
-      const href = m[5];
+      const href = markdownDestination(m[5]);
+      if (!isSafeMarkdownLinkHref(href)) {
+        out.push(<Fragment key={key++}>{m[4]}</Fragment>);
+        lastIndex = re.lastIndex;
+        continue;
+      }
       out.push(
         <a
           key={key++}

@@ -273,6 +273,23 @@ describe('renderMarkdown', () => {
     expect(out).not.toContain('<a class="md-link"');
   });
 
+  it.each(['/api/byok-image/My image (1).png', 'https://example.com/art (final).png'])(
+    'renders an angle-wrapped image destination without losing spaces or parentheses: %s', (src) => {
+      const { container } = render(<div>{renderMarkdown(`![Design](<${src}>)`)}</div>);
+      expect(container.querySelector('img')?.getAttribute('src')).toBe(src);
+      expect(container.querySelector('img')?.getAttribute('alt')).toBe('Design');
+      expect(container.querySelector('a')).toBeNull();
+    },
+  );
+
+  it('applies the existing image scheme policy after removing the angle wrapper', () => {
+    const { container } = render(<div>{renderMarkdown('![Unsafe](<javascript:alert(1)>) ![Local](<file:///private/picture.png>) ![Network](<//example.com/picture.png>)')}</div>);
+    expect(container.querySelector('img')).toBeNull();
+    expect(container).toHaveTextContent('Unsafe');
+    expect(container).toHaveTextContent('Local');
+    expect(container).toHaveTextContent('Network');
+  });
+
   it('renders ![](url) with empty alt text', () => {
     const out = html('![](/api/byok-image/abc.png)');
     expect(out).toContain('<img');

@@ -3,6 +3,7 @@
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderMarkdown } from '../../src/runtime/markdown';
+import { resolveChatFileLink } from '../../src/runtime/in-project-link';
 
 describe('renderMarkdown — onLinkClick option', () => {
   afterEach(() => cleanup());
@@ -22,6 +23,50 @@ describe('renderMarkdown — onLinkClick option', () => {
     anchor!.dispatchEvent(clickEvent);
     expect(clickEvent.defaultPrevented).toBe(false);
   });
+
+  it.each(['Page.tsx', 'report.md', 'screens/My Page (final).tsx', '页面/设计 (1).md'])(
+    'routes CommonMark angle destination %s using the same parsed DOM href and click value', (filePath) => {
+      const target = vi.fn();
+      const onLinkClick = vi.fn((href: string, event: { preventDefault(): void }) => {
+        event.preventDefault();
+        target(resolveChatFileLink(href, new Set([filePath]), 'current-project'));
+      });
+      const { container } = render(<div>{renderMarkdown(`[Open](<./${filePath}>)`, { onLinkClick })}</div>);
+      const anchor = container.querySelector('a')!;
+      expect(anchor).toBeTruthy();
+      expect(anchor.getAttribute('href')).toBe(`./${filePath}`);
+      fireEvent.click(anchor);
+      expect(onLinkClick.mock.calls[0]?.[0]).toBe(anchor.getAttribute('href'));
+      expect(target).toHaveBeenCalledWith({ kind: 'workspace-file', filePath });
+    },
+  );
+
+  it('preserves percent-encoded literal angle characters instead of treating them as Markdown delimiters', () => {
+    const href = './%3CPage%3E.tsx';
+    const target = vi.fn();
+    const onLinkClick = vi.fn((value: string, event: { preventDefault(): void }) => {
+      event.preventDefault(); target(resolveChatFileLink(value, new Set(['<Page>.tsx']), 'current-project'));
+    });
+    const { container } = render(<div>{renderMarkdown(`[Literal](${href}) [Wrapped](<${href}>)`, { onLinkClick })}</div>);
+    const links = [...container.querySelectorAll('a')];
+    expect(links).toHaveLength(2);
+    for (const link of links) {
+      expect(link.getAttribute('href')).toBe(href);
+      fireEvent.click(link);
+    }
+    expect(target).toHaveBeenCalledTimes(2);
+    expect(target).toHaveBeenLastCalledWith({ kind: 'workspace-file', filePath: '<Page>.tsx' });
+  });
+
+  it.each(['javascript:alert(1)', 'JaVaScRiPt:alert(1)', 'java\tscript:alert(1)', 'vbscript:msgbox(1)', 'data:text/html,unsafe'])(
+    'keeps an angle-wrapped unsafe scheme inert: %s', (destination) => {
+      const onLinkClick = vi.fn();
+      const { container } = render(<div>{renderMarkdown(`[Unsafe](<${destination}>)`, { onLinkClick })}</div>);
+      expect(container.querySelector('a')).toBeNull();
+      expect(container).toHaveTextContent('Unsafe');
+      expect(onLinkClick).not.toHaveBeenCalled();
+    },
+  );
 
   it('fires onLinkClick on explicit [text](url) link click', () => {
     const onLinkClick = vi.fn();
