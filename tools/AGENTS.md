@@ -11,6 +11,7 @@ Follow the root `AGENTS.md` first. This file only records module-level boundarie
 - `tools/pack` provides `@open-design/tools-pack` and the `tools-pack` bin. The active slice is packaged artifact build/install/start/stop/logs/uninstall/cleanup/list/reset plus beta release artifact preparation for mac and Windows lanes, plus a Linux AppImage lane with optional containerized builds.
 - `tools/serve` provides `@open-design/tools-serve` and the `tools-serve` bin. It owns local fixture services such as `tools-serve start updater`.
 - `tools/release` provides `@open-design/tools-release` and the `tools-release` bin. It owns release metadata, storage publishing, release reports, and notification-facing file/data contracts; artifact build, cache, installer, payload, and smoke work stays in `tools/pack`.
+- `tools/od-hub` provides `@open-design/tools-od-hub` with the `od-hub` (self-hosted Vela-compatible hub server) and `od-vela` (argv-compatible `VELA_BIN` shim) bins; see `tools/od-hub/README.md`.
 
 ## Retired tools
 

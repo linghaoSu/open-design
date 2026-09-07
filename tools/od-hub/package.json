@@ -1,0 +1,30 @@
+{
+  "name": "@open-design/tools-od-hub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "od-hub": "./bin/od-hub.mjs",
+    "od-vela": "./bin/od-vela.mjs"
+  },
+  "scripts": {
+    "build": "node ./esbuild.config.mjs && tsc -p tsconfig.json --emitDeclarationOnly && node --experimental-strip-types ../../packages/metatool/src/cli.ts write .",
+    "dev": "tsx ./src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json --noEmit"
+  },
+  "dependencies": {
+    "better-sqlite3": "12.10.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "7.6.13",
+    "@types/node": "24.12.2",
+    "esbuild": "0.28.0",
+    "tsx": "4.22.3",
+    "typescript": "6.0.3",
+    "vitest": "4.1.6"
+  },
+  "engines": {
+    "node": "~24"
+  }
+}

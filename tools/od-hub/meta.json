@@ -1,0 +1,7 @@
+{
+  "toolName": "od-hub",
+  "packageName": "@open-design/tools-od-hub",
+  "buildCommand": "pnpm --filter @open-design/tools-od-hub build",
+  "distEntries": ["dist/index.mjs", "dist/od-vela.mjs"],
+  "inputs": ["src", "migrations", "meta.json", "package.json", "esbuild.config.mjs", "tsconfig.json"]
+}
