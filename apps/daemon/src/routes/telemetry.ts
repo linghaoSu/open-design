@@ -5,6 +5,7 @@ import {
   type McpAnalyticsEventRequest,
   type McpAnalyticsContextResponse,
   type ObservabilityEventRequest,
+  type TelemetryConfiguration,
 } from '@open-design/contracts/analytics';
 import {
   createAnalyticsService,
@@ -12,9 +13,10 @@ import {
   readPublicConfigResponse,
 } from '../analytics.js';
 import type { AnalyticsContext } from '../analytics.js';
-import type { readAppConfig, writeAppConfig } from '../app-config.js';
+import { agentCliEnvForAgent, type readAppConfig, type writeAppConfig } from '../app-config.js';
 import { readCurrentAppVersionInfo, UNKNOWN_APP_VERSION } from '../app-version.js';
 import { reportRunFeedbackFromDaemon } from '../langfuse-bridge.js';
+import { readRunTelemetrySinkConfig, readTaskTelemetrySinkConfig } from '../langfuse-trace.js';
 import { observePendingInstallerApplyAttempts } from '../migration/index.js';
 import {
   OPEN_DESIGN_PLUGIN_ID,
@@ -120,15 +122,27 @@ export function registerTelemetryRoutes(app: Express, deps: RegisterTelemetryRou
   //   $autocapture pipeline must stay off.
   // - `key` and `host` are populated whenever the server has a build-time
   //   POSTHOG_KEY, regardless of consent, so safety/error tracking can run.
-  // - Without a build-time key, every telemetry client remains a no-op.
+  // - Without a build-time key, PostHog remains a no-op. Content sinks have
+  //   independent configuration and must still be observed for Settings.
   app.get('/api/analytics/config', async (_req, res) => {
     const baseline = readPublicConfigResponse();
-    if (!baseline.enabled) {
-      res.json(baseline);
-      return;
-    }
     try {
-      const appCfg = await deps.readAppConfig(dataDir);
+      const appCfg = await deps.readAppConfig(dataDir, { strictConfigRead: true });
+      let telemetryConfiguration: TelemetryConfiguration | null = null;
+      try {
+        const configuredAmrEnv = agentCliEnvForAgent(appCfg.agentCliEnv, 'amr');
+        const runSink = readRunTelemetrySinkConfig(process.env, configuredAmrEnv, { strictConfigRead: true });
+        // Task observations exclude Vela, while run/feedback and trace objects
+        // may use it. Observe both paths without creating clients or sending.
+        const taskSink = readTaskTelemetrySinkConfig();
+        telemetryConfiguration = { metrics: baseline.enabled, content: runSink !== null || taskSink !== null };
+      } catch {
+        // A failed read is unknown, never proof that no destination exists.
+      }
+      if (!baseline.enabled) {
+        res.json({ ...baseline, telemetryConfiguration });
+        return;
+      }
       const consentGranted = appCfg.telemetry?.metrics === true;
       const installationId =
         typeof appCfg.installationId === 'string' && appCfg.installationId
@@ -140,6 +154,7 @@ export function registerTelemetryRoutes(app: Express, deps: RegisterTelemetryRou
         key: baseline.key,
         host: baseline.host,
         installationId,
+        telemetryConfiguration,
       });
     } catch {
       res.json({
@@ -148,6 +163,7 @@ export function registerTelemetryRoutes(app: Express, deps: RegisterTelemetryRou
         key: baseline.key,
         host: baseline.host,
         installationId: null,
+        telemetryConfiguration: null,
       });
     }
   });

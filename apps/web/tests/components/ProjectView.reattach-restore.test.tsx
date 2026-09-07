@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { act, cleanup, render, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DesignGenerationReportSchema, DesignGenerationTaskProjectionSchema } from '@open-design/contracts';
 import {
   ProjectView,
   computeProducedFiles,
@@ -14,6 +15,7 @@ import {
 import { resolvePersistedArtifactHtml } from '../../src/artifacts/recover';
 import type { ChatMessage } from '../../src/types';
 import { generationReport, generationTask, generationStrategy } from '../helpers/design-generation-fixtures';
+import { artifactValidationFixture } from '../helpers/design-validation-fixtures';
 
 const listConversations = vi.fn();
 const listMessages = vi.fn();
@@ -46,6 +48,9 @@ const chatPaneHarness = vi.hoisted(() => ({
   ) => unknown),
   onStop: null as null | (() => void),
   openRequestNames: [] as string[],
+  messages: [] as ChatMessage[],
+  error: null as string | null,
+  errorSourceAssistantId: null as string | null,
 }));
 
 vi.mock('../../src/i18n', () => ({
@@ -123,12 +128,21 @@ vi.mock('../../src/components/ChatPane', () => ({
   ChatPane: ({
     onSend,
     onStop,
+    messages,
+    error,
+    errorSourceAssistantId,
   }: {
     onSend: typeof chatPaneHarness.onSend;
     onStop: typeof chatPaneHarness.onStop;
+    messages: ChatMessage[];
+    error?: string | null;
+    errorSourceAssistantId?: string | null;
   }) => {
     chatPaneHarness.onSend = onSend;
     chatPaneHarness.onStop = onStop;
+    chatPaneHarness.messages = messages;
+    chatPaneHarness.error = error ?? null;
+    chatPaneHarness.errorSourceAssistantId = errorSourceAssistantId ?? null;
     return null;
   },
 }));
@@ -499,6 +513,9 @@ describe('ProjectView daemon reattach restore', () => {
     chatPaneHarness.onSend = null;
     chatPaneHarness.onStop = null;
     chatPaneHarness.openRequestNames = [];
+    chatPaneHarness.messages = [];
+    chatPaneHarness.error = null;
+    chatPaneHarness.errorSourceAssistantId = null;
     window.sessionStorage.clear();
   });
 
@@ -815,6 +832,134 @@ describe('ProjectView daemon reattach restore', () => {
     });
   });
 
+  it('keeps a complete historical blocked repair out of current errors when its status arrives after an independent accepted result', async () => {
+    const startedAt = Date.now() - 60_000;
+    const diagnostic = {
+      schemaVersion: 1 as const,
+      code: 'ODDS5003' as const,
+      severity: 'error' as const,
+      message: 'The design system dependency is not locked.',
+    };
+    const failedValidation = {
+      ...artifactValidationFixture(), mode: 'guided' as const, accepted: false, diagnostics: [diagnostic],
+    };
+    const initialReport = DesignGenerationReportSchema.parse({
+      ...generationReport('initial', 0, 'repair_required'),
+      diagnostics: [diagnostic], validation: failedValidation,
+    });
+    const blockedReport = DesignGenerationReportSchema.parse({
+      ...generationReport('repair', 1, 'blocked'),
+      diagnostics: [diagnostic], validation: failedValidation,
+    });
+    const blockedTask = DesignGenerationTaskProjectionSchema.parse(generationTask({
+      projectId: 'project-1', conversationId: 'conv-1', activeRunId: 'repair', nextRunId: 'repair',
+      attempt: 1, status: 'blocked', latestReport: blockedReport,
+    }));
+    const acceptedReport = DesignGenerationReportSchema.parse({
+      ...generationReport('later', 0, 'accepted'), executionId: 'independent-execution',
+      validation: { ...artifactValidationFixture(), mode: 'guided', diagnostics: [] },
+    });
+    const acceptedTask = DesignGenerationTaskProjectionSchema.parse(generationTask({
+      projectId: 'project-1', conversationId: 'conv-1', executionId: 'independent-execution',
+      initialRunId: 'later', activeRunId: 'later', status: 'succeeded', latestReport: acceptedReport,
+    }));
+    // The observed persisted repair has a canonical failed validation report but no
+    // status/error event. Its physical predecessor succeeded; its logical task did not.
+    const history: ChatMessage[] = [
+      { id: 'first-request', role: 'user', content: 'Build the first screen.', createdAt: startedAt },
+      { id: 'design-initial', role: 'assistant', agentId: 'codex', content: 'Initial output.', events: [],
+        createdAt: startedAt + 1, startedAt: startedAt + 1, endedAt: startedAt + 2,
+        runId: 'initial', runStatus: 'succeeded', lastRunEventId: '41',
+        designGenerationExecutionId: 'execution', designGenerationAttempt: 0,
+        designGeneration: initialReport, designGenerationTask: blockedTask },
+      { id: 'design-repair', role: 'assistant', agentId: 'codex', content: 'Repair remains blocked.', events: [],
+        createdAt: startedAt + 3, startedAt: startedAt + 3, endedAt: startedAt + 4,
+        runId: 'repair', runStatus: 'failed', lastRunEventId: '29',
+        designGenerationExecutionId: 'execution', designGenerationAttempt: 1,
+        designGeneration: blockedReport, designGenerationTask: { ...blockedTask, nextRunId: null } },
+      { id: 'later-request', role: 'user', content: 'Build a different screen.', createdAt: startedAt + 5 },
+      { id: 'design-later', role: 'assistant', agentId: 'codex', content: 'The new screen is accepted.', events: [],
+        createdAt: startedAt + 6, startedAt: startedAt + 6, endedAt: startedAt + 7,
+        runId: 'later', runStatus: 'succeeded', lastRunEventId: '35',
+        designGenerationExecutionId: 'independent-execution', designGenerationAttempt: 0,
+        designGeneration: acceptedReport, designGenerationTask: acceptedTask },
+    ];
+    listConversations.mockResolvedValue([{ id: 'conv-1', title: 'Conversation' }]);
+    listMessages.mockResolvedValue(history);
+    fetchPreviewComments.mockResolvedValue([]);
+    loadTabs.mockResolvedValue({ tabs: [], activeTabId: null });
+    fetchProjectFiles.mockResolvedValue([]);
+    fetchLiveArtifacts.mockResolvedValue([]);
+    fetchSkill.mockResolvedValue(null);
+    fetchDesignSystem.mockResolvedValue(null);
+    getTemplate.mockResolvedValue(null);
+    listActiveChatRuns.mockResolvedValue([]);
+    const initialStatus = {
+      id: 'initial', projectId: 'project-1', conversationId: 'conv-1', status: 'succeeded',
+      createdAt: startedAt + 1, updatedAt: startedAt + 2, exitCode: 0,
+      designGeneration: initialReport, designGenerationTask: blockedTask,
+    };
+    let releaseInitialStatus!: (value: typeof initialStatus) => void;
+    const delayedInitialStatus = new Promise<typeof initialStatus>(resolve => { releaseInitialStatus = resolve; });
+    fetchChatRunStatus.mockImplementation(async (id: string) => {
+      if (id === 'initial') return delayedInitialStatus;
+      if (id === 'repair') return {
+        id, projectId: 'project-1', conversationId: 'conv-1', status: 'failed',
+        createdAt: startedAt + 3, updatedAt: startedAt + 4, exitCode: 1,
+        error: diagnostic.message, errorCode: 'DESIGN_GENERATION_VALIDATION_FAILED',
+        designGeneration: blockedReport, designGenerationTask: { ...blockedTask, nextRunId: null },
+      };
+      if (id === 'later') return {
+        id, projectId: 'project-1', conversationId: 'conv-1', status: 'succeeded',
+        createdAt: startedAt + 6, updatedAt: startedAt + 7, exitCode: 0,
+        designGeneration: acceptedReport, designGenerationTask: acceptedTask,
+      };
+      throw new Error(`Unexpected status request: ${id}`);
+    });
+    reattachDaemonRun.mockImplementation(async () => new Promise<void>(() => {}));
+    renderProjectView();
+    await waitFor(() => {
+      expect(fetchChatRunStatus).toHaveBeenCalledWith('initial', null);
+      expect(chatPaneHarness.messages.at(-1)).toMatchObject({
+        id: 'design-later', designGeneration: { decision: 'accepted', validation: { accepted: true } },
+      });
+    });
+    expect(chatPaneHarness.error).toBeNull();
+    await act(async () => { releaseInitialStatus(initialStatus); });
+    await waitFor(() => expect(fetchChatRunStatus).toHaveBeenCalledWith('repair', null));
+    await act(async () => {});
+
+    // If the host incorrectly reopens this already complete stream, its delayed
+    // terminal failure must still never become the current conversation failure.
+    const replay = reattachDaemonRun.mock.calls.find(call => call[0].runId === 'repair')?.[0];
+    if (replay) {
+      await act(async () => {
+        await replay.handlers.onError(Object.assign(new Error(diagnostic.message), {
+          code: 'DESIGN_GENERATION_VALIDATION_FAILED',
+        }));
+      });
+    }
+    expect.soft(reattachDaemonRun).not.toHaveBeenCalled();
+    expect.soft(chatPaneHarness.error).toBeNull();
+    expect.soft(chatPaneHarness.errorSourceAssistantId).toBeNull();
+    expect(chatPaneHarness.messages.find(message => message.id === 'design-initial')).toMatchObject({
+      runId: 'initial', runStatus: 'succeeded', content: 'Initial output.',
+      designGenerationAttempt: 0, designGeneration: initialReport, designGenerationTask: blockedTask,
+    });
+    expect(chatPaneHarness.messages.find(message => message.id === 'design-repair')).toMatchObject({
+      runId: 'repair', runStatus: 'failed', content: 'Repair remains blocked.',
+      designGenerationAttempt: 1, designGeneration: blockedReport,
+      designGenerationTask: { status: 'blocked', attempt: 1, latestReport: blockedReport },
+    });
+    expect(chatPaneHarness.messages.find(message => message.id === 'design-later')).toMatchObject({
+      runId: 'later', runStatus: 'succeeded', content: 'The new screen is accepted.',
+      designGenerationExecutionId: 'independent-execution', designGeneration: acceptedReport,
+      designGenerationTask: acceptedTask,
+    });
+    expect(chatPaneHarness.openRequestNames).toEqual([]);
+    expect(publishDaemonRunFinishedEvent).not.toHaveBeenCalled();
+  });
+
   it('restores an authenticated waiting question without reopening its completed stream', async () => {
     const startedAt = Date.now();
     const task = generationTask({ projectId: 'project-1', conversationId: 'conv-1', status: 'awaiting_input', latestReport: generationReport() });
@@ -835,6 +980,65 @@ describe('ProjectView daemon reattach restore', () => {
       expect(saved).toMatchObject({ runStatus: 'succeeded', designGenerationTask: { status: 'awaiting_input' } });
     });
     expect(reattachDaemonRun).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { childPresent: false, taskStatus: 'blocked' as const, mismatch: null, label: 'missing completed repair message' },
+    { childPresent: true, taskStatus: 'repairing' as const, mismatch: null, label: 'persisted nonterminal repair message' },
+    { childPresent: true, taskStatus: 'blocked' as const, mismatch: 'scope', label: 'repair message from another scope' },
+    { childPresent: true, taskStatus: 'blocked' as const, mismatch: 'report', label: 'repair message with a stale report' },
+    { childPresent: true, taskStatus: 'blocked' as const, mismatch: 'execution', label: 'repair message with another logical identity' },
+  ])('follows the authorized repair once for a $label', async ({ childPresent, taskStatus, mismatch }) => {
+    const startedAt = Date.now() - 60_000;
+    const initialReport = generationReport('initial', 0, 'repair_required');
+    const latestReport = taskStatus === 'blocked' ? generationReport('repair', 1, 'blocked') : initialReport;
+    const task = generationTask({
+      projectId: 'project-1', conversationId: 'conv-1', activeRunId: 'repair', nextRunId: 'repair',
+      attempt: 1, status: taskStatus, latestReport,
+    });
+    const messages: ChatMessage[] = [{
+      id: 'design-initial', role: 'assistant', agentId: 'codex', content: 'Initial output.', events: [],
+      createdAt: startedAt, startedAt, endedAt: startedAt + 1, runId: 'initial', runStatus: 'succeeded',
+      lastRunEventId: '41', designGenerationExecutionId: 'execution', designGenerationAttempt: 0,
+      designGeneration: initialReport, designGenerationTask: task,
+    }];
+    if (childPresent) {
+      const persistedReport = mismatch === 'report'
+        ? { ...latestReport, reasonCodes: ['an-older-report'] } : latestReport;
+      messages.push({
+        id: 'design-repair', role: 'assistant', agentId: 'codex', content: 'Repair output.', events: [],
+        createdAt: startedAt + 2, startedAt: startedAt + 2, runId: 'repair',
+        runStatus: taskStatus === 'blocked' ? 'failed' : 'running',
+        ...(taskStatus === 'blocked' ? { endedAt: startedAt + 3, designGeneration: persistedReport } : {}),
+        lastRunEventId: '7', designGenerationExecutionId: mismatch === 'execution' ? 'another-execution' : 'execution',
+        designGenerationAttempt: 1,
+        designGenerationTask: { ...task, nextRunId: null, latestReport: persistedReport,
+          ...(mismatch === 'scope' ? { conversationId: 'another-conversation' } : {}) },
+      });
+    }
+    listConversations.mockResolvedValue([{ id: 'conv-1', title: 'Conversation' }]);
+    listMessages.mockResolvedValue(messages);
+    fetchPreviewComments.mockResolvedValue([]);
+    loadTabs.mockResolvedValue({ tabs: [], activeTabId: null });
+    fetchProjectFiles.mockResolvedValue([]);
+    fetchLiveArtifacts.mockResolvedValue([]);
+    fetchSkill.mockResolvedValue(null);
+    fetchDesignSystem.mockResolvedValue(null);
+    getTemplate.mockResolvedValue(null);
+    listActiveChatRuns.mockResolvedValue([]);
+    fetchChatRunStatus.mockImplementation(async (id: string) => ({
+      id, projectId: 'project-1', conversationId: 'conv-1', createdAt: startedAt, updatedAt: startedAt + 3,
+      status: id === 'initial' ? 'succeeded' : taskStatus === 'blocked' ? 'failed' : 'running',
+      designGenerationTask: { ...task, nextRunId: id === 'initial' ? 'repair' : null },
+      designGeneration: id === 'initial' ? initialReport : taskStatus === 'blocked' ? latestReport : undefined,
+    }));
+    reattachDaemonRun.mockImplementation(async () => new Promise<void>(() => {}));
+    renderProjectView();
+    await waitFor(() => expect(reattachDaemonRun).toHaveBeenCalledTimes(1));
+    expect(fetchChatRunStatus).toHaveBeenCalledWith('repair', null);
+    expect(reattachDaemonRun).toHaveBeenCalledWith(expect.objectContaining({ runId: 'repair' }));
+    await act(async () => {});
+    expect(reattachDaemonRun).toHaveBeenCalledTimes(1);
   });
 
   it('claims the projected active task Run once and drops the predecessor cursor', async () => {

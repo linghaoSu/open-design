@@ -5,6 +5,16 @@
 // around forever or never shows up at all.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// Retain the upstream campaign behavior tests under an explicitly capable
+// product. The real Design Loom policy is tested without mocks separately.
+vi.mock('@open-design/contracts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@open-design/contracts')>();
+  return {
+    ...actual,
+    DESIGN_LOOM_PRODUCT: { ...actual.DESIGN_LOOM_PRODUCT, upstreamExperienceSurveyEnabled: true },
+  };
+});
+
 import {
   SURVEY_MIN_DELIVERIES,
   deliveredCount,

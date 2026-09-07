@@ -4,6 +4,7 @@ import { trackSettingsPrivacyClick } from '../analytics/events';
 import { useT } from '../i18n';
 import { Icon } from './Icon';
 import type { AppConfig, TelemetryConfig } from '../types';
+import { PrivacyTelemetryStatus } from './PrivacyTelemetryStatus';
 
 interface Props {
   cfg: AppConfig;
@@ -74,6 +75,7 @@ export function PrivacySection({ cfg, setCfg }: Props): JSX.Element {
 
   return (
     <section className="settings-section">
+      <PrivacyTelemetryStatus />
       {/* The consent card asks the question; the toggles below ARE the answer.
           Rendering both once a decision exists put two competing controls for
           the same setting on screen (#5517 renders one or the other). */}

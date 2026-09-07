@@ -181,4 +181,26 @@ export interface AnalyticsConfigResponse {
   key: string | null;
   host: string | null;
   installationId?: string | null;
+  /** Effective sink configuration, independent of consent or successful delivery.
+   * Older daemons omit this field; a failed configuration read returns null. */
+  telemetryConfiguration?: TelemetryConfiguration | null;
+}
+
+export interface TelemetryConfiguration {
+  /** Anonymous usage analytics sink (PostHog). */
+  metrics: boolean;
+  /** Run/feedback or task telemetry sink; sending also requires both preferences. */
+  content: boolean;
+}
+
+export type TelemetryConfigurationState = 'configured' | 'unconfigured' | 'unknown';
+
+/** A partial/legacy response cannot prove that telemetry is unconfigured. */
+export function telemetryConfigurationState(value: unknown): TelemetryConfigurationState {
+  if (!value || typeof value !== 'object') return 'unknown';
+  const config = value as Partial<TelemetryConfiguration>;
+  if (!Object.prototype.hasOwnProperty.call(config, 'metrics')
+    || !Object.prototype.hasOwnProperty.call(config, 'content')
+    || typeof config.metrics !== 'boolean' || typeof config.content !== 'boolean') return 'unknown';
+  return config.metrics || config.content ? 'configured' : 'unconfigured';
 }

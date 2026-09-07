@@ -430,15 +430,19 @@ export function amrConfigPath(): string {
   return path.join(configDir(), 'config.json');
 }
 
-function readConfigFile(): VelaConfigFileShape | null {
+function readConfigFile(options: { strictConfigRead?: boolean } = {}): VelaConfigFileShape | null {
   const file = amrConfigPath();
-  if (!existsSync(file)) return null;
+  if (!options.strictConfigRead && !existsSync(file)) return null;
   try {
     const data = readFileSync(file, 'utf8');
     const parsed = JSON.parse(data) as unknown;
-    if (!parsed || typeof parsed !== 'object') return null;
+    if (!parsed || typeof parsed !== 'object' || (options.strictConfigRead && Array.isArray(parsed))) {
+      if (options.strictConfigRead) throw new Error('Invalid Vela configuration shape');
+      return null;
+    }
     return parsed as VelaConfigFileShape;
-  } catch {
+  } catch (error) {
+    if (options.strictConfigRead && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     return null;
   }
 }
@@ -446,13 +450,23 @@ function readConfigFile(): VelaConfigFileShape | null {
 function readVelaProfileConfigSnapshot(
   env: NodeJS.ProcessEnv = process.env,
   configuredEnv: Record<string, string> = {},
+  options: { strictConfigRead?: boolean } = {},
 ): VelaProfileConfigSnapshot {
   const mergedEnv = mergeVelaEnv(env, configuredEnv);
   const profile = resolveAmrProfile(mergedEnv);
-  const file = readConfigFile();
+  const file = readConfigFile(options);
+  if (options.strictConfigRead && file?.profiles !== undefined
+    && (!file.profiles || typeof file.profiles !== 'object' || Array.isArray(file.profiles))) {
+    throw new Error('Invalid Vela profiles configuration');
+  }
+  const stored = file?.profiles?.[profile];
+  if (options.strictConfigRead && stored !== undefined
+    && (!stored || typeof stored !== 'object' || Array.isArray(stored))) {
+    throw new Error('Invalid Vela profile configuration');
+  }
   return {
     profile,
-    stored: file?.profiles?.[profile],
+    stored,
     configMtimeMs: existsSync(amrConfigPath()) ? statSync(amrConfigPath()).mtimeMs : null,
   };
 }
@@ -739,8 +753,9 @@ function velaControlKeyDigest(controlKey: string): string {
 export function readVelaControlApiContext(
   env: NodeJS.ProcessEnv = process.env,
   configuredEnv: Record<string, string> = {},
+  options: { strictConfigRead?: boolean } = {},
 ): VelaControlApiContext | null {
-  const context = readRawVelaControlApiContext(env, configuredEnv);
+  const context = readRawVelaControlApiContext(env, configuredEnv, options);
   if (
     context
     && expiredVelaControlKeys.has(velaControlKeyDigest(context.controlKey))
@@ -751,6 +766,7 @@ export function readVelaControlApiContext(
 function readRawVelaControlApiContext(
   env: NodeJS.ProcessEnv = process.env,
   configuredEnv: Record<string, string> = {},
+  options: { strictConfigRead?: boolean } = {},
 ): VelaControlApiContext | null {
   const mergedEnv = mergeVelaEnv(env, configuredEnv);
   const profile = resolveAmrProfile(mergedEnv);
@@ -766,7 +782,7 @@ function readRawVelaControlApiContext(
       configMtimeMs: null,
     };
   }
-  const snapshot = readVelaProfileConfigSnapshot(env, configuredEnv);
+  const snapshot = readVelaProfileConfigSnapshot(env, configuredEnv, options);
   const apiContext = readVelaApiContext(env, configuredEnv, snapshot);
   const stored = snapshot.stored;
   const controlKey = stored?.controlKey?.trim() ?? '';

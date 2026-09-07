@@ -498,9 +498,12 @@ function isVelaTelemetryEnabled(env: NodeJS.ProcessEnv): boolean {
 export function readRunTelemetrySinkConfig(
   env: NodeJS.ProcessEnv = process.env,
   configuredEnv: Record<string, string> = {},
+  // Settings diagnostics report unknown on read failures; delivery keeps its
+  // existing tolerant fallback unless this is explicitly requested.
+  options: { strictConfigRead?: boolean } = {},
 ): RunTelemetrySinkConfig | null {
   if (isVelaTelemetryEnabled(env)) {
-    const context = readVelaControlApiContext(env, configuredEnv);
+    const context = readVelaControlApiContext(env, configuredEnv, options);
     const controlKey = context?.controlKey?.trim() ?? '';
     if (context && controlKey) {
       return {

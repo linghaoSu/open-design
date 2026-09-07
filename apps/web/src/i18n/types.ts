@@ -1013,6 +1013,10 @@ export interface Dict {
   'settings.mediaProviderNoKeyHint': string;
   'settings.privacy': string;
   'settings.privacyHint': string;
+  'settings.privacyConfigured': string;
+  'settings.privacyUnconfigured': string;
+  'settings.privacyConfigurationUnknown': string;
+  'settings.privacyProviderHint': string;
   'settings.privacyConsentKicker': string;
   'settings.privacyConsentLead': string;
   'settings.privacyConsentFooter': string;

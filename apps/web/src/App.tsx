@@ -36,7 +36,7 @@ import type {
   ProjectScenarioTaskProfile,
   WorkspaceProjectSummary,
 } from '@open-design/contracts';
-import { DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID } from '@open-design/contracts';
+import { DEFAULT_UNSELECTED_SCENARIO_PLUGIN_ID, DESIGN_LOOM_PRODUCT } from '@open-design/contracts';
 import { EntryView } from './components/EntryView';
 import type { ProjectTitleHint } from './components/EntryShell';
 import type { IntegrationTab } from './components/IntegrationsView';
@@ -5485,15 +5485,14 @@ function AppInner() {
       )}
       <TooltipLayer />
       <UpdateDialog />
-      {/* Mounted at shell level, outside the route views, so a survey armed by
-          an export inside a project stays on screen when the user navigates
-          back to home. */}
-      <ExperienceSurvey
-        metricsConsent={config.telemetry?.metrics === true}
-        onExposure={() => trackExperienceSurveyShown(analytics.track)}
-        onDismiss={() => trackExperienceSurveyDismissed(analytics.track)}
-        onSubmit={(answers) => trackExperienceSurveySent(analytics.track, answers)}
-      />
+      {DESIGN_LOOM_PRODUCT.upstreamExperienceSurveyEnabled && (
+        <ExperienceSurvey
+          metricsConsent={config.telemetry?.metrics === true}
+          onExposure={() => trackExperienceSurveyShown(analytics.track)}
+          onDismiss={() => trackExperienceSurveyDismissed(analytics.track)}
+          onSubmit={(answers) => trackExperienceSurveySent(analytics.track, answers)}
+        />
+      )}
       <AmrArtifactUpgradeGate
         cloudModelSelected={config.mode === 'daemon' && config.agentId === 'amr'}
         homeVisible={route.kind === 'home' && route.view === 'home'}

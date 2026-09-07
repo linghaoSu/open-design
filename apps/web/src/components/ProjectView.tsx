@@ -68,6 +68,7 @@ import {
   type ByokMediaDefaults,
   type ByokChatProtocol,
   type ChatTaskExecutionAnalytics,
+  type DesignGenerationTaskProjection,
   type ProjectWorkspaceScope,
   type ResearchOptions,
 } from '@open-design/contracts';
@@ -507,6 +508,49 @@ function messagesThatAbsorbedASuccessorRun(
     }
   }
   return absorbed;
+}
+
+/** A terminal projection alone does not prove its successor transcript was saved. */
+function hasCompletePersistedDesignSuccessor(
+  predecessor: ChatMessage,
+  successor: ChatMessage | undefined,
+  authoritative: DesignGenerationUpdate & { task: DesignGenerationTaskProjection },
+  physicalStatus: ChatMessage['runStatus'],
+): boolean {
+  const task = authoritative.task;
+  if (!['succeeded', 'blocked', 'canceled'].includes(task.status)
+    || physicalStatus !== designGenerationRunStatus(task)
+    || predecessor.runId !== task.initialRunId
+    || predecessor.designGenerationExecutionId !== task.executionId
+    || !successor || successor.role !== 'assistant'
+    || successor.runId !== task.activeRunId
+    || successor.runStatus !== physicalStatus || successor.endedAt == null
+    || successor.designGenerationExecutionId !== task.executionId
+    || successor.designGenerationAttempt !== task.attempt
+    || shouldReplayTerminalRunMessage(successor)
+    || hasGenericDisconnectFailureEvent(successor)
+    || (!successor.content.trim() && !textContentFromAgentEvents(successor.events).trim()
+      && !successor.producedFiles?.length)) return false;
+  const predecessorPosition = logicalMessagePosition(predecessor);
+  const successorPosition = logicalMessagePosition(successor);
+  if (!predecessorPosition || !successorPosition
+    || predecessorPosition.id !== successorPosition.id
+    || predecessorPosition.index >= successorPosition.index) return false;
+  try {
+    const persisted = readDesignGenerationUpdate({
+      runId: task.activeRunId, task: successor.designGenerationTask, report: successor.designGeneration,
+      projectId: task.projectId, conversationId: task.conversationId, previousTask: task,
+    });
+    const report = authoritative.report ?? task.latestReport;
+    return Boolean(report && persisted.task
+      && persisted.task.activeRunId === task.activeRunId && persisted.task.nextRunId === null
+      && persisted.task.attempt === task.attempt && persisted.task.status === task.status
+      && JSON.stringify(persisted.task.latestReport) === JSON.stringify(task.latestReport)
+      && JSON.stringify(persisted.report ?? persisted.task.latestReport) === JSON.stringify(report));
+  } catch {
+    // Stale/incomplete local facts still need the authenticated recovery path.
+    return false;
+  }
 }
 
 function mergeServerMessageWithLocal(
@@ -5441,10 +5485,22 @@ export function ProjectView({
             if (generationSuccessor) {
               const child = await fetchChatRunStatus(generationSuccessor, projectRunWorkspaceContext);
               if (cancelled) return;
-              readDesignGenerationRunStatus(child, generationSuccessor, { projectId: project.id,
+              const childUpdate = readDesignGenerationRunStatus(child, generationSuccessor, { projectId: project.id,
                 conversationId: reattachConversationId, previousTask: generationUpdate.task });
               if (physicalStatus.strategyTask && child?.strategyTask?.taskExecutionId !== physicalStatus.strategyTask.taskExecutionId) {
                 throw new Error('The successor strategy execution changed.');
+              }
+              if (!needsReplayForMessage && isTerminalRunStatus(physicalStatus.status)
+                && generationUpdate.task.status === childUpdate.task.status
+                && generationUpdate.task.attempt === childUpdate.task.attempt
+                && hasCompletePersistedDesignSuccessor(message,
+                  messages.find(candidate => candidate.runId === generationSuccessor), childUpdate, child?.status)) {
+                // Both physical messages and the exact final report already exist.
+                // Keep their original ownership; replaying the child through the
+                // predecessor would duplicate history and surface an old failure.
+                completedReattachRunsRef.current.add(runId);
+                completedReattachRunsRef.current.add(generationSuccessor);
+                continue;
               }
             }
           }

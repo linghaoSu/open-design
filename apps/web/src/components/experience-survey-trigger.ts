@@ -34,6 +34,8 @@
 // cheapest way to make sure the one ask actually happens is to let the next
 // delivery re-arm.
 
+import { DESIGN_LOOM_PRODUCT } from '@open-design/contracts';
+
 const RETIRED_KEY = 'open-design:experience-survey:v1:retired';
 const DELIVERY_COUNT_KEY = 'open-design:experience-survey:v1:deliveries';
 
@@ -113,12 +115,14 @@ function recordDelivery(): number {
  * deliveries seen, not the number that happened to qualify.
  */
 export function notifyArtifactDelivered(): void {
+  if (!DESIGN_LOOM_PRODUCT.upstreamExperienceSurveyEnabled) return;
   if (isSurveyRetired()) return;
   if (recordDelivery() < SURVEY_MIN_DELIVERIES) return;
   for (const listener of listeners) listener();
 }
 
 export function onArtifactDelivered(listener: Listener): () => void {
+  if (!DESIGN_LOOM_PRODUCT.upstreamExperienceSurveyEnabled) return () => {};
   listeners.add(listener);
   return () => {
     listeners.delete(listener);

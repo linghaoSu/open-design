@@ -4,6 +4,7 @@
 // Keeping the event-name → prop-shape coupling in one place means call sites
 // stay short and stay in lockstep with the daemon-side capture.
 
+import { DESIGN_LOOM_PRODUCT } from '@open-design/contracts';
 import type {
   // page_view / surface_view
   PageViewProps,
@@ -1504,6 +1505,7 @@ export function trackWhatsNewPopupClick(
 // PostHog events rather than the v2 schema's own.
 
 export function trackExperienceSurveyShown(track: Track): void {
+  if (!DESIGN_LOOM_PRODUCT.upstreamExperienceSurveyEnabled) return;
   send(track, 'survey shown', {
     $survey_id: EXPERIENCE_SURVEY_ID,
     trigger: EXPERIENCE_SURVEY_TRIGGER,
@@ -1511,6 +1513,7 @@ export function trackExperienceSurveyShown(track: Track): void {
 }
 
 export function trackExperienceSurveyDismissed(track: Track): void {
+  if (!DESIGN_LOOM_PRODUCT.upstreamExperienceSurveyEnabled) return;
   send(track, 'survey dismissed', {
     $survey_id: EXPERIENCE_SURVEY_ID,
     trigger: EXPERIENCE_SURVEY_TRIGGER,
@@ -1526,6 +1529,7 @@ export function trackExperienceSurveySent(
   track: Track,
   answers: { recommendation: number; improvement?: number; improvementOther?: string },
 ): void {
+  if (!DESIGN_LOOM_PRODUCT.upstreamExperienceSurveyEnabled) return;
   const ids = EXPERIENCE_SURVEY_QUESTION_IDS;
   const text = EXPERIENCE_SURVEY_QUESTION_TEXT;
   const answered: Array<{ id: string; question: string; response: string | number }> = [];

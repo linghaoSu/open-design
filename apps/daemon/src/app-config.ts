@@ -721,8 +721,13 @@ function applyTelemetryDefaults(prefs: AppConfigPrefs): AppConfigPrefs {
   return prefs;
 }
 
-export async function readAppConfig(dataDir: string): Promise<AppConfigPrefs> {
-  const base = await readAppConfigFileOnly(dataDir);
+export async function readAppConfig(
+  dataDir: string,
+  // Diagnostics distinguish unreadable configuration from defaults and never
+  // migrate installation identity as a side effect of reading configuration.
+  options: { strictConfigRead?: boolean } = {},
+): Promise<AppConfigPrefs> {
+  const base = await readAppConfigFileOnly(dataDir, options);
   // Channel-root installation file is the new authoritative source for the
   // identity bits that must survive a namespace-scoped data-dir wipe. It
   // lives outside `<namespace>/data/` so a reinstall of the same channel
@@ -739,7 +744,7 @@ export async function readAppConfig(dataDir: string): Promise<AppConfigPrefs> {
   if (typeof installation.installationId === 'string' && installation.installationId.length > 0) {
     return applyTelemetryDefaults({ ...base, installationId: installation.installationId });
   }
-  if (typeof base.installationId === 'string' && base.installationId.length > 0) {
+  if (!options.strictConfigRead && typeof base.installationId === 'string' && base.installationId.length > 0) {
     // Best-effort migration. A write failure here doesn't break the read —
     // we still serve the legacy id. The next write through writeAppConfig
     // will retry the mirror.
@@ -792,18 +797,23 @@ function readAppConfigFileOnlySync(dataDir: string): AppConfigPrefs {
   }
 }
 
-async function readAppConfigFileOnly(dataDir: string): Promise<AppConfigPrefs> {
+async function readAppConfigFileOnly(
+  dataDir: string,
+  options: { strictConfigRead?: boolean } = {},
+): Promise<AppConfigPrefs> {
   try {
     const raw = await readFile(configFile(dataDir), 'utf8');
     const parsed: unknown = JSON.parse(raw);
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return filterAllowedKeys(parsed as Record<string, unknown>);
     }
+    if (options.strictConfigRead) throw new Error('Invalid app configuration shape');
     console.warn('[app-config] Invalid shape in config file, returning empty');
     return {};
   } catch (err: unknown) {
     const e = err as { code?: string; name?: string; message?: string };
     if (e.code === 'ENOENT') return {};
+    if (options.strictConfigRead) throw err;
     if (e.name === 'SyntaxError') {
       console.error('[app-config] Corrupted JSON, returning empty:', e.message);
       return {};

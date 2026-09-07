@@ -10,6 +10,7 @@ import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import type { Variants } from 'motion/react';
 import { Button } from '@open-design/components';
+import { DESIGN_LOOM_PRODUCT } from '@open-design/contracts';
 import { useT } from '../i18n';
 import styles from './ExperienceSurvey.module.css';
 import {
@@ -104,7 +105,14 @@ const cardMotion: Variants = {
   exit: { opacity: 0, y: 8, scale: 0.98, transition: { duration: 0.14, ease: EASE_OUT } },
 };
 
-export function ExperienceSurvey({
+export function ExperienceSurvey(props: Props) {
+  // Gate the entire lifecycle, including development preview hooks. Consent
+  // cannot opt a standalone product into an upstream campaign.
+  if (!DESIGN_LOOM_PRODUCT.upstreamExperienceSurveyEnabled) return null;
+  return <ExperienceSurveyContent {...props} />;
+}
+
+function ExperienceSurveyContent({
   metricsConsent = false,
   onSubmit,
   onExposure,

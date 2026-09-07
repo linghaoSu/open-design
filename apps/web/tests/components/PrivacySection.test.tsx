@@ -92,7 +92,7 @@ describe('PrivacySection', () => {
 
     expect(screen.queryByRole('button', { name: 'Share' })).toBeNull();
     expect(screen.queryByRole('button', { name: "Don't share" })).toBeNull();
-    expect(screen.queryByText(/Sharing usage data helps us understand/i)).toBeNull();
+    expect(screen.queryByText('Manage your saved data-sharing preferences.')).toBeNull();
     expect(screen.getByRole('button', { name: /Anonymous metrics/ }).getAttribute('aria-pressed'))
       .toBe('true');
     expect(screen.getByRole('button', { name: /Conversation and tool content/ }).getAttribute('aria-pressed'))
@@ -113,7 +113,7 @@ describe('PrivacySection', () => {
 
     expect(screen.getByRole('button', { name: 'Share' })).toBeTruthy();
     expect(screen.getByRole('button', { name: "Don't share" })).toBeTruthy();
-    expect(screen.getByText(/Sharing usage data helps us understand/i)).toBeTruthy();
+    expect(screen.getByText('Manage your saved data-sharing preferences.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Anonymous metrics/ })).toBeNull();
   });
 

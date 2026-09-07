@@ -14,7 +14,7 @@ vi.mock('../../src/analytics/provider', () => ({
   }),
 }));
 
-const PRIVACY_POLICY_HREF = 'https://github.com/nexu-io/open-design/blob/main/PRIVACY.md';
+const DATA_HANDLING_HREF = 'https://github.com/linghaoSu/open-design/blob/codex/structured-design-runtime/docs/design-loom.md#data-handling';
 
 function renderModal(overrides?: { onShare?: () => void; onDecline?: () => void }) {
   const onShare = overrides?.onShare ?? vi.fn();
@@ -45,17 +45,17 @@ describe('PrivacyConsentModal', () => {
 
   it('tells the user choices are changeable in Settings', () => {
     renderModal();
-    expect(screen.getByText(/Sharing usage data helps us understand/i)).toBeTruthy();
+    expect(screen.getByText('Manage your saved data-sharing preferences.')).toBeTruthy();
     const footer = screen.getByText(/You can change these any time/i);
     expect(footer.textContent ?? '').toMatch(/You can change these any time/i);
     expect(footer.textContent ?? '').toMatch(/Settings/);
     expect(footer.textContent ?? '').toMatch(/Privacy/);
   });
 
-  it('exposes the privacy policy via an obvious external link', () => {
+  it('links this fork\'s data handling details without claiming the upstream policy applies', () => {
     renderModal();
-    const link = screen.getByRole('link', { name: /privacy policy/i });
-    expect(link.getAttribute('href')).toBe(PRIVACY_POLICY_HREF);
+    const link = screen.getByRole('link', { name: 'Data handling details' });
+    expect(link.getAttribute('href')).toBe(DATA_HANDLING_HREF);
     expect(link.getAttribute('target')).toBe('_blank');
     expect(link.getAttribute('rel') ?? '').toContain('noopener');
   });

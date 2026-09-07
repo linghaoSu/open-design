@@ -1,4 +1,5 @@
-import { logicalMessagePosition, designGenerationRunStatus, designGenerationAllowsDelivery } from '../runtime/design-generation';
+import { designGenerationRunStatus, designGenerationAllowsDelivery } from '../runtime/design-generation';
+import { lastAssistantRunError, logicalAssistantTurns, physicalTurnMessage, resolveRunErrorOwnership } from '../runtime/run-error-ownership';
 import {
   Fragment,
   memo,
@@ -839,25 +840,24 @@ const ANCHOR_TOP_PADDING = 12;
  * is duplicated.
  */
 export function foldStrategyTaskTurns(messages: ChatMessage[]): ChatMessage[] {
-  if (!messages.some((message) => (logicalMessagePosition(message)?.index ?? 0) > 0)) {
+  const { turns, byMessageId } = logicalAssistantTurns(messages);
+  if (!turns.some(turn => turn.messages.length > 1)) {
     return messages;
   }
   const folded: ChatMessage[] = [];
-  const turnHeadIndexByTask = new Map<string, number>();
+  const turnHeadIndexes = new Map<string, number>();
   for (const message of messages) {
-    const position = logicalMessagePosition(message);
-    const taskId = position?.id;
-    const runIndex = position?.index ?? 0;
-    if (message.role !== 'assistant' || !taskId) {
+    const turn = byMessageId.get(message.id);
+    if (!turn) {
       folded.push(message);
       continue;
     }
-    if (runIndex === 0 || !turnHeadIndexByTask.has(taskId)) {
-      turnHeadIndexByTask.set(taskId, folded.length);
+    if (message.id === turn.head.id) {
+      turnHeadIndexes.set(turn.head.id, folded.length);
       folded.push(message);
       continue;
     }
-    const headIndex = turnHeadIndexByTask.get(taskId)!;
+    const headIndex = turnHeadIndexes.get(turn.head.id)!;
     const head = folded[headIndex]!;
     const headContent = head.content ?? '';
     const tailContent = message.content ?? '';
@@ -1361,17 +1361,15 @@ export function ChatPane({
     (m) => m.role === 'assistant' && isActiveRunStatus(m.runStatus),
   );
   const retryAssistant = retryableAssistantMessage(displayMessages, lastAssistantId, streaming);
+  const failurePhysicalMessage = useMemo(() => {
+    if (!retryAssistant) return null;
+    const turn = logicalAssistantTurns(messages).byMessageId.get(retryAssistant.id);
+    return turn ? physicalTurnMessage(turn) : retryAssistant;
+  }, [messages, retryAssistant]);
   // The failed run's error event lives on the (persisted) assistant message, so
   // the error card + AMR card survive a reload — unlike the ephemeral global
   // `error` state. Drive both off this event.
-  const failedRunErrorEvent = (() => {
-    const evs = retryAssistant?.events ?? [];
-    for (let i = evs.length - 1; i >= 0; i--) {
-      const ev = evs[i];
-      if (ev?.kind === 'status' && ev.label === 'error') return ev;
-    }
-    return null;
-  })();
+  const failedRunErrorEvent = lastAssistantRunError(failurePhysicalMessage);
   // Per-case failure UI (button + copy + whether to promote AMR). Only
   // meaningful for a failed run (retryAssistant present).
   const runFailureUi = retryAssistant
@@ -1552,26 +1550,18 @@ export function ChatPane({
     !!retryAssistant?.resumable &&
     !!retryAssistant?.agentId &&
     retryAssistant.agentId === config?.agentId;
-  // `error` is a shared escape hatch for both run failures and unrelated pane
-  // errors. A run error also lives durably on its assistant message. Suppress
-  // it only when its exact source assistant owns the persisted diagnostic and
-  // a later assistant has succeeded; canonical error text alone cannot prove
-  // ownership because a new run can fail with the same detail.
-  const historicalRunError = useMemo(
-    () =>
-      !retryAssistant &&
-      isRecoveredAssistantRunError(
-        displayMessages,
-        error,
-        errorSourceAssistantId,
-      ),
-    [displayMessages, error, errorSourceAssistantId, retryAssistant],
+  // A folded turn hides physical child IDs. Resolve the explicit error owner
+  // against raw messages and daemon task facts before choosing current copy.
+  const errorOwnership = useMemo(
+    () => resolveRunErrorOwnership(messages, error, errorSourceAssistantId),
+    [messages, error, errorSourceAssistantId],
   );
-  const currentGlobalError = historicalRunError ? null : error;
+  const currentGlobalError = errorOwnership?.historical ? null : error;
   // Prefer a case-specific message (AMR auth / balance) over the raw upstream
   // string; otherwise keep a current pane-level error ahead of the persisted
   // failed-run detail. Historical run errors were already removed above.
   const rawError = currentGlobalError ?? failedRunErrorEvent?.detail ?? null;
+  const diagnosticOwner = currentGlobalError ? errorOwnership?.physicalSource : failurePhysicalMessage;
   // Friendly agent name for {agent} interpolation in failure copy (e.g. the
   // sign-in messages). Falls back to a neutral word when unreadable, never null.
   const failedAgentLabel =
@@ -1593,11 +1583,11 @@ export function ChatPane({
         message: displayError,
         rawMessage: rawError,
         errorCode: failedRunErrorEvent?.code,
-        traceId: retryAssistant?.runId,
+        traceId: diagnosticOwner?.runId,
         projectId,
         conversationId: activeConversationId,
-        assistantMessageId: retryAssistant?.id,
-        agentId: retryAssistant?.agentId,
+        assistantMessageId: diagnosticOwner?.id,
+        agentId: diagnosticOwner?.agentId,
       })
     : null;
   // Brand (accent) for AMR sign-in/top-up, warning for a self-healing
@@ -4565,31 +4555,6 @@ export function retryableAssistantMessage(
   if (!last || last.role !== 'assistant') return null;
   if (last.id !== lastAssistantId) return null;
   return isRetryableAssistantTerminalFailure(last) ? last : null;
-}
-
-function isRecoveredAssistantRunError(
-  messages: ChatMessage[],
-  error: string | null,
-  sourceAssistantId: string | null | undefined,
-): boolean {
-  const target = error?.trim();
-  if (!target || !sourceAssistantId) return false;
-  const sourceIndex = messages.findIndex(
-    (message) =>
-      message.role === 'assistant' && message.id === sourceAssistantId,
-  );
-  if (sourceIndex < 0) return false;
-  const source = messages[sourceIndex]!;
-  const ownsPersistedError = (source.events ?? []).some(
-    (event) =>
-      event.kind === 'status' &&
-      event.label === 'error' &&
-      event.detail?.trim() === target,
-  );
-  if (!ownsPersistedError) return false;
-  return messages.slice(sourceIndex + 1).some(
-    (message) => message.role === 'assistant' && message.runStatus === 'succeeded',
-  );
 }
 
 export function isAssistantMessageStreaming(

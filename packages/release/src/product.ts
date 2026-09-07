@@ -8,6 +8,7 @@ export const DESIGN_LOOM_PRODUCT = Object.freeze({
   namespace: 'design-loom',
   cliName: 'designloom',
   updatesEnabled: false,
+  upstreamExperienceSurveyEnabled: false,
 } as const);
 
 /** A fork process must never discover, stop, or mutate an upstream namespace. */

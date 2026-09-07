@@ -7,7 +7,6 @@ import type { PostHog } from 'posthog-js';
 import {
   EVENT_SCHEMA_VERSION,
   type AnalyticsClientType,
-  type AnalyticsConfigResponse,
   type AnalyticsConfigureGlobals,
 } from '@open-design/contracts/analytics';
 import { scrubBeforeSend } from './scrub';
@@ -16,7 +15,7 @@ import {
   setExceptionTrackingContext,
 } from './error-tracking';
 import { pinFirstSessionForCapture } from './identity';
-import { coalescedGet } from '../lib/coalesced-get';
+import { fetchAnalyticsConfigShared } from './config';
 
 interface AnalyticsContext {
   anonymousId: string;
@@ -187,21 +186,6 @@ function flushPersonProperties(): void {
 // read /api/analytics/config at boot; share one request per burst instead of
 // issuing two identical GETs (Batch A §4.3). `null` mirrors the endpoint's
 // non-ok answer; network failures propagate to each caller's own handler.
-function fetchAnalyticsConfigShared(): Promise<AnalyticsConfigResponse | null> {
-  // ttl 0: share only genuinely concurrent readers. A later sequential call
-  // (e.g. re-init right after the user grants consent) must observe the
-  // just-flipped daemon answer, not a sub-second-old disabled snapshot.
-  return coalescedGet(
-    'analytics-config',
-    async () => {
-      const res = await fetch('/api/analytics/config');
-      if (!res.ok) return null;
-      return (await res.json()) as AnalyticsConfigResponse;
-    },
-    0,
-  );
-}
-
 let exceptionBootstrapPromise: Promise<void> | null = null;
 export function bootstrapExceptionTracking(context: AnalyticsContext): Promise<void> {
   if (exceptionBootstrapPromise) return exceptionBootstrapPromise;

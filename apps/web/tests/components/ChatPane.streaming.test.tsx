@@ -5,10 +5,13 @@ import { forwardRef, useImperativeHandle } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AppliedPluginSnapshot, SkillSummary } from '@open-design/contracts';
+import { DesignGenerationReportSchema, DesignGenerationTaskProjectionSchema } from '@open-design/contracts';
 import { ChatPane, buildRunErrorDiagnosticText, retryableAssistantMessage } from '../../src/components/ChatPane';
 import { DESIGN_SYSTEM_WORKSPACE_PROMPT_PREFIX } from '../../src/design-system-auto-prompt';
 import { readExpandedIndexCss } from '../helpers/read-expanded-css';
 import type { ChatMessage, Conversation, ProjectMetadata } from '../../src/types';
+import { generationReport, generationTask } from '../helpers/design-generation-fixtures';
+import { artifactValidationFixture } from '../helpers/design-validation-fixtures';
 
 const composerMocks = vi.hoisted(() => ({
   focus: vi.fn(),
@@ -40,6 +43,58 @@ const translations: Record<string, string> = {
 function translate(key: string, vars?: Record<string, unknown>): string {
   if (key === 'brand.appliedToChat') return `Using ${String(vars?.name ?? '')}`;
   return translations[key] ?? key;
+}
+
+const savedPolicyError = 'Design generation was blocked by its saved validation policy.';
+
+// Same durable shape as the native acceptance conversation: the repair owns a
+// canonical blocked report, but neither physical message has an error event.
+function blockedGenerationHistory(prefix = 'old'): ChatMessage[] {
+  const executionId = `${prefix}-execution`;
+  const initialRunId = `${prefix}-initial-run`;
+  const repairRunId = `${prefix}-repair-run`;
+  const report = DesignGenerationReportSchema.parse({ ...generationReport(repairRunId, 1, 'blocked'), executionId,
+    diagnostics: [{ schemaVersion: 1, code: 'ODDS2002', severity: 'error', message: `${prefix} raw color needs a declared token.`, location: { sourcePath: 'Page.tsx', line: 7, column: 3 } }],
+  });
+  const task = DesignGenerationTaskProjectionSchema.parse(generationTask({ executionId, projectId: 'project-1', conversationId: 'conv-1',
+    initialRunId, activeRunId: repairRunId, attempt: 1, status: 'blocked', latestReport: report,
+  }));
+  return [
+    { id: `${prefix}-user`, role: 'user', content: 'Create the page.' },
+    { id: `${prefix}-initial`, role: 'assistant', content: 'Initial page output.', runId: initialRunId, runStatus: 'succeeded',
+      events: [{ kind: 'status', label: 'thinking' }], designGenerationExecutionId: executionId, designGenerationAttempt: 0,
+      designGeneration: { ...generationReport(initialRunId, 0, 'repair_required'), executionId },
+      designGenerationTask: { ...task, nextRunId: repairRunId },
+    },
+    { id: `${prefix}-repair`, role: 'assistant', content: 'Repair output; saved policy still blocks delivery.', runId: repairRunId, runStatus: 'failed',
+      events: [{ kind: 'status', label: 'thinking' }], designGenerationExecutionId: executionId, designGenerationAttempt: 1,
+      designGeneration: report, designGenerationTask: task,
+    },
+  ];
+}
+
+function independentGeneration(status: 'succeeded' | 'running'): ChatMessage[] {
+  const executionId = 'new-execution'; const runId = 'new-run';
+  const report = status === 'succeeded' ? DesignGenerationReportSchema.parse({
+    ...generationReport(runId, 0, 'accepted'), executionId,
+    validation: { ...artifactValidationFixture(), mode: 'guided', accepted: true },
+  }) : null;
+  const task = DesignGenerationTaskProjectionSchema.parse(generationTask({ executionId, projectId: 'project-1', conversationId: 'conv-1',
+    initialRunId: runId, activeRunId: runId, status, latestReport: report,
+  }));
+  return [
+    { id: 'new-user', role: 'user', content: 'Make a new version using the saved tokens.' },
+    { id: 'new-assistant', role: 'assistant', content: status === 'succeeded' ? 'Accepted with no errors.' : 'Working on the new version.',
+      runId, runStatus: status, designGenerationExecutionId: executionId, designGenerationAttempt: 0,
+      designGenerationTask: task, ...(report ? { designGeneration: report } : {}),
+    },
+  ];
+}
+
+function errorPaneProps(messages: ChatMessage[], errorSourceAssistantId: string | null, streaming = false) {
+  return { projectKindForTracking: 'prototype' as const, messages, streaming, error: savedPolicyError, errorSourceAssistantId,
+    projectId: 'project-1', projectFiles: [], onEnsureProject: async () => 'project-1', onSend: vi.fn(), onStop: vi.fn(),
+    conversations, activeConversationId: 'conv-1', onSelectConversation: vi.fn(), onDeleteConversation: vi.fn(), projectMetadata };
 }
 
 function skillSummary(id: string): SkillSummary {
@@ -432,6 +487,102 @@ describe('ChatPane streaming state', () => {
     );
 
     expect(container.querySelector('[data-user-action-card="run-recovery"]')).toBeNull();
+  });
+
+  it.each([
+    ['old-initial', 'succeeded'], ['old-repair', 'succeeded'],
+    ['old-initial', 'running'], ['old-repair', 'running'],
+  ] as const)('keeps the error owned by %s in history instead of presenting it as the later %s task result', (owner, status) => {
+    const history = blockedGenerationHistory();
+    const messages = [...history, ...independentGeneration(status)];
+    const original = structuredClone(messages);
+    const { container } = render(<ChatPane {...errorPaneProps(messages, owner, status === 'running')} />);
+
+    expect(screen.getByTestId('assistant-streaming-old-initial')).toHaveTextContent('idle');
+    expect(screen.queryByTestId('assistant-streaming-old-repair')).toBeNull();
+    expect(screen.getByTestId('assistant-streaming-new-assistant')).toHaveTextContent(status === 'running' ? 'streaming' : 'idle');
+    expect(container.querySelector('[data-user-action-card="run-recovery"]')).toBeNull();
+    expect(messages).toEqual(original);
+  });
+
+  it.each(['latest-initial', 'latest-repair'])('keeps the latest genuine failure visible with owner %s when its wording matches an older blocked task', (owner) => {
+    const messages = [...blockedGenerationHistory(), ...independentGeneration('succeeded'), ...blockedGenerationHistory('latest')];
+    const { container } = render(<ChatPane {...errorPaneProps(messages, owner)} />);
+
+    const card = container.querySelector('[data-user-action-card="run-recovery"]');
+    expect(card).not.toBeNull();
+    expect(card!.querySelector('.run-error__description')).toHaveTextContent(savedPolicyError);
+    expect(card!.querySelector('.run-error__diagnostic')).toHaveTextContent('latest-repair-run');
+  });
+
+  it('keeps a current logical blocker visible even if the last physical message still says succeeded', () => {
+    const messages = blockedGenerationHistory('latest');
+    messages[2]!.runStatus = 'succeeded';
+    const { container } = render(<ChatPane {...errorPaneProps(messages, 'latest-repair')} />);
+
+    expect(container.querySelector('[data-user-action-card="run-recovery"]')).not.toBeNull();
+    expect(messages[2]!.designGenerationTask?.status).toBe('blocked');
+  });
+
+  it('does not dismiss an unproved pane error merely because its named assistant delivered successfully', () => {
+    const messages = independentGeneration('succeeded');
+    const { container } = render(<ChatPane {...errorPaneProps(messages, 'new-assistant')} error="Could not save the conversation." />);
+
+    expect(container.querySelector('.run-error__description')).toHaveTextContent('Could not save the conversation.');
+  });
+
+  it('copies the actual failed repair identity while keeping its displayed turn anchored to the first message', async () => {
+    const messages = blockedGenerationHistory('latest');
+    const { container } = render(<ChatPane {...errorPaneProps(messages, 'latest-repair')} />);
+    expect(screen.getByTestId('assistant-streaming-latest-initial')).toBeInTheDocument();
+    expect(screen.queryByTestId('assistant-streaming-latest-repair')).toBeNull();
+    const card = container.querySelector('[data-user-action-card="run-recovery"]')!;
+    fireEvent.click(within(card as HTMLElement).getByRole('button', { name: 'Copy error diagnostics', hidden: true }));
+    await waitFor(() => expect(clipboardMocks.copyToClipboard).toHaveBeenCalledOnce());
+    const copied = clipboardMocks.copyToClipboard.mock.calls[0]![0];
+    expect(copied).toContain('run_id: latest-repair-run');
+    expect(copied).toContain('assistant_message_id: latest-repair');
+    expect(copied).not.toContain('assistant_message_id: latest-initial');
+  });
+
+  it.each([null, 'owner-not-loaded'])('retains an unattributed current error with owner %s after a successful task', (owner) => {
+    const messages = [...blockedGenerationHistory(), ...independentGeneration('succeeded')];
+    const { container } = render(<ChatPane {...errorPaneProps(messages, owner)} />);
+
+    const card = container.querySelector('[data-user-action-card="run-recovery"]');
+    expect(card).not.toBeNull();
+    expect(card!.querySelector('.run-error__description')).toHaveTextContent(savedPolicyError);
+  });
+
+  it('shows the latest failure details instead of an older blocked error arriving during reconnect', () => {
+    const latest = blockedGenerationHistory('latest');
+    const currentError = 'The current process failed before it could validate the new page.';
+    latest[2]!.events!.push({ kind: 'status', label: 'error', detail: currentError, code: 'DESIGN_GENERATION_PROCESS_FAILED' });
+    const messages = [...blockedGenerationHistory(), ...independentGeneration('succeeded'), ...latest];
+    const { container } = render(<ChatPane {...errorPaneProps(messages, 'old-repair')} />);
+
+    const card = container.querySelector('[data-user-action-card="run-recovery"]');
+    expect(card).not.toBeNull();
+    expect(card!.querySelector('.run-error__diagnostic')).toHaveTextContent(currentError);
+    expect(card!.querySelector('.run-error__diagnostic')).not.toHaveTextContent(savedPolicyError);
+    expect(card!.querySelector('.run-error__diagnostic')).toHaveTextContent('latest-repair-run');
+  });
+
+  it('uses the current repair failure when the predecessor error arrives later within the same request', () => {
+    const messages = blockedGenerationHistory('latest');
+    messages[1]!.events!.push({ kind: 'status', label: 'error', detail: savedPolicyError, code: 'DESIGN_GENERATION_BLOCKED' });
+    const repairError = 'The repair process failed before validating the corrected source.';
+    messages[2]!.events!.push({ kind: 'status', label: 'error', detail: repairError, code: 'DESIGN_GENERATION_PROCESS_FAILED' });
+    const original = structuredClone(messages);
+    const { container } = render(<ChatPane {...errorPaneProps(messages, 'latest-initial')} />);
+
+    const card = container.querySelector('[data-user-action-card="run-recovery"]');
+    expect(card).not.toBeNull();
+    expect(card!.querySelector('.run-error__diagnostic')).toHaveTextContent(repairError);
+    expect(card!.querySelector('.run-error__diagnostic')).not.toHaveTextContent(savedPolicyError);
+    expect(card!.querySelector('.run-error__diagnostic')).toHaveTextContent('assistant_message_id: latest-repair');
+    expect(messages[2]!.designGenerationTask?.status).toBe('blocked');
+    expect(messages).toEqual(original);
   });
 
   it('keeps a repeated current daemon-restart error visible before its failure is persisted', () => {
