@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 
 import { versionIdFor, type ManifestEntry, type ResourceKind } from '../shared/manifest.js';
+import { decideCommentWrite } from './comments.js';
 import { apiKeyIdFromHash, deriveMemberId, hashApiKey, isoNow, mintApiKeySecret, newDigestToken } from './ids.js';
 import { DEFAULT_BILLING, freshSyncDigest, slideExpiry, sortDirectory, teamProjectRowId, toDirectoryItem } from './memory-store.js';
 import type {
@@ -13,6 +14,7 @@ import type {
   AuditRow,
   AuthenticateOptions,
   AuthenticatedPrincipal,
+  CommentRow,
   CreateUserInput,
   CreateWorkspaceInput,
   DeviceAuthRow,
@@ -25,6 +27,8 @@ import type {
   PublishVersionOptions,
   PublishVersionResult,
   PullReceiptRow,
+  PushCommentInput,
+  PushCommentResult,
   RemoveTeamProjectResult,
   ResourceRow,
   ResourceVersionRow,
@@ -138,6 +142,10 @@ interface TeamProjectSqlRow {
   display_name: string | null; sync_state: string | null; last_synced_version_id: string | null;
   published_version_id: string | null; metadata: string | null; created_at: string; updated_at: string;
 }
+interface CommentSqlRow {
+  workspace_id: string; project_id: string; id: string; seq: number; body: string; deleted: number;
+  updated_at: number; server_received_at: string; author_member_id: string | null;
+}
 interface PullReceiptSqlRow {
   nonce: string; workspace_id: string; project_id: string; resource_id: string | null; viewer_member_id: string;
   owner_member_id: string | null; version: number; version_id: string | null; manifest_digest: string | null;
@@ -167,6 +175,12 @@ const teamProjectFromRow = (r: TeamProjectSqlRow): TeamProjectRow => ({
   syncState: (r.sync_state && SYNC_STATES.has(r.sync_state) ? r.sync_state : 'pending_upload') as TeamProjectSyncState,
   lastSyncedVersionId: r.last_synced_version_id, metadata: parseJsonObject(r.metadata),
   createdAt: r.created_at, updatedAt: r.updated_at,
+});
+
+const commentFromRow = (r: CommentSqlRow): CommentRow => ({
+  workspaceId: r.workspace_id, projectId: r.project_id, id: r.id, seq: Number(r.seq),
+  body: (parseJsonObject(r.body) ?? {}), deleted: r.deleted === 1, authorMemberId: r.author_member_id ?? '',
+  updatedAt: Number(r.updated_at), serverReceivedAt: r.server_received_at,
 });
 
 const userFromRow = (r: UserSqlRow): UserRow => ({
@@ -467,6 +481,27 @@ export class SqliteHubStore implements HubStore {
   async listMembers(workspaceId: string): Promise<WorkspaceMemberRow[]> {
     const rows = this.db.prepare('SELECT * FROM workspace_members WHERE workspace_id = ?').all(workspaceId) as MemberSqlRow[];
     return rows.map(memberFromRow);
+  }
+
+  async setMemberDisplayName(
+    workspaceId: string,
+    userId: string,
+    displayName: string,
+    effects: (previous: WorkspaceMemberRow, next: WorkspaceMemberRow) => SideEffects,
+  ): Promise<WorkspaceMemberRow | null> {
+    const run = this.db.transaction((): WorkspaceMemberRow | null => {
+      const row = this.db.prepare('SELECT * FROM workspace_members WHERE workspace_id = ? AND user_id = ?')
+        .get(workspaceId, userId) as MemberSqlRow | undefined;
+      if (!row) return null;
+      const previous = memberFromRow(row);
+      const at = isoNow(this.now());
+      this.db.prepare('UPDATE workspace_members SET display_name = ?, updated_at = ? WHERE workspace_id = ? AND user_id = ?')
+        .run(displayName, at, workspaceId, userId);
+      const next: WorkspaceMemberRow = { ...previous, displayName, updatedAt: at };
+      this.applyEffects(effects(previous, next));
+      return next;
+    });
+    return run.immediate();
   }
 
   private bumpDigestSync(workspaceId: string, face: SyncDigestFace): SyncDigestRow {
@@ -795,6 +830,66 @@ export class SqliteHubStore implements HubStore {
     const result = this.db.prepare('UPDATE pull_receipts SET consumed_at = ? WHERE nonce = ? AND consumed_at IS NULL')
       .run(isoNow(now), nonce);
     return result.changes === 1;
+  }
+
+  // ---- comments ---------------------------------------------------------------------
+
+  private commentSync(workspaceId: string, projectId: string, id: string): CommentRow | null {
+    const row = this.db.prepare('SELECT * FROM comments WHERE workspace_id = ? AND project_id = ? AND id = ?')
+      .get(workspaceId, projectId, id) as CommentSqlRow | undefined;
+    return row ? commentFromRow(row) : null;
+  }
+
+  private latestSeqSync(workspaceId: string, projectId: string): number {
+    const row = this.db.prepare('SELECT latest_seq FROM comment_seq WHERE workspace_id = ? AND project_id = ?')
+      .get(workspaceId, projectId) as { latest_seq: number } | undefined;
+    return row ? Number(row.latest_seq) : 0;
+  }
+
+  async pushComment(
+    input: PushCommentInput,
+    effects: (result: { row: CommentRow; created: boolean }) => SideEffects,
+  ): Promise<PushCommentResult> {
+    // IMMEDIATE transaction: latest_seq read + seq+1 write under one write lock
+    // so two concurrent pushes to a project never share a seq (PLAN §3.2).
+    const run = this.db.transaction((): PushCommentResult => {
+      const id = String(input.comment.id);
+      const previous = this.commentSync(input.workspaceId, input.projectId, id);
+      const latest = this.latestSeqSync(input.workspaceId, input.projectId);
+      const decision = decideCommentWrite(input, previous, latest, this.now());
+      if (decision.kind === 'keep_tombstone') return { kind: 'tombstoned', row: decision.row };
+      const row = decision.row;
+      this.db.prepare(
+        `INSERT INTO comments (workspace_id, project_id, id, seq, body, deleted, updated_at, server_received_at, author_member_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (workspace_id, project_id, id) DO UPDATE SET
+           seq = excluded.seq, body = excluded.body, deleted = excluded.deleted, updated_at = excluded.updated_at,
+           server_received_at = excluded.server_received_at, author_member_id = excluded.author_member_id`,
+      ).run(row.workspaceId, row.projectId, row.id, row.seq, JSON.stringify(row.body), row.deleted ? 1 : 0, row.updatedAt,
+        row.serverReceivedAt, row.authorMemberId);
+      this.db.prepare(
+        `INSERT INTO comment_seq (workspace_id, project_id, latest_seq) VALUES (?, ?, ?)
+         ON CONFLICT (workspace_id, project_id) DO UPDATE SET latest_seq = excluded.latest_seq`,
+      ).run(row.workspaceId, row.projectId, row.seq);
+      this.applyEffects(effects({ row, created: decision.created }));
+      return { kind: 'stored', row, created: decision.created };
+    });
+    return run.immediate();
+  }
+
+  async listCommentsSince(workspaceId: string, projectId: string, sinceSeq: number): Promise<CommentRow[]> {
+    const rows = this.db.prepare(
+      'SELECT * FROM comments WHERE workspace_id = ? AND project_id = ? AND seq > ? ORDER BY seq',
+    ).all(workspaceId, projectId, sinceSeq) as CommentSqlRow[];
+    return rows.map(commentFromRow);
+  }
+
+  async latestCommentSeq(workspaceId: string, projectId: string): Promise<number> {
+    return this.latestSeqSync(workspaceId, projectId);
+  }
+
+  async getComment(workspaceId: string, projectId: string, id: string): Promise<CommentRow | null> {
+    return this.commentSync(workspaceId, projectId, id);
   }
 
   async close(): Promise<void> {

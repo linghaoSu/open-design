@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { versionIdFor } from '../shared/manifest.js';
+import { decideCommentWrite } from './comments.js';
 import { apiKeyIdFromHash, deriveMemberId, hashApiKey, mintApiKeySecret, newDigestToken } from './ids.js';
 import type {
   ApiKeyRow,
@@ -8,6 +9,7 @@ import type {
   AuditRow,
   AuthenticateOptions,
   AuthenticatedPrincipal,
+  CommentRow,
   CreateUserInput,
   CreateWorkspaceInput,
   DeviceAuthRow,
@@ -20,6 +22,8 @@ import type {
   PublishVersionOptions,
   PublishVersionResult,
   PullReceiptRow,
+  PushCommentInput,
+  PushCommentResult,
   RemoveTeamProjectResult,
   ResourceRow,
   ResourceVersionRow,
@@ -134,6 +138,8 @@ export class MemoryHubStore implements HubStore {
   private readonly versions = new Map<string, ResourceVersionRow>(); // `${ws}\0${resourceId}\0${version}`
   private readonly teamProjects = new Map<string, TeamProjectRow>(); // `${ws}\0${projectId}`
   private readonly receipts = new Map<string, PullReceiptRow>();
+  private readonly comments = new Map<string, CommentRow>(); // `${ws}\0${projectId}\0${id}`
+  private readonly commentSeq = new Map<string, number>(); // `${ws}\0${projectId}`
   readonly audit: Array<AuditInput & { at: string }> = [];
   private outboxSeq = 0;
   private readonly now: () => Date;
@@ -426,6 +432,22 @@ export class MemoryHubStore implements HubStore {
     return [...this.members.values()].filter((m) => m.workspaceId === workspaceId).map((m) => ({ ...m }));
   }
 
+  async setMemberDisplayName(
+    workspaceId: string,
+    userId: string,
+    displayName: string,
+    effects: (previous: WorkspaceMemberRow, next: WorkspaceMemberRow) => SideEffects,
+  ): Promise<WorkspaceMemberRow | null> {
+    const row = this.members.get(`${workspaceId}:${userId}`);
+    if (!row) return null;
+    const previous = { ...row };
+    row.displayName = displayName;
+    row.updatedAt = this.now().toISOString();
+    const next = { ...row };
+    this.applyEffects(effects(previous, next));
+    return next;
+  }
+
   async bumpSyncDigest(workspaceId: string, face: SyncDigestFace): Promise<SyncDigestRow> {
     return this.bumpDigestSync(workspaceId, face);
   }
@@ -657,6 +679,41 @@ export class MemoryHubStore implements HubStore {
     return true;
   }
 
+  // ---- comments ---------------------------------------------------------------------
+
+  async pushComment(
+    input: PushCommentInput,
+    effects: (result: { row: CommentRow; created: boolean }) => SideEffects,
+  ): Promise<PushCommentResult> {
+    const projectKey = `${input.workspaceId}\0${input.projectId}`;
+    const key = `${projectKey}\0${String(input.comment.id)}`;
+    const previous = this.comments.get(key) ?? null;
+    const latest = this.commentSeq.get(projectKey) ?? 0;
+    const decision = decideCommentWrite(input, previous ? cloneComment(previous) : null, latest, this.now());
+    if (decision.kind === 'keep_tombstone') return { kind: 'tombstoned', row: decision.row };
+    this.comments.set(key, decision.row);
+    this.commentSeq.set(projectKey, decision.row.seq);
+    const snapshot = cloneComment(decision.row);
+    this.applyEffects(effects({ row: snapshot, created: decision.created }));
+    return { kind: 'stored', row: snapshot, created: decision.created };
+  }
+
+  async listCommentsSince(workspaceId: string, projectId: string, sinceSeq: number): Promise<CommentRow[]> {
+    return [...this.comments.values()]
+      .filter((c) => c.workspaceId === workspaceId && c.projectId === projectId && c.seq > sinceSeq)
+      .sort((a, b) => a.seq - b.seq)
+      .map(cloneComment);
+  }
+
+  async latestCommentSeq(workspaceId: string, projectId: string): Promise<number> {
+    return this.commentSeq.get(`${workspaceId}\0${projectId}`) ?? 0;
+  }
+
+  async getComment(workspaceId: string, projectId: string, id: string): Promise<CommentRow | null> {
+    const row = this.comments.get(`${workspaceId}\0${projectId}\0${id}`);
+    return row ? cloneComment(row) : null;
+  }
+
   async close(): Promise<void> {
     // nothing to release
   }
@@ -677,4 +734,8 @@ function cloneVersion(row: ResourceVersionRow): ResourceVersionRow {
 
 function cloneTeamProject(row: TeamProjectRow): TeamProjectRow {
   return { ...row, metadata: row.metadata ? structuredClone(row.metadata) : null };
+}
+
+function cloneComment(row: CommentRow): CommentRow {
+  return { ...row, body: structuredClone(row.body) };
 }

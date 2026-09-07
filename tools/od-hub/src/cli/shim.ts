@@ -1,5 +1,6 @@
 import { BILLING_SUMMARY_STUB, OD_VELA_VERSION } from '../shared/wire.js';
 import { flagString, parseArgs } from './args.js';
+import { handleCollab } from './collab.js';
 import { resolveShimContext, type Env, type ShimContext } from './config.js';
 import { hubRequest, ShimError, type FetchLike } from './http.js';
 import { runLogin, runLogout, type LoginIo } from './login.js';
@@ -136,7 +137,7 @@ function handleRun(argv: string[]): CliResult {
 
 function handleTodo(group: string, argv: string[], depth: number): CliResult {
   const { positionals } = parseArgs(argv, VALUE_FLAGS);
-  // TODO(M3): collab member|comment|presence; agent run (M5).
+  // TODO(M5): agent run.
   return fail(ShimError.notSupported(scopeOf([group, ...positionals.slice(0, depth)])));
 }
 
@@ -198,7 +199,7 @@ export async function runCli(argv: string[], env: Env, deps: CliDeps = {}): Prom
     case 'team-projects': return handleTeamProjects(rest, ctx, deps.fetch);
     case 'login':
     case 'logout': return handleAuth(command, ctx, env, deps);
-    case 'collab': return handleTodo(command, rest, 2);
+    case 'collab': return handleCollab(rest, ctx, deps.fetch);
     case 'resource': return handleResource(rest, ctx, deps.stdin ?? (async () => ''), deps.fetch);
     case 'agent': return handleTodo(command, rest, 1);
     default:

@@ -64,6 +64,8 @@ export type ConformanceTarget = {
   timeoutMs?: number;
   /** Unique suffix for ids so repeated runs against a real hub do not collide. */
   runId?: string;
+  /** Called after each check passes, so a CLI harness can report progress on failure. */
+  onPassed?: (check: string) => void;
 };
 
 export type ConformanceReport = {
@@ -108,6 +110,7 @@ export async function runHubConformance(target: ConformanceTarget): Promise<Conf
       throw new ConformanceError(name, error instanceof Error ? error.message : String(error));
     }
     passed.push(name);
+    target.onPassed?.(name);
   }
 
   const check = (name: string) => (condition: unknown, detail: string): void => {

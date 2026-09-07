@@ -252,11 +252,11 @@ describe('SqliteHubStore migrations', () => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  it('resolves migrations/ from src/ and applies 0001 through 0004 in order', () => {
+  it('resolves migrations/ from src/ and applies 0001 through 0005 in order', () => {
     const dir = resolveMigrationsDir();
     expect(dir.endsWith(`${path.sep}migrations`)).toBe(true);
     const db = new Database(':memory:');
-    expect(applyMigrations(db, dir)).toEqual([1, 2, 3, 4]);
+    expect(applyMigrations(db, dir)).toEqual([1, 2, 3, 4, 5]);
     const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>)
       .map((r) => r.name);
     expect(tables).toEqual(expect.arrayContaining(['schema_migrations', 'users', 'api_keys', 'workspaces', 'workspace_members', 'sync_digests', 'device_auths', 'oauth_grants', 'events_outbox', 'audit_log']));
@@ -270,7 +270,7 @@ describe('SqliteHubStore migrations', () => {
     expect((db.prepare('PRAGMA table_info(resources)').all() as Array<{ name: string }>).map((c) => c.name)).toContain('updated_at');
     // Second pass is a no-op.
     expect(applyMigrations(db, dir)).toEqual([]);
-    expect(db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get()).toEqual({ n: 4 });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get()).toEqual({ n: 5 });
     db.close();
   });
 

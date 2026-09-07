@@ -56,6 +56,7 @@ const HUB_EVENT_TYPES = new Set([
   'project-metadata-changed', 'project-content-changed', 'team-resources-changed',
 ]);
 const HUB_WORKSPACE_MEMBER_CHANGES = new Set(['added', 'removed', 'updated']);
+const HUB_RESOURCE_STATUSES = new Set(['shared', 'retracted']);
 const HUB_WORKSPACE_DIRECTORY_CHANGES = new Set([
   'created', 'updated', 'deleted', 'membership-added', 'membership-updated', 'membership-removed',
 ]);
@@ -70,6 +71,16 @@ export function parseHubWorkspaceEvent(data: string): Record<string, unknown> | 
     if (typeof parsed.memberChange === 'string' && HUB_WORKSPACE_MEMBER_CHANGES.has(parsed.memberChange)) {
       event.memberChange = parsed.memberChange;
     }
+    if (typeof parsed.revision === 'string') event.revision = parsed.revision;
+    // (revisionClock is parsed by the daemon too; no od-hub route emits it, so it is not mirrored here.)
+    if (typeof parsed.projectId === 'string') event.projectId = parsed.projectId;
+    if (typeof parsed.resourceId === 'string') event.resourceId = parsed.resourceId;
+    if (typeof parsed.resourceKind === 'string') event.resourceKind = parsed.resourceKind;
+    if (typeof parsed.resourceStatus === 'string' && HUB_RESOURCE_STATUSES.has(parsed.resourceStatus)) {
+      event.resourceStatus = parsed.resourceStatus;
+    }
+    if (typeof parsed.seq === 'number') event.seq = parsed.seq;
+    if (typeof parsed.version === 'number') event.version = parsed.version;
     if (typeof parsed.at === 'string') event.at = parsed.at;
     return event;
   } catch {

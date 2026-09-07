@@ -6,15 +6,16 @@ daemon run the team-workspace code paths (directory, SSE, billing gates,
 sync digest) against infrastructure you control instead of
 `amr-api.open-design.ai`.
 
-This package is the **M0-M2 hub** from
+This package is the **M0-M3 hub** from
 `PLAN-selfhosted-hub-gitlab-oauth.md`: argv routing, error formats, storage
 interface, GitLab OAuth Device Flow login, the GitLab-mirrored workspace
 directory, the outbox-backed SSE event stream, content-addressed resource
-versions (blobs + manifests + CAS publish), the team-project catalog, and
-member-side pull receipts. Comments, presence, public snapshots, and invites
-are declared (see `migrations/`) but not yet implemented; the shim answers
-those subcommands with the typed `501: not_supported` line so the daemon
-degrades cleanly instead of guessing.
+versions (blobs + manifests + CAS publish), the team-project catalog,
+member-side pull receipts, the collab member directory, the per-project
+comment stream, and project presence. Public snapshots and invites are
+declared (see `migrations/`) but not yet implemented; the shim answers those
+subcommands with the typed `501: not_supported` line so the daemon degrades
+cleanly instead of guessing.
 
 Dependencies: `better-sqlite3` (same pin as `apps/daemon`) for the optional
 `--sqlite` store; the HTTP layer is plain `node:http` + `fetch`; token
@@ -27,6 +28,9 @@ src/index.ts              od-hub CLI entry (`od-hub start`, node:util parseArgs)
 src/server/http.ts        HTTP + SSE routes (node:http)
 src/server/blob-store.ts  content-addressed blob files (<BLOB_DIR>/<aa>/<sha256>, tmp+rename)
 src/server/resource-service.ts publish (CAS) / head / manifest / tombstone / catalog / pull receipts
+src/server/collab-service.ts members (register/list), comment push/pull, presence heartbeat/list/leave
+src/server/comments.ts    pure comment reconciliation rules (seq, upsert by id, tombstone wins, updatedAt clamp)
+src/server/presence-service.ts in-process presence rosters, 30 s lease TTL, lazy sweep
 src/server/config.ts      env -> HubConfig (GitLab, TTLs, public URL)
 src/server/gitlab.ts      injectable GitLabClient interface + fetch implementation
 src/server/auth-service.ts device flow, odc_/odr_ minting, encrypted grants, refresh lock
@@ -46,6 +50,7 @@ src/cli/login.ts          `od-vela login|logout` device flow + atomic config.jso
 src/cli/config.ts         VELA_* / $AMR_HOME/config.json resolution and profile writer
 src/cli/http.ts           hub client + stderr error contract (PLAN §6.3)
 src/cli/resources.ts      `resource *` / `team-projects *` subcommands
+src/cli/collab.ts         `collab member|comment|presence *` subcommands (8 s presence budget)
 src/cli/tree.ts           directory snapshot (exclude rules), verified materialize, atomic dir swap
 src/shared/wire.ts        constants pinned to daemon parsers (file:line cited)
 src/shared/manifest.ts    manifest entries, digest, versionId, exclude matcher (shared by hub + shim)
@@ -53,6 +58,8 @@ tests/                    server endpoint, GitLab flow, SSE, and shim contract t
 tests/helpers/fake-gitlab.ts node:http fake GitLab (device flow, /user, /groups)
 tests/helpers/fake-gitlab-main.ts the same fake as a standalone process (used by the smoke)
 scripts/smoke-login.ts    out-of-process login smoke: fake GitLab + od-hub --sqlite + od-vela login
+scripts/conformance.ts    out-of-process daemon-contract conformance: od-hub --seed + bin/od-vela.mjs
+                          through e2e/lib/collab-hub-core/conformance-cli.ts
 ```
 
 ## Server endpoints
@@ -84,6 +91,13 @@ scripts/smoke-login.ts    out-of-process login smoke: fake GitLab + od-hub --sql
 | `GET /api/v1/team-projects/:projectId` | Bearer + workspace | one `TeamProjectWire`; `404 team_project_not_found` |
 | `PUT /api/v1/team-projects/:projectId` | Bearer + workspace | upsert `{resourceId, displayName?, syncState?, lastSyncedVersionId?, metadata?}`; owner fixed to the first writer (`403 team_project_forbidden` for other plain members); first write emits `team-projects-changed`, later writes `project-metadata-changed` |
 | `DELETE /api/v1/team-projects/:projectId` | Bearer + workspace | `{ok:true}`, idempotent: a missing row is also `{ok:true}` with no event, because the daemon's unshare path retries the DELETE after a lost response and expects `{ok:true}`; `403 team_project_forbidden` when the row exists and the caller is neither its owner nor a workspace owner/admin; emits `team-projects-changed` when a row was removed |
+| `GET /api/v1/collab/members` | Bearer + workspace | `{members:[{memberId, displayName, role, avatarUrl?}]}` — active members only, sorted owner, admin, member |
+| `POST /api/v1/collab/members/register` | Bearer + workspace | `{displayName, role?}` -> `{member}`. Idempotent upsert of the caller's `display_name`; `role` in the body is validated (`400 invalid_role` outside `owner|admin|member`) but otherwise ignored (roles come from the directory mirror). A changed name emits `workspace-members-changed{memberId, memberChange:"updated"}` and moves `membersToken`; an unchanged name is a silent no-op that leaves `membersToken` untouched. `400 display_name_required|invalid_role` |
+| `POST /api/v1/collab/projects/:projectId/comments` | Bearer + workspace | `{comment: CollabCloudComment}` -> `{seq}`. One transaction: `seq = latest + 1` for the project, upsert by `id`, `updatedAt` clamped to `now + 5000 ms`, author = payload `memberId` (else the caller), outbox `comment-changed{projectId, seq}`, audit `comment_create|comment_update|comment_delete` (target = id only, never the body; `details` carry `projectId`, `seq`, `authorMemberId`, `pushedByMemberId`). A tombstone (`deleted:true`) is never overwritten by a non-tombstone: such a push answers the tombstone's seq, writes nothing, and emits no event. Unknown projects are accepted (streams are independent of the catalog, as in the reference hub). Comments do not move the sync digest. `400 comment_required|comment_id_required`. **Trust note:** any active member may push a comment whose `memberId` names another member (an edit or status change relayed by a non-author). The hub deliberately does not reject this with a 4xx: the daemon's durable outbox (`apps/daemon/src/collab/collab-cloud-service.ts` `deferOutboxRecord`) retries every 4xx forever, so a strict author check would wedge the outbox instead of protecting anything. The audit row records both `authorMemberId` and `pushedByMemberId`. |
+| `GET /api/v1/collab/projects/:projectId/comments?sinceSeq=N` | Bearer + workspace | `{comments:[... seq > N ascending, tombstones included], latestSeq}`; `latestSeq` is the project's highest seq even when `comments` is empty (0 for an unknown project). `400 invalid_since_seq` |
+| `POST /api/v1/collab/projects/:projectId/presence/heartbeat` | Bearer + workspace (mirror only) | `{clientId?, displayName?, filePath?, activity?}` -> `{viewers:[{memberId, displayName, role, avatarUrl, filePath, heartbeatAt, activity?}]}`. Lease keyed by `clientId` (default: the caller's memberId), TTL `PRESENCE_TTL_MS` (30 s). `activity` passes through verbatim and is omitted when absent. Emits `presence-changed{projectId}` on a clientId's first appearance and whenever the lazy sweep evicted an expired lease |
+| `GET /api/v1/collab/projects/:projectId/presence` | Bearer + workspace (mirror only) | `{viewers}` after sweeping expired leases (an eviction emits `presence-changed`) |
+| `POST /api/v1/collab/projects/:projectId/presence/leave` | Bearer + workspace (mirror only) | `{clientId?}` -> remaining `{viewers}`; without `clientId` every lease of the caller in the project is dropped (legacy leave). Emits `presence-changed` when something was removed |
 | `POST /api/v1/team-projects/:projectId/pull-authorization` | Bearer + workspace | `{ref:"published", expectedVersion}` -> pull receipt (schema below). The viewer must be an active member other than the owner and `expectedVersion` must equal the current published version, else `409 authorized_team_project_pull_rejected`. Receipts are persisted (`pull_receipts`) and single-use |
 | any other `/api/v1/*` | — | `501 {error:"not_supported"}` (never a bare 404) |
 
@@ -135,6 +149,28 @@ default, 64 MiB for manifests) `413 {"error":"payload_too_large"}`.
   with `expiresAt = authorizedAt + 2000 ms`. The HTTP reply additionally carries
   `nonce`; the shim strips it before printing.
 
+### Collab model (PLAN §3.2 comments / presence, §4.3)
+
+- Comments live in `comments` + `comment_seq` per (workspace, project). The
+  reconciliation rules are pure (`src/server/comments.ts`) and shared by both
+  stores; they mirror how the daemon merges a pulled stream
+  (`apps/daemon/src/db.ts` `mergeSyncedPreviewComment`: delete wins by id,
+  otherwise strictly-newer `updatedAt`) and how it pushes edits and tombstones
+  (`collab-cloud-service.ts`). The stored body is the payload with `projectId`,
+  `seq`, `memberId`, `updatedAt`, and `deleted` rewritten to the authoritative
+  values, so a pull returns exactly what a receiver merges.
+- Presence is process memory, not the store: leases are disposable (the web
+  client beats every 10 s), and the endpoints answer from the membership
+  mirror without a GitLab refresh so the shim stays far below the daemon's 10 s
+  hard timeout (two kills open a 20 s negative cache). A membership removal
+  evicts the member from every roster of the workspace and announces each
+  touched project. Restarting the hub empties the rosters; the next heartbeat
+  rebuilds them.
+- Audit rows: `member_register`, `comment_create` / `comment_update` /
+  `comment_delete` (target = comment id; details carry projectId, seq,
+  authorMemberId and pushedByMemberId, never the text). Presence writes no
+  audit.
+
 ### GitLab mapping (PLAN §3.1, §5.2)
 
 | Hub | GitLab |
@@ -159,13 +195,15 @@ are written in the same store transaction as the mutation.
 Implemented now: `--version`, `login`, `logout`, `billing summary`, `billing
 workspace-snapshot`, `model list|preset`, `models`, `media models`,
 `run terminal`, `resource push|head|pull|pull-batch|remove|shared|list`,
-`team-projects --help|list|get|upsert|remove|pull`. Closed on purpose (exit 1,
+`team-projects --help|list|get|upsert|remove|pull`, `collab member
+list|register`, `collab comment push|pull`, `collab presence
+heartbeat|list|leave`. Closed on purpose (exit 1,
 typed stderr): `billing workspace-balance|team-catalog|checkout`. `image *` /
 `video *` exit 1 with
 `{"error":{"code":"not_supported","message":"od-hub does not provide media generation","retryable":false}}`
 on stdout, which the daemon surfaces as a non-retryable provider verdict.
-Everything else — `collab *`, `resource snapshot|snapshot-redact`, `agent run`
-— is a TODO stub emitting:
+Everything else — other `collab *` verbs, `resource snapshot|snapshot-redact`,
+`agent run` — is a TODO stub emitting:
 
 ```
 Error: <verb> <noun>: API request failed with status 501: not_supported
@@ -189,6 +227,28 @@ Argv and output follow `apps/daemon/src/collab/vela-cli-resource-adapter.ts`,
 | `team-projects list` / `get <p> --json` / `upsert <p> --resource-id R [--display-name --sync-state --last-synced-version-id --metadata-json]` / `remove <p>` | the catalog endpoints above; `--json` is accepted everywhere and ignored. An omitted `--sync-state` stores `synced`; `remove` is idempotent (`{ok:true}` for a row that is already gone) |
 | `team-projects pull <p> --authorize-only --ref published --expected-version N --json` | receipt only (with `manifestEntryCount`); nothing is downloaded |
 | `team-projects pull <p> <stageDir> --live-dir <live> --ref published --expected-version N --json` | `stageDir` must be an existing, empty, real directory. The shim downloads the manifest and blobs FIRST (hard-linking files from `--live-dir` whose sha256 matches), verifies every digest, then requests the receipt and replaces the `stageDir` inode with the verified tree, so the 2 s receipt window is never spent on transfer. If the published version moved between download and receipt the pull fails with `authorized_team_project_pull_rejected` and nothing is staged |
+
+### collab
+
+Argv and output follow `apps/daemon/src/collab/vela-cli-collab-client.ts`.
+`memberId` and `role` never travel in argv; the hub derives both from the
+bearer and the workspace header. All collab subcommands print one JSON object
+(no `--json`/`--format` flag exists on the daemon side; extra flags are ignored).
+
+| argv | behavior |
+|---|---|
+| `collab member list` | `GET /api/v1/collab/members` -> `{members}` |
+| `collab member register --display-name D [--role R]` | `POST .../members/register` -> `{member}`; `--role` is forwarded and ignored by the hub |
+| `collab comment push <p> --comment-json <json>` | `POST .../projects/<p>/comments {comment}` -> `{seq}`; the JSON must be an object (local exit 2 otherwise) |
+| `collab comment pull <p> --since-seq N` | `GET .../projects/<p>/comments?sinceSeq=N` -> `{comments, latestSeq}`; `--since-seq` defaults to 0 |
+| `collab presence heartbeat <p> --client-id C [--display-name D] [--file-path F] [--activity-json J]` | `POST .../presence/heartbeat` -> `{viewers}`; `--activity-json` is parsed and forwarded verbatim |
+| `collab presence list <p>` | `GET .../presence` -> `{viewers}` |
+| `collab presence leave <p> --client-id C` | `POST .../presence/leave` -> remaining `{viewers}` |
+
+Presence commands use an internal 8 s HTTP budget so the shim itself never
+hits the daemon's 10 s SIGTERM; a stalled hub yields
+`Error: collab presence heartbeat: request failed: timeout` (exit 1), which the
+daemon classifies as a retryable infrastructure failure rather than a kill.
 
 Error code strings the daemon classifies are passed through verbatim:
 `resource_not_found`, `ref_not_found`, `resource_version_conflict`,
@@ -244,6 +304,7 @@ Read by the hub server:
 | `BLOB_DIR` | root of the content-addressed blob store (takes precedence over `--blob-dir`; default `<dir of --sqlite>/blobs` with `--sqlite`, else `<OD_HUB_DATA_DIR>/blobs`, falling back to `.tmp/od-hub/blobs` relative to the working directory). Its `tmp/` subdirectory lives on the same filesystem so the final rename is atomic; back it up together with the SQLite file |
 | `OD_HUB_DATA_DIR` | parent directory for hub-owned data when `BLOB_DIR` is not set |
 | `OD_HUB_PORT` / `OD_HUB_HOST` | listen defaults (`18790`, `127.0.0.1`) |
+| `PRESENCE_TTL_MS` | presence lease lifetime (default `30000`, matching the daemon's local tracker). Lower it only for conformance runs |
 
 Read by the shim (precedence mirrors `apps/daemon/src/integrations/vela.ts:751-795`):
 
@@ -354,7 +415,20 @@ pnpm --filter @open-design/tools-od-hub typecheck
 pnpm --filter @open-design/tools-od-hub test
 pnpm --filter @open-design/tools-od-hub build
 pnpm --filter @open-design/tools-od-hub smoke
+pnpm --filter @open-design/tools-od-hub conformance
 ```
+
+`conformance` (`scripts/conformance.ts`) runs the daemon-contract suite
+`e2e/lib/collab-hub-core/conformance.ts` (`runHubConformance`, the same 17
+checks the fake hub is pinned to) against a real out-of-process `od-hub start
+--seed` (memory store, `PRESENCE_TTL_MS=2000` so lease expiry is asserted) and
+the bundled `bin/od-vela.mjs`. It spawns the e2e-owned entry
+`e2e/lib/collab-hub-core/conformance-cli.ts` under tsx instead of importing
+e2e sources from this package (root AGENTS.md keeps cross-boundary consistency
+checks in `e2e/`); that entry is also usable on its own against any deployed
+hub via `HUB_URL`, `VELA_BIN`, `HUB_WORKSPACE_ID`, `HUB_OWNER_KEY`,
+`HUB_OWNER_MEMBER_ID`, `HUB_MEMBER_KEY`, `HUB_MEMBER_MEMBER_ID`. Needs a prior
+`build`.
 
 `smoke` (`scripts/smoke-login.ts`) is the out-of-process login check, run the
 way a deployment is wired rather than in-process like the tests: it starts the

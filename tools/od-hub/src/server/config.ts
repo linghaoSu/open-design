@@ -31,6 +31,8 @@ export interface HubConfig {
   removedRetentionMs: number;
   /** Root of the content-addressed blob store (`BLOB_DIR`; default `<OD_HUB_DATA_DIR|.tmp/od-hub>/blobs`). */
   blobDir: string;
+  /** Presence lease lifetime (`PRESENCE_TTL_MS`, default 30000 = daemon presence-tracker.ts:31). */
+  presenceTtlMs: number;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -68,6 +70,8 @@ export function parseHubConfig(env: NodeJS.ProcessEnv): HubConfig {
   if (modeRaw !== 'top-level' && modeRaw !== 'include-subgroups') {
     throw new Error('GITLAB_WORKSPACE_GROUP_MODE must be top-level or include-subgroups');
   }
+  const presenceTtlMs = Number.parseInt(env.PRESENCE_TTL_MS ?? '30000', 10);
+  if (!Number.isInteger(presenceTtlMs) || presenceTtlMs <= 0) throw new Error('PRESENCE_TTL_MS must be a positive integer');
   let tokenEncKey: Buffer | null = null;
   const rawKey = trimmed(env.TOKEN_ENC_KEY);
   if (rawKey) {
@@ -87,5 +91,6 @@ export function parseHubConfig(env: NodeJS.ProcessEnv): HubConfig {
     directoryCacheMs: 60_000,
     removedRetentionMs: 7 * DAY_MS,
     blobDir: trimmed(env.BLOB_DIR) ?? path.join(trimmed(env.OD_HUB_DATA_DIR) ?? path.join('.tmp', 'od-hub'), 'blobs'),
+    presenceTtlMs,
   };
 }

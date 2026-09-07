@@ -49,6 +49,8 @@ export interface DirectoryServiceOptions {
   now?: () => Date;
   /** Called after a batch with outbox rows was committed; the server drains the relay here. */
   onOutbox?: () => Promise<void> | void;
+  /** Called once per membership that flipped to `removed` in a committed batch (presence eviction hook). */
+  onMembershipRemoved?: (workspaceId: string, memberId: string) => Promise<void> | void;
   log?: (line: string) => void;
 }
 
@@ -65,6 +67,7 @@ export class DirectoryService {
   private readonly config: HubConfig;
   private readonly now: () => Date;
   private readonly onOutbox: () => Promise<void> | void;
+  private readonly onMembershipRemoved: (workspaceId: string, memberId: string) => Promise<void> | void;
   private readonly log: (line: string) => void;
   private readonly refreshedAt = new Map<string, number>();
   private readonly inFlight = new Map<string, Promise<void>>();
@@ -76,6 +79,7 @@ export class DirectoryService {
     this.config = options.config;
     this.now = options.now ?? (() => new Date());
     this.onOutbox = options.onOutbox ?? (() => {});
+    this.onMembershipRemoved = options.onMembershipRemoved ?? (() => {});
     this.log = options.log ?? (() => {});
   }
 
@@ -185,6 +189,7 @@ export class DirectoryService {
     const existing = new Map((await this.store.listMemberships(user.id)).map((m) => [m.workspaceId, m]));
     const at = this.now().toISOString();
     const batch: StoreBatch = { workspaces: [], members: [], memberDeletes: [], outbox: [], digestBumps: [], audit: [] };
+    const removed: Array<{ workspaceId: string; memberId: string }> = [];
     const directoryEvent = (workspaceId: string, change: HubDirectoryChange): OutboxEventInput => ({
       workspaceId,
       userId: user.id,
@@ -252,10 +257,12 @@ export class DirectoryService {
         payload: { reason: ACCESS_REVOKED_MEMBERSHIP_REMOVED },
       });
       batch.audit!.push({ actorUserId: user.id, workspaceId, action: 'membership_removed', target: previous.memberId });
+      removed.push({ workspaceId, memberId: previous.memberId });
     }
 
     const { outbox } = await this.store.applyBatch(batch);
     this.refreshedAt.set(user.id, this.now().getTime());
+    for (const entry of removed) await this.onMembershipRemoved(entry.workspaceId, entry.memberId);
     if (outbox.length > 0) {
       this.log(`[od-hub] directory refresh for ${user.id}: ${outbox.length} event(s)`);
       await this.onOutbox();
@@ -281,6 +288,7 @@ export class DirectoryService {
       ],
     };
     await this.store.applyBatch(batch);
+    await this.onMembershipRemoved(workspaceId, previous.memberId);
     await this.onOutbox();
     return this.store.getMembership(userId, workspaceId);
   }

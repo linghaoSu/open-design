@@ -326,13 +326,8 @@ describe('TODO stubs keep the typed 501 contract', () => {
   });
 
   const cases: Array<[string[], string]> = [
-    [['collab', 'member', 'register', '--display-name', 'A', '--role', 'owner'], 'collab member register'],
-    [['collab', 'member', 'list'], 'collab member list'],
-    [['collab', 'comment', 'push', 'p1', '--comment-json', '{}'], 'collab comment push'],
-    [['collab', 'comment', 'pull', 'p1', '--since-seq', '0'], 'collab comment pull'],
-    [['collab', 'presence', 'heartbeat', 'p1', '--client-id', 'c1'], 'collab presence heartbeat'],
-    [['collab', 'presence', 'list', 'p1'], 'collab presence list'],
-    [['collab', 'presence', 'leave', 'p1', '--client-id', 'c1'], 'collab presence leave'],
+    // collab member|comment|presence are implemented; see tests/collab-cli.test.ts.
+    [['collab', 'invite', 'create'], 'collab invite create'],
     [['resource', 'snapshot', 'r1', '--ref', 'published', '--name', 'n', '--json'], 'resource snapshot'],
     [['resource', 'snapshot-redact', 'r1', 'slug', '--json'], 'resource snapshot-redact'],
     [['agent', 'run'], 'agent run'],

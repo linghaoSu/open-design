@@ -16,11 +16,13 @@ import {
 } from '../shared/wire.js';
 import { AuthService, GitLabNotConfiguredError, GitLabSessionRevokedError, GitLabUnavailableError } from './auth-service.js';
 import { BlobDigestMismatchError, BlobStore, BlobTooLargeError } from './blob-store.js';
+import { CollabService, CollabServiceError } from './collab-service.js';
 import { parseHubConfig, type HubConfig } from './config.js';
 import { DirectoryService } from './directory-service.js';
 import { EventRelay, sseFrame } from './event-relay.js';
 import type { GitLabClient } from './gitlab.js';
 import { DEFAULT_BILLING } from './memory-store.js';
+import { PresenceService } from './presence-service.js';
 import { ResourceService, ResourceServiceError, type Actor } from './resource-service.js';
 import { createEphemeralTokenCipher, createTokenCipher, type TokenCipher } from './token-cipher.js';
 import type { AuthenticatedPrincipal, HubStore } from './store.js';
@@ -35,6 +37,8 @@ export interface HubServerOptions {
   config?: HubConfig;
   cipher?: TokenCipher;
   heartbeatIntervalMs?: number;
+  /** Presence lease TTL; defaults to `config.presenceTtlMs` (PRESENCE_TTL_MS env, 30s). */
+  presenceTtlMs?: number;
   now?: () => Date;
   log?: (line: string) => void;
 }
@@ -45,6 +49,8 @@ export interface HubServer {
   readonly directory: DirectoryService;
   readonly relay: EventRelay;
   readonly resources: ResourceService;
+  readonly collab: CollabService;
+  readonly presence: PresenceService;
   readonly blobs: BlobStore;
   listen(port: number, host?: string): Promise<{ port: number; url: string }>;
   close(): Promise<void>;
@@ -190,9 +196,16 @@ export function createHubServer(options: HubServerOptions): HubServer {
   const listenerEpoch = `odhub-${randomUUID()}`;
   const relay = new EventRelay(store, log);
   const auth = new AuthService({ store, gitlab, cipher, config, now, log });
-  const directory = new DirectoryService({ store, gitlab, auth, config, now, log, onOutbox: () => relay.publish() });
   const blobs = options.blobs ?? new BlobStore(config.blobDir);
   const resources = new ResourceService({ store, blobs, now, onOutbox: () => void relay.publish() });
+  const presence = new PresenceService({ ttlMs: options.presenceTtlMs ?? config.presenceTtlMs, now });
+  const collab = new CollabService({ store, presence, now, onOutbox: () => void relay.publish() });
+  const directory = new DirectoryService({
+    store, gitlab, auth, config, now, log,
+    onOutbox: () => relay.publish(),
+    // A removed member must not linger in project rosters until the TTL sweeps it.
+    onMembershipRemoved: (workspaceId, memberId) => collab.evictMemberPresence(workspaceId, memberId),
+  });
   const routes: Route[] = [];
 
   const route = (method: string, path: string, authRequired: boolean, handler: Handler) => {
@@ -241,6 +254,27 @@ export function createHubServer(options: HubServerOptions): HubServer {
         return null;
       }
       throw error;
+    }
+    const membership = await store.getMembership(ctx.principal!.user.id, workspaceId);
+    if (!membership || membership.memberStatus !== 'active') {
+      json(ctx.res, 403, { error: 'workspace_not_authorized' });
+      return null;
+    }
+    return { workspaceId, membership };
+  }
+
+  /**
+   * Mirror-only membership gate for latency-critical routes (presence). No
+   * GitLab refresh, no directory sync: the stored membership row decides. A
+   * removal still takes effect within the directory cache window because the
+   * removing refresh (triggered by any other authenticated call of that user)
+   * flips `member_status` in the same mirror this reads.
+   */
+  async function mirrorMembershipOr403(ctx: RequestContext) {
+    const workspaceId = workspaceIdHeader(ctx.req);
+    if (!workspaceId) {
+      json(ctx.res, 400, { error: 'workspace_id_required' });
+      return null;
     }
     const membership = await store.getMembership(ctx.principal!.user.id, workspaceId);
     if (!membership || membership.memberStatus !== 'active') {
@@ -565,6 +599,57 @@ export function createHubServer(options: HubServerOptions): HubServer {
     json(ctx.res, 200, await resources.authorizePull(actor, ctx.params.projectId, body));
   }));
 
+  // ---- collab: members / comments / presence (PLAN §4.3) --------------------------
+  const collabRoute = (
+    handler: (ctx: RequestContext, actor: Actor) => Promise<void>,
+    gate: (ctx: RequestContext) => ReturnType<typeof activeMembershipOr403> = activeMembershipOr403,
+  ): Handler => async (ctx) => {
+    const g = await gate(ctx);
+    if (!g) return;
+    try {
+      await handler(ctx, resourceActor(ctx, g));
+    } catch (error) {
+      if (error instanceof CollabServiceError) return json(ctx.res, error.status, { error: error.code });
+      throw error;
+    }
+  };
+
+  route('GET', '/api/v1/collab/members', true, collabRoute(async (ctx, actor) => {
+    json(ctx.res, 200, { members: await collab.listMembers(actor.workspaceId) });
+  }));
+
+  route('POST', '/api/v1/collab/members/register', true, collabRoute(async (ctx, actor) => {
+    const body = await readJsonBody(ctx.req);
+    json(ctx.res, 200, { member: await collab.registerMember(actor, body) });
+  }));
+
+  route('POST', '/api/v1/collab/projects/:projectId/comments', true, collabRoute(async (ctx, actor) => {
+    const body = await readJsonBody(ctx.req, 1024 * 1024);
+    json(ctx.res, 200, await collab.pushComment(actor, ctx.params.projectId, body));
+  }));
+
+  route('GET', '/api/v1/collab/projects/:projectId/comments', true, collabRoute(async (ctx, actor) => {
+    const raw = ctx.url.searchParams.get('sinceSeq') ?? '0';
+    const sinceSeq = Number(raw);
+    if (!Number.isSafeInteger(sinceSeq) || sinceSeq < 0) return json(ctx.res, 400, { error: 'invalid_since_seq' });
+    json(ctx.res, 200, await collab.pullComments(actor.workspaceId, ctx.params.projectId, sinceSeq));
+  }));
+
+  // Presence answers from the mirror only (p99 < 2s; the daemon kills the shim at 10s).
+  route('POST', '/api/v1/collab/projects/:projectId/presence/heartbeat', true, collabRoute(async (ctx, actor) => {
+    const body = await readJsonBody(ctx.req);
+    json(ctx.res, 200, await collab.heartbeat(actor, ctx.params.projectId, body));
+  }, mirrorMembershipOr403));
+
+  route('GET', '/api/v1/collab/projects/:projectId/presence', true, collabRoute(async (ctx, actor) => {
+    json(ctx.res, 200, await collab.listPresence(actor.workspaceId, ctx.params.projectId));
+  }, mirrorMembershipOr403));
+
+  route('POST', '/api/v1/collab/projects/:projectId/presence/leave', true, collabRoute(async (ctx, actor) => {
+    const body = await readJsonBody(ctx.req);
+    json(ctx.res, 200, await collab.leavePresence(actor, ctx.params.projectId, body));
+  }, mirrorMembershipOr403));
+
   // ---- telemetry / analytics sinks -----------------------------------------
   route('POST', '/api/v1/open-design/telemetry', true, async ({ req, res }) => {
     await drainBody(req).catch(() => Buffer.alloc(0));
@@ -635,6 +720,8 @@ export function createHubServer(options: HubServerOptions): HubServer {
     directory,
     relay,
     resources,
+    collab,
+    presence,
     blobs,
     listen(port, host = '127.0.0.1') {
       return new Promise((resolve, reject) => {

@@ -348,11 +348,41 @@ export type RemoveTeamProjectResult =
   | { kind: 'not_found' }
   | { kind: 'forbidden'; ownerMemberId: string };
 
+// ---- comments (PLAN §3.2 comments / comment_seq) ---------------------------------
+
+export interface CommentRow {
+  workspaceId: string;
+  projectId: string;
+  id: string;
+  /** Monotonic within (workspace, project); reassigned on every accepted write of the id. */
+  seq: number;
+  /** Stored payload with projectId/seq/memberId/updatedAt/deleted rewritten to the authoritative values. */
+  body: Record<string, unknown>;
+  deleted: boolean;
+  authorMemberId: string;
+  /** Epoch ms, already clamped to `server now + 5000`. */
+  updatedAt: number;
+  serverReceivedAt: string;
+}
+
+export interface PushCommentInput {
+  workspaceId: string;
+  projectId: string;
+  comment: Record<string, unknown>;
+  authorMemberId: string;
+}
+
+export type PushCommentResult =
+  | { kind: 'stored'; row: CommentRow; created: boolean }
+  /** A tombstone already holds the id; nothing was written and no seq consumed. */
+  | { kind: 'tombstoned'; row: CommentRow };
+
 /**
  * Persistence boundary shared by the HTTP server, the dev seed, and the CLI
  * facing endpoints. Every implementation (memory, SQLite) must satisfy the
- * parity suite in `tests/store.test.ts`. Comments, presence, and invites
- * (PLAN §3.2) are declared in `migrations/` but not yet surfaced here.
+ * parity suite in `tests/store.test.ts`. Presence is process-local by design
+ * (see presence-service.ts) and invites (PLAN §3.2) are declared in
+ * `migrations/` but not yet surfaced here.
  *
  * Mutations that take a `SideEffects` argument commit it in the same
  * transaction as the mutation: an SSE event or digest bump is never visible
@@ -401,6 +431,12 @@ export interface HubStore {
   getWorkspace(id: string): Promise<WorkspaceRow | null>;
   upsertMember(input: UpsertMemberInput): Promise<WorkspaceMemberRow>;
   listMembers(workspaceId: string): Promise<WorkspaceMemberRow[]>;
+  /**
+   * `collab member register`: set the caller's display_name only (role and
+   * status stay whatever the directory mirror says). Commits `effects` in the
+   * same transaction. Returns null when the membership row does not exist.
+   */
+  setMemberDisplayName(workspaceId: string, userId: string, displayName: string, effects: (previous: WorkspaceMemberRow, next: WorkspaceMemberRow) => SideEffects): Promise<WorkspaceMemberRow | null>;
   bumpSyncDigest(workspaceId: string, face: SyncDigestFace): Promise<SyncDigestRow>;
 
   // ---- outbox / audit ----
@@ -447,6 +483,19 @@ export interface HubStore {
   getPullReceipt(nonce: string): Promise<PullReceiptRow | null>;
   /** Single use: returns false when unknown or already consumed. */
   consumePullReceipt(nonce: string, now?: Date): Promise<boolean>;
+
+  // ---- comments (PLAN §3.2) ----
+  /**
+   * Transactional push (see comments.ts for the rules): read latest seq +
+   * the stored row for the id under one write lock, decide, write the row and
+   * advance `comment_seq`, commit `effects`. `tombstoned` writes nothing.
+   */
+  pushComment(input: PushCommentInput, effects: (result: { row: CommentRow; created: boolean }) => SideEffects): Promise<PushCommentResult>;
+  /** Rows with `seq > sinceSeq`, ascending by seq, tombstones included. */
+  listCommentsSince(workspaceId: string, projectId: string, sinceSeq: number): Promise<CommentRow[]>;
+  /** Highest seq assigned in the project (0 before the first push). */
+  latestCommentSeq(workspaceId: string, projectId: string): Promise<number>;
+  getComment(workspaceId: string, projectId: string, id: string): Promise<CommentRow | null>;
 
   close(): Promise<void>;
 }
