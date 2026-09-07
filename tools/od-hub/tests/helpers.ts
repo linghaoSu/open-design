@@ -1,4 +1,4 @@
-import { MemoryHubStore } from '../src/server/memory-store.js';
+import { MemoryHubStore, type MemoryHubStoreSeed } from '../src/server/memory-store.js';
 import { createHubServer, type HubServer } from '../src/server/http.js';
 
 export const CONTROL_KEY = 'odc_test_key_alice';
@@ -6,9 +6,7 @@ export const OTHER_KEY = 'odc_test_key_bob';
 export const TEAM_WORKSPACE = 'g42';
 export const PERSONAL_WORKSPACE = 'u1';
 
-export function seededStore(): MemoryHubStore {
-  return new MemoryHubStore(
-    {
+export const SEED: MemoryHubStoreSeed = {
       users: [
         { id: 'u1', email: 'alice@example.test', name: 'Alice', controlKey: CONTROL_KEY },
         { id: 'u2', email: 'bob@example.test', name: 'Bob', controlKey: OTHER_KEY },
@@ -26,9 +24,10 @@ export function seededStore(): MemoryHubStore {
           ],
         },
       ],
-    },
-    { now: () => new Date('2026-09-08T00:00:00.000Z') },
-  );
+};
+
+export function seededStore(): MemoryHubStore {
+  return new MemoryHubStore(SEED, { now: () => new Date('2026-09-08T00:00:00.000Z') });
 }
 
 export async function startHub(store = seededStore()): Promise<{ hub: HubServer; url: string; store: MemoryHubStore }> {

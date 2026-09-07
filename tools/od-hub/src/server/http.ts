@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { pipeline } from 'node:stream/promises';
 
 import {
   DEVICE_FLOW_PENDING_STATUS,
@@ -14,16 +15,21 @@ import {
   WORKSPACE_ID_PATTERN,
 } from '../shared/wire.js';
 import { AuthService, GitLabNotConfiguredError, GitLabSessionRevokedError, GitLabUnavailableError } from './auth-service.js';
+import { BlobDigestMismatchError, BlobStore, BlobTooLargeError } from './blob-store.js';
 import { parseHubConfig, type HubConfig } from './config.js';
 import { DirectoryService } from './directory-service.js';
 import { EventRelay, sseFrame } from './event-relay.js';
 import type { GitLabClient } from './gitlab.js';
 import { DEFAULT_BILLING } from './memory-store.js';
+import { ResourceService, ResourceServiceError, type Actor } from './resource-service.js';
 import { createEphemeralTokenCipher, createTokenCipher, type TokenCipher } from './token-cipher.js';
 import type { AuthenticatedPrincipal, HubStore } from './store.js';
+import { isResourceKind, RESOURCE_ID_PATTERN, SHA256_HEX_PATTERN } from '../shared/manifest.js';
 
 export interface HubServerOptions {
   store: HubStore;
+  /** Content-addressed blob storage; defaults to `config.blobDir`. */
+  blobs?: BlobStore;
   /** Null (default) disables the GitLab login routes; they answer 501 not_supported. */
   gitlab?: GitLabClient | null;
   config?: HubConfig;
@@ -38,6 +44,8 @@ export interface HubServer {
   readonly auth: AuthService;
   readonly directory: DirectoryService;
   readonly relay: EventRelay;
+  readonly resources: ResourceService;
+  readonly blobs: BlobStore;
   listen(port: number, host?: string): Promise<{ port: number; url: string }>;
   close(): Promise<void>;
 }
@@ -129,8 +137,8 @@ async function drainBody(req: IncomingMessage, limit = 4 * 1024 * 1024): Promise
  * malformed JSON or a non-object answers 400 invalid_json and an oversized
  * body 413 payload_too_large, instead of being silently coerced to `{}`.
  */
-async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
-  const raw = (await drainBody(req, 64 * 1024)).toString('utf8').trim();
+async function readJsonBody(req: IncomingMessage, limit = 64 * 1024): Promise<Record<string, unknown>> {
+  const raw = (await drainBody(req, limit)).toString('utf8').trim();
   if (!raw) return {};
   let parsed: unknown;
   try {
@@ -183,6 +191,8 @@ export function createHubServer(options: HubServerOptions): HubServer {
   const relay = new EventRelay(store, log);
   const auth = new AuthService({ store, gitlab, cipher, config, now, log });
   const directory = new DirectoryService({ store, gitlab, auth, config, now, log, onOutbox: () => relay.publish() });
+  const blobs = options.blobs ?? new BlobStore(config.blobDir);
+  const resources = new ResourceService({ store, blobs, now, onOutbox: () => void relay.publish() });
   const routes: Route[] = [];
 
   const route = (method: string, path: string, authRequired: boolean, handler: Handler) => {
@@ -407,6 +417,154 @@ export function createHubServer(options: HubServerOptions): HubServer {
     });
   });
 
+  // ---- blobs (hub-internal contract, consumed by od-vela) --------------------
+  // Blobs are content-addressed and workspace-agnostic (a digest is a digest);
+  // reads still require an active membership of SOME workspace so an
+  // unauthenticated or removed principal cannot probe for known content.
+  route('POST', '/api/v1/blobs/missing', true, async (ctx) => {
+    const gate = await activeMembershipOr403(ctx);
+    if (!gate) return;
+    const body = await readJsonBody(ctx.req, 16 * 1024 * 1024);
+    const list = Array.isArray(body.sha256) ? body.sha256 : null;
+    if (!list || list.some((d) => typeof d !== 'string' || !SHA256_HEX_PATTERN.test(d))) {
+      return json(ctx.res, 400, { error: 'invalid_sha256' });
+    }
+    json(ctx.res, 200, { missing: await blobs.missing(list as string[]) });
+  });
+
+  route('PUT', '/api/v1/blobs/:sha256', true, async (ctx) => {
+    const gate = await activeMembershipOr403(ctx);
+    if (!gate) {
+      ctx.req.resume();
+      return;
+    }
+    const digest = ctx.params.sha256;
+    if (!SHA256_HEX_PATTERN.test(digest)) {
+      ctx.req.resume();
+      return json(ctx.res, 400, { error: 'invalid_sha256' });
+    }
+    try {
+      const { size, created } = await blobs.put(digest, ctx.req);
+      json(ctx.res, created ? 201 : 200, { sha256: digest, size });
+    } catch (error) {
+      if (error instanceof BlobDigestMismatchError) return json(ctx.res, 400, { error: 'blob_digest_mismatch' });
+      if (error instanceof BlobTooLargeError) return json(ctx.res, 413, { error: 'payload_too_large' });
+      throw error;
+    }
+  });
+
+  route('GET', '/api/v1/blobs/:sha256', true, async (ctx) => {
+    const gate = await activeMembershipOr403(ctx);
+    if (!gate) return;
+    const digest = ctx.params.sha256;
+    if (!SHA256_HEX_PATTERN.test(digest)) return json(ctx.res, 400, { error: 'invalid_sha256' });
+    const size = await blobs.size(digest);
+    if (size === null) return json(ctx.res, 404, { error: 'blob_not_found' });
+    ctx.res.writeHead(200, {
+      'content-type': 'application/octet-stream',
+      'content-length': size,
+      'cache-control': 'private, max-age=31536000, immutable',
+      etag: `"${digest}"`,
+    });
+    await pipeline(blobs.open(digest), ctx.res);
+  });
+
+  // ---- resources / versions (PLAN §3.4) ----------------------------------------
+  const resourceActor = (ctx: RequestContext, gate: NonNullable<Awaited<ReturnType<typeof activeMembershipOr403>>>): Actor => ({
+    workspaceId: gate.workspaceId,
+    membership: gate.membership,
+    userId: ctx.principal!.user.id,
+  });
+
+  /** Translate ResourceServiceError into the typed JSON reply; rethrow anything else. */
+  const resourceRoute = (handler: (ctx: RequestContext, actor: Actor) => Promise<void>): Handler => async (ctx) => {
+    const gate = await activeMembershipOr403(ctx);
+    if (!gate) return;
+    try {
+      await handler(ctx, resourceActor(ctx, gate));
+    } catch (error) {
+      if (error instanceof ResourceServiceError) return json(ctx.res, error.status, { error: error.code });
+      throw error;
+    }
+  };
+
+  const validResourceId = (ctx: RequestContext, id: string): boolean => {
+    if (RESOURCE_ID_PATTERN.test(id)) return true;
+    json(ctx.res, 400, { error: 'invalid_resource_id' });
+    return false;
+  };
+
+  route('GET', '/api/v1/resources/shared', true, resourceRoute(async (ctx, actor) => {
+    json(ctx.res, 200, { resources: await resources.shared(actor.workspaceId) });
+  }));
+
+  route('POST', '/api/v1/resources/:kind/:id/versions', true, resourceRoute(async (ctx, actor) => {
+    if (!isResourceKind(ctx.params.kind)) return json(ctx.res, 400, { error: 'invalid_resource_kind' });
+    if (!validResourceId(ctx, ctx.params.id)) return;
+    const body = await readJsonBody(ctx.req, 64 * 1024 * 1024);
+    const { resource, version } = await resources.publish(actor, ctx.params.kind, ctx.params.id, body);
+    json(ctx.res, 201, {
+      version: version.version,
+      versionId: version.versionId,
+      manifestDigest: version.manifestDigest,
+      entryCount: version.entryCount,
+      ownerMemberId: resource.ownerMemberId,
+    });
+  }));
+
+  route('GET', '/api/v1/resources/:id/head', true, resourceRoute(async (ctx, actor) => {
+    if (!validResourceId(ctx, ctx.params.id)) return;
+    json(ctx.res, 200, await resources.head(actor.workspaceId, ctx.params.id, ctx.url.searchParams.get('ref') ?? 'published'));
+  }));
+
+  route('GET', '/api/v1/resources/:id/versions/:versionId/manifest', true, resourceRoute(async (ctx, actor) => {
+    if (!validResourceId(ctx, ctx.params.id)) return;
+    const version = await resources.manifest(actor.workspaceId, ctx.params.id, ctx.params.versionId);
+    json(ctx.res, 200, {
+      resourceId: version.resourceId,
+      version: version.version,
+      versionId: version.versionId,
+      manifestDigest: version.manifestDigest,
+      entryCount: version.entryCount,
+      manifest: version.manifest,
+      createdAt: version.createdAt,
+    });
+  }));
+
+  route('DELETE', '/api/v1/resources/:id', true, resourceRoute(async (ctx, actor) => {
+    if (!validResourceId(ctx, ctx.params.id)) return;
+    await drainBody(ctx.req).catch(() => Buffer.alloc(0));
+    // Idempotent: an already-tombstoned id is still `{ok:true}`.
+    await resources.remove(actor, ctx.params.id);
+    json(ctx.res, 200, { ok: true });
+  }));
+
+  // ---- team project catalog ------------------------------------------------------
+  route('GET', '/api/v1/team-projects', true, resourceRoute(async (ctx, actor) => {
+    json(ctx.res, 200, { workspaceId: actor.workspaceId, projects: await resources.listTeamProjects(actor) });
+  }));
+
+  route('GET', '/api/v1/team-projects/:projectId', true, resourceRoute(async (ctx, actor) => {
+    json(ctx.res, 200, await resources.getTeamProject(actor, ctx.params.projectId));
+  }));
+
+  route('PUT', '/api/v1/team-projects/:projectId', true, resourceRoute(async (ctx, actor) => {
+    const body = await readJsonBody(ctx.req, 1024 * 1024);
+    json(ctx.res, 200, await resources.upsertTeamProject(actor, ctx.params.projectId, body));
+  }));
+
+  route('DELETE', '/api/v1/team-projects/:projectId', true, resourceRoute(async (ctx, actor) => {
+    await drainBody(ctx.req).catch(() => Buffer.alloc(0));
+    // Idempotent: a missing row is still `{ok:true}` (the daemon's unshare retry expects it).
+    await resources.removeTeamProject(actor, ctx.params.projectId);
+    json(ctx.res, 200, { ok: true });
+  }));
+
+  route('POST', '/api/v1/team-projects/:projectId/pull-authorization', true, resourceRoute(async (ctx, actor) => {
+    const body = await readJsonBody(ctx.req);
+    json(ctx.res, 200, await resources.authorizePull(actor, ctx.params.projectId, body));
+  }));
+
   // ---- telemetry / analytics sinks -----------------------------------------
   route('POST', '/api/v1/open-design/telemetry', true, async ({ req, res }) => {
     await drainBody(req).catch(() => Buffer.alloc(0));
@@ -476,6 +634,8 @@ export function createHubServer(options: HubServerOptions): HubServer {
     auth,
     directory,
     relay,
+    resources,
+    blobs,
     listen(port, host = '127.0.0.1') {
       return new Promise((resolve, reject) => {
         server.once('error', reject);

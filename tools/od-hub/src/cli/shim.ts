@@ -3,6 +3,7 @@ import { flagString, parseArgs } from './args.js';
 import { resolveShimContext, type Env, type ShimContext } from './config.js';
 import { hubRequest, ShimError, type FetchLike } from './http.js';
 import { runLogin, runLogout, type LoginIo } from './login.js';
+import { handleResource, handleTeamProjects } from './resources.js';
 
 export interface CliResult {
   stdout: string;
@@ -19,6 +20,8 @@ export interface CliDeps {
    * not already streamed. Without them everything is buffered.
    */
   io?: Partial<Pick<LoginIo, 'stdout' | 'stderr' | 'openBrowser' | 'sleep' | 'maxWaitMs'>>;
+  /** stdin reader for `resource pull-batch --requests-file -`; defaults to empty input. */
+  stdin?: () => Promise<string>;
 }
 
 /** Flags that always consume the following token as a value. */
@@ -31,24 +34,6 @@ const VALUE_FLAGS = new Set([
   'output', 'profile', 'team-id', 'plan-id', 'return-url',
 ]);
 
-const TEAM_PROJECTS_HELP = [
-  'Manage team project catalog entries.',
-  '',
-  'Usage:',
-  '  vela team-projects [command]',
-  '',
-  'Available Commands:',
-  '  get         Show one catalog entry',
-  '  list        List catalog entries for the workspace',
-  '  pull        Pull a published project version (with receipt)',
-  '  remove      Remove a catalog entry',
-  '  upsert      Create or update a catalog entry',
-  '',
-  'Flags:',
-  '  -h, --help   help for team-projects',
-  '      --json   emit machine-readable output',
-  '',
-].join('\n');
 
 function jsonLine(value: unknown): string {
   return `${JSON.stringify(value)}\n`;
@@ -149,19 +134,9 @@ function handleRun(argv: string[]): CliResult {
   return ok(jsonLine({ runId, outcome, terminalAt, recorded: true }));
 }
 
-function handleTeamProjects(argv: string[]): CliResult {
-  const { positionals, flags } = parseArgs(argv, VALUE_FLAGS);
-  // vela-cli-team-projects.ts:499-541 — `--help` must be stdout-only with exit 0;
-  // anything on stderr flips the daemon into `resource shared` compat mode.
-  if (flags.help === true || argv.includes('-h') || positionals[0] === 'help') return ok(TEAM_PROJECTS_HELP);
-  // TODO(M2): list/get/upsert/remove/pull against /api/v1/team-projects/*.
-  return fail(ShimError.notSupported(scopeOf(['team-projects', ...positionals.slice(0, 1)])));
-}
-
 function handleTodo(group: string, argv: string[], depth: number): CliResult {
   const { positionals } = parseArgs(argv, VALUE_FLAGS);
-  // TODO(M2-M3): collab member|comment|presence,
-  // resource push|head|pull|pull-batch|remove|shared|snapshot|snapshot-redact|list.
+  // TODO(M3): collab member|comment|presence; agent run (M5).
   return fail(ShimError.notSupported(scopeOf([group, ...positionals.slice(0, depth)])));
 }
 
@@ -220,11 +195,11 @@ export async function runCli(argv: string[], env: Env, deps: CliDeps = {}): Prom
     case 'video': return handleMediaGeneration();
     case 'billing': return handleBilling(rest, ctx, deps.fetch);
     case 'run': return handleRun(rest);
-    case 'team-projects': return handleTeamProjects(rest);
+    case 'team-projects': return handleTeamProjects(rest, ctx, deps.fetch);
     case 'login':
     case 'logout': return handleAuth(command, ctx, env, deps);
     case 'collab': return handleTodo(command, rest, 2);
-    case 'resource': return handleTodo(command, rest, 1);
+    case 'resource': return handleResource(rest, ctx, deps.stdin ?? (async () => ''), deps.fetch);
     case 'agent': return handleTodo(command, rest, 1);
     default:
       // Generic unknown subcommand: typed 501, never "unknown command".

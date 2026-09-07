@@ -4,11 +4,13 @@ import { fileURLToPath } from 'node:url';
 
 import Database from 'better-sqlite3';
 
+import { versionIdFor, type ManifestEntry, type ResourceKind } from '../shared/manifest.js';
 import { apiKeyIdFromHash, deriveMemberId, hashApiKey, isoNow, mintApiKeySecret, newDigestToken } from './ids.js';
-import { DEFAULT_BILLING, freshSyncDigest, slideExpiry, sortDirectory, toDirectoryItem } from './memory-store.js';
+import { DEFAULT_BILLING, freshSyncDigest, slideExpiry, sortDirectory, teamProjectRowId, toDirectoryItem } from './memory-store.js';
 import type {
   ApiKeyRow,
   AuditInput,
+  AuditRow,
   AuthenticateOptions,
   AuthenticatedPrincipal,
   CreateUserInput,
@@ -19,11 +21,24 @@ import type {
   OAuthGrantRow,
   OutboxEventInput,
   OutboxRow,
+  PublishVersionInput,
+  PublishVersionOptions,
+  PublishVersionResult,
+  PullReceiptRow,
+  RemoveTeamProjectResult,
+  ResourceRow,
+  ResourceVersionRow,
+  SideEffects,
   StoreBatch,
   SyncDigestFace,
   SyncDigestRow,
+  TeamProjectRow,
+  TeamProjectSyncState,
+  TombstoneResult,
   UpdateWorkspaceInput,
   UpsertMemberInput,
+  UpsertTeamProjectInput,
+  UpsertTeamProjectResult,
   UserRow,
   WorkspaceBillingRow,
   WorkspaceDirectoryItem,
@@ -109,6 +124,50 @@ interface OutboxSqlRow {
   id: number; workspace_id: string | null; user_id: string | null; topic: OutboxRow['topic']; event_name: string;
   payload: string; created_at: string; published_at: string | null;
 }
+interface ResourceSqlRow {
+  workspace_id: string; resource_id: string; kind: ResourceKind; owner_member_id: string | null; metadata: string | null;
+  published_version: number; published_version_id: string | null; manifest_digest: string | null;
+  manifest_entry_count: number | null; created_at: string; updated_at: string | null; deleted_at: string | null;
+}
+interface ResourceVersionSqlRow {
+  workspace_id: string; resource_id: string; version: number; version_id: string; manifest: string;
+  manifest_digest: string; entry_count: number; created_by_member_id: string | null; created_at: string;
+}
+interface TeamProjectSqlRow {
+  id: string; workspace_id: string; project_id: string; resource_id: string; owner_member_id: string | null;
+  display_name: string | null; sync_state: string | null; last_synced_version_id: string | null;
+  published_version_id: string | null; metadata: string | null; created_at: string; updated_at: string;
+}
+interface PullReceiptSqlRow {
+  nonce: string; workspace_id: string; project_id: string; resource_id: string | null; viewer_member_id: string;
+  owner_member_id: string | null; version: number; version_id: string | null; manifest_digest: string | null;
+  authorized_at: string | null; expires_at: string; consumed_at: string | null;
+}
+
+const parseJsonObject = (raw: string | null): Record<string, unknown> | null => {
+  if (!raw) return null;
+  const parsed = JSON.parse(raw) as unknown;
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+};
+const resourceFromRow = (r: ResourceSqlRow): ResourceRow => ({
+  workspaceId: r.workspace_id, resourceId: r.resource_id, kind: r.kind, ownerMemberId: r.owner_member_id ?? '',
+  metadata: parseJsonObject(r.metadata), publishedVersion: r.published_version, publishedVersionId: r.published_version_id,
+  manifestDigest: r.manifest_digest, manifestEntryCount: r.manifest_entry_count, createdAt: r.created_at,
+  updatedAt: r.updated_at ?? r.created_at, deletedAt: r.deleted_at,
+});
+const versionFromRow = (r: ResourceVersionSqlRow): ResourceVersionRow => ({
+  workspaceId: r.workspace_id, resourceId: r.resource_id, version: r.version, versionId: r.version_id,
+  manifest: JSON.parse(r.manifest) as ManifestEntry[], manifestDigest: r.manifest_digest, entryCount: r.entry_count,
+  createdByMemberId: r.created_by_member_id ?? '', createdAt: r.created_at,
+});
+const SYNC_STATES: ReadonlySet<string> = new Set(['pending_upload', 'syncing', 'synced', 'failed']);
+const teamProjectFromRow = (r: TeamProjectSqlRow): TeamProjectRow => ({
+  id: r.id, workspaceId: r.workspace_id, projectId: r.project_id, resourceId: r.resource_id,
+  ownerMemberId: r.owner_member_id ?? '', displayName: r.display_name,
+  syncState: (r.sync_state && SYNC_STATES.has(r.sync_state) ? r.sync_state : 'pending_upload') as TeamProjectSyncState,
+  lastSyncedVersionId: r.last_synced_version_id, metadata: parseJsonObject(r.metadata),
+  createdAt: r.created_at, updatedAt: r.updated_at,
+});
 
 const userFromRow = (r: UserSqlRow): UserRow => ({
   id: r.id, gitlabId: r.gitlab_id, email: r.email, name: r.name, avatarUrl: r.avatar_url,
@@ -482,8 +541,260 @@ export class SqliteHubStore implements HubStore {
     })();
   }
 
+  async listAudit(workspaceId?: string): Promise<AuditRow[]> {
+    const rows = (workspaceId === undefined
+      ? this.db.prepare('SELECT * FROM audit_log ORDER BY id').all()
+      : this.db.prepare('SELECT * FROM audit_log WHERE workspace_id = ? ORDER BY id').all(workspaceId)) as Array<{
+        at: string; actor_user_id: string | null; workspace_id: string | null; action: string; target: string | null;
+        ip: string | null; user_agent: string | null; details: string | null;
+      }>;
+    return rows.map((r) => ({
+      at: r.at, actorUserId: r.actor_user_id, workspaceId: r.workspace_id, action: r.action, target: r.target,
+      ip: r.ip, userAgent: r.user_agent, details: parseJsonObject(r.details),
+    }));
+  }
+
   async appendAudit(entry: AuditInput): Promise<void> {
     this.insertAudit(entry);
+  }
+
+  // ---- resources ------------------------------------------------------------------
+
+  private applyEffects(effects: SideEffects): void {
+    for (const bump of effects.digestBumps ?? []) this.bumpDigestSync(bump.workspaceId, bump.face);
+    for (const entry of effects.audit ?? []) this.insertAudit(entry);
+    for (const event of effects.outbox ?? []) this.insertOutbox(event);
+  }
+
+  private resourceRowSync(workspaceId: string, resourceId: string, includeDeleted: boolean): ResourceRow | null {
+    const row = this.db.prepare('SELECT * FROM resources WHERE workspace_id = ? AND resource_id = ?')
+      .get(workspaceId, resourceId) as ResourceSqlRow | undefined;
+    if (!row) return null;
+    if (row.deleted_at && !includeDeleted) return null;
+    return resourceFromRow(row);
+  }
+
+  async getResource(workspaceId: string, resourceId: string, options?: { includeDeleted?: boolean }): Promise<ResourceRow | null> {
+    return this.resourceRowSync(workspaceId, resourceId, options?.includeDeleted === true);
+  }
+
+  async listResources(workspaceId: string): Promise<ResourceRow[]> {
+    const rows = this.db.prepare(
+      'SELECT * FROM resources WHERE workspace_id = ? AND deleted_at IS NULL ORDER BY created_at, resource_id',
+    ).all(workspaceId) as ResourceSqlRow[];
+    return rows.map(resourceFromRow);
+  }
+
+  async getResourceVersion(workspaceId: string, resourceId: string, version: number): Promise<ResourceVersionRow | null> {
+    const row = this.db.prepare('SELECT * FROM resource_versions WHERE workspace_id = ? AND resource_id = ? AND version = ?')
+      .get(workspaceId, resourceId, version) as ResourceVersionSqlRow | undefined;
+    return row ? versionFromRow(row) : null;
+  }
+
+  async getResourceVersionById(workspaceId: string, resourceId: string, versionId: string): Promise<ResourceVersionRow | null> {
+    const row = this.db.prepare('SELECT * FROM resource_versions WHERE workspace_id = ? AND resource_id = ? AND version_id = ?')
+      .get(workspaceId, resourceId, versionId) as ResourceVersionSqlRow | undefined;
+    return row ? versionFromRow(row) : null;
+  }
+
+  async publishVersion(
+    input: PublishVersionInput,
+    options: PublishVersionOptions,
+    effects: (result: { resource: ResourceRow; version: ResourceVersionRow; created: boolean; teamProjects: TeamProjectRow[] }) => SideEffects,
+  ): Promise<PublishVersionResult> {
+    // IMMEDIATE transaction: the read of published_version and the write of
+    // version+1 happen under one write lock, so two concurrent publishers
+    // cannot both pass the CAS check (PLAN §3.4 `SELECT ... FOR UPDATE`).
+    const run = this.db.transaction((): PublishVersionResult => {
+      const previous = this.resourceRowSync(input.workspaceId, input.resourceId, true);
+      if (previous?.deletedAt) return { kind: 'not_found' };
+      if (previous && previous.kind !== input.kind) return { kind: 'kind_conflict', storedKind: previous.kind };
+      if (previous && !options.actorCanManageAll && previous.ownerMemberId !== input.actorMemberId) {
+        return { kind: 'forbidden', ownerMemberId: previous.ownerMemberId };
+      }
+      const current = previous?.publishedVersion ?? 0;
+      if (input.expectedVersion !== null && input.expectedVersion !== current) {
+        return { kind: 'conflict', publishedVersion: current };
+      }
+      const at = isoNow(this.now());
+      const version = current + 1;
+      const versionId = versionIdFor(version, input.manifestDigest);
+      const metadata = input.metadata === undefined ? (previous?.metadata ?? null) : input.metadata;
+      this.db.prepare(
+        `INSERT INTO resource_versions
+           (workspace_id, resource_id, version, version_id, manifest, manifest_digest, entry_count, created_by_member_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(input.workspaceId, input.resourceId, version, versionId, JSON.stringify(input.manifest), input.manifestDigest,
+        input.manifest.length, input.actorMemberId, at);
+      if (previous) {
+        const updated = this.db.prepare(
+          `UPDATE resources SET metadata = ?, published_version = ?, published_version_id = ?, manifest_digest = ?,
+             manifest_entry_count = ?, updated_at = ?
+           WHERE workspace_id = ? AND resource_id = ? AND published_version = ? AND deleted_at IS NULL`,
+        ).run(metadata ? JSON.stringify(metadata) : null, version, versionId, input.manifestDigest, input.manifest.length, at,
+          input.workspaceId, input.resourceId, current);
+        // Cannot happen under the IMMEDIATE lock, but a silent no-op here would
+        // leave a version row pointing past the published ref: abort loudly.
+        if (updated.changes !== 1) throw new Error(`publish lost the CAS race on ${input.resourceId}`);
+      } else {
+        this.db.prepare(
+          `INSERT INTO resources
+             (workspace_id, resource_id, kind, owner_member_id, metadata, published_version, published_version_id,
+              manifest_digest, manifest_entry_count, created_at, updated_at, deleted_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+        ).run(input.workspaceId, input.resourceId, input.kind, input.actorMemberId, metadata ? JSON.stringify(metadata) : null,
+          version, versionId, input.manifestDigest, input.manifest.length, at, at);
+      }
+      const resource = this.resourceRowSync(input.workspaceId, input.resourceId, false)!;
+      const versionRow = versionFromRow(
+        this.db.prepare('SELECT * FROM resource_versions WHERE workspace_id = ? AND resource_id = ? AND version = ?')
+          .get(input.workspaceId, input.resourceId, version) as ResourceVersionSqlRow,
+      );
+      const teamProjects = this.teamProjectsByResourceSync(input.workspaceId, input.resourceId);
+      const result = { resource, version: versionRow, created: !previous, teamProjects };
+      this.applyEffects(effects(result));
+      return { kind: 'published', ...result };
+    });
+    return run.immediate();
+  }
+
+  async tombstoneResource(
+    workspaceId: string,
+    resourceId: string,
+    actor: { memberId: string; canManageAll: boolean },
+    effects: (resource: ResourceRow) => SideEffects,
+  ): Promise<TombstoneResult> {
+    const run = this.db.transaction((): TombstoneResult => {
+      const row = this.resourceRowSync(workspaceId, resourceId, true);
+      if (!row) return { kind: 'not_found' };
+      if (row.deletedAt) return { kind: 'already_removed' };
+      if (!actor.canManageAll && row.ownerMemberId !== actor.memberId) return { kind: 'forbidden', ownerMemberId: row.ownerMemberId };
+      const at = isoNow(this.now());
+      this.db.prepare('UPDATE resources SET deleted_at = ?, updated_at = ? WHERE workspace_id = ? AND resource_id = ? AND deleted_at IS NULL')
+        .run(at, at, workspaceId, resourceId);
+      const snapshot: ResourceRow = { ...row, deletedAt: at, updatedAt: at };
+      this.applyEffects(effects(snapshot));
+      return { kind: 'removed', resource: snapshot };
+    });
+    return run.immediate();
+  }
+
+  // ---- team projects ---------------------------------------------------------------
+
+  private teamProjectSync(workspaceId: string, projectId: string): TeamProjectRow | null {
+    const row = this.db.prepare('SELECT * FROM team_projects WHERE workspace_id = ? AND project_id = ?')
+      .get(workspaceId, projectId) as TeamProjectSqlRow | undefined;
+    return row ? teamProjectFromRow(row) : null;
+  }
+
+  private teamProjectsByResourceSync(workspaceId: string, resourceId: string): TeamProjectRow[] {
+    const rows = this.db.prepare(
+      'SELECT * FROM team_projects WHERE workspace_id = ? AND resource_id = ? ORDER BY created_at, project_id',
+    ).all(workspaceId, resourceId) as TeamProjectSqlRow[];
+    return rows.map(teamProjectFromRow);
+  }
+
+  async getTeamProject(workspaceId: string, projectId: string): Promise<TeamProjectRow | null> {
+    return this.teamProjectSync(workspaceId, projectId);
+  }
+
+  async listTeamProjects(workspaceId: string): Promise<TeamProjectRow[]> {
+    const rows = this.db.prepare('SELECT * FROM team_projects WHERE workspace_id = ? ORDER BY created_at, project_id')
+      .all(workspaceId) as TeamProjectSqlRow[];
+    return rows.map(teamProjectFromRow);
+  }
+
+  async listTeamProjectsByResource(workspaceId: string, resourceId: string): Promise<TeamProjectRow[]> {
+    return this.teamProjectsByResourceSync(workspaceId, resourceId);
+  }
+
+  async upsertTeamProject(
+    input: UpsertTeamProjectInput,
+    options: { actorCanManageAll: boolean },
+    effects: (row: TeamProjectRow, created: boolean) => SideEffects,
+  ): Promise<UpsertTeamProjectResult> {
+    const run = this.db.transaction((): UpsertTeamProjectResult => {
+      const previous = this.teamProjectSync(input.workspaceId, input.projectId);
+      if (previous && !options.actorCanManageAll && previous.ownerMemberId !== input.actorMemberId) {
+        return { kind: 'forbidden', ownerMemberId: previous.ownerMemberId };
+      }
+      const at = isoNow(this.now());
+      const next: TeamProjectRow = {
+        id: previous?.id ?? teamProjectRowId(input.workspaceId, input.projectId),
+        workspaceId: input.workspaceId,
+        projectId: input.projectId,
+        resourceId: input.resourceId,
+        ownerMemberId: previous?.ownerMemberId ?? input.actorMemberId,
+        displayName: input.displayName === undefined ? (previous?.displayName ?? null) : input.displayName,
+        syncState: input.syncState ?? previous?.syncState ?? 'synced',
+        lastSyncedVersionId: input.lastSyncedVersionId === undefined ? (previous?.lastSyncedVersionId ?? null) : input.lastSyncedVersionId,
+        metadata: input.metadata === undefined ? (previous?.metadata ?? null) : input.metadata,
+        createdAt: previous?.createdAt ?? at,
+        updatedAt: at,
+      };
+      this.db.prepare(
+        `INSERT INTO team_projects
+           (id, workspace_id, project_id, resource_id, owner_member_id, display_name, sync_state, last_synced_version_id,
+            published_version_id, metadata, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+         ON CONFLICT (workspace_id, project_id) DO UPDATE SET
+           resource_id = excluded.resource_id, display_name = excluded.display_name, sync_state = excluded.sync_state,
+           last_synced_version_id = excluded.last_synced_version_id, metadata = excluded.metadata, updated_at = excluded.updated_at`,
+      ).run(next.id, next.workspaceId, next.projectId, next.resourceId, next.ownerMemberId, next.displayName, next.syncState,
+        next.lastSyncedVersionId, next.metadata ? JSON.stringify(next.metadata) : null, next.createdAt, next.updatedAt);
+      this.applyEffects(effects(next, !previous));
+      return { kind: 'upserted', row: next, created: !previous };
+    });
+    return run.immediate();
+  }
+
+  async removeTeamProject(
+    workspaceId: string,
+    projectId: string,
+    actor: { memberId: string; canManageAll: boolean },
+    effects: (row: TeamProjectRow) => SideEffects,
+  ): Promise<RemoveTeamProjectResult> {
+    const run = this.db.transaction((): RemoveTeamProjectResult => {
+      const row = this.teamProjectSync(workspaceId, projectId);
+      if (!row) return { kind: 'not_found' };
+      if (!actor.canManageAll && row.ownerMemberId !== actor.memberId) return { kind: 'forbidden', ownerMemberId: row.ownerMemberId };
+      this.db.prepare('DELETE FROM team_projects WHERE workspace_id = ? AND project_id = ?').run(workspaceId, projectId);
+      this.applyEffects(effects(row));
+      return { kind: 'removed', row };
+    });
+    return run.immediate();
+  }
+
+  // ---- pull receipts ---------------------------------------------------------------
+
+  async createPullReceipt(row: PullReceiptRow, effects?: SideEffects): Promise<void> {
+    this.db.transaction(() => {
+      this.db.prepare(
+        `INSERT INTO pull_receipts
+           (nonce, workspace_id, project_id, resource_id, viewer_member_id, owner_member_id, version, version_id,
+            manifest_digest, authorized_at, expires_at, consumed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(row.nonce, row.workspaceId, row.projectId, row.resourceId, row.viewerMemberId, row.ownerMemberId, row.version,
+        row.versionId, row.manifestDigest, row.authorizedAt, row.expiresAt, row.consumedAt);
+      if (effects) this.applyEffects(effects);
+    }).immediate();
+  }
+
+  async getPullReceipt(nonce: string): Promise<PullReceiptRow | null> {
+    const row = this.db.prepare('SELECT * FROM pull_receipts WHERE nonce = ?').get(nonce) as PullReceiptSqlRow | undefined;
+    if (!row) return null;
+    return {
+      nonce: row.nonce, workspaceId: row.workspace_id, projectId: row.project_id, resourceId: row.resource_id ?? '',
+      viewerMemberId: row.viewer_member_id, ownerMemberId: row.owner_member_id ?? '', version: row.version,
+      versionId: row.version_id ?? '', manifestDigest: row.manifest_digest ?? '', authorizedAt: row.authorized_at ?? '',
+      expiresAt: row.expires_at, consumedAt: row.consumed_at,
+    };
+  }
+
+  async consumePullReceipt(nonce: string, now: Date = this.now()): Promise<boolean> {
+    const result = this.db.prepare('UPDATE pull_receipts SET consumed_at = ? WHERE nonce = ? AND consumed_at IS NULL')
+      .run(isoNow(now), nonce);
+    return result.changes === 1;
   }
 
   async close(): Promise<void> {

@@ -313,18 +313,10 @@ describe('team-projects', () => {
     expectClean(await run(['team-projects', '-h']));
   });
 
-  for (const argv of [
-    ['team-projects', 'list', '--json'],
-    ['team-projects', 'get', 'p1', '--json'],
-    ['team-projects', 'upsert', 'p1', '--resource-id', 'r1', '--json'],
-    ['team-projects', 'remove', 'p1', '--json'],
-    ['team-projects', 'pull', 'p1', '--authorize-only', '--ref', 'published', '--expected-version', '1', '--json'],
-  ]) {
-    it(`${argv.slice(0, 2).join(' ')} (TODO M2) -> 501 not_supported, never a compat trigger`, async () => {
-      const result = await run(argv);
-      expectNotSupported(result, `team-projects ${argv[1]}`);
-    });
-  }
+  it('unknown team-projects verb -> 501 not_supported, never a compat trigger', async () => {
+    expectNotSupported(await run(['team-projects', 'frobnicate', '--json']), 'team-projects frobnicate');
+  });
+  // list/get/upsert/remove/pull are covered end to end in tests/resources-cli.test.ts.
 });
 
 describe('TODO stubs keep the typed 501 contract', () => {
@@ -341,13 +333,6 @@ describe('TODO stubs keep the typed 501 contract', () => {
     [['collab', 'presence', 'heartbeat', 'p1', '--client-id', 'c1'], 'collab presence heartbeat'],
     [['collab', 'presence', 'list', 'p1'], 'collab presence list'],
     [['collab', 'presence', 'leave', 'p1', '--client-id', 'c1'], 'collab presence leave'],
-    [['resource', 'push', 'project', 'r1', '/tmp/dir', '--ref', 'published', '--json'], 'resource push'],
-    [['resource', 'head', 'r1', '--ref', 'published', '--json'], 'resource head'],
-    [['resource', 'pull', 'project', 'r1', '/tmp/dir', '--ref', 'published', '--json'], 'resource pull'],
-    [['resource', 'pull-batch', '--requests-file', '-', '--json'], 'resource pull-batch'],
-    [['resource', 'remove', 'r1', '--json'], 'resource remove'],
-    [['resource', 'shared', '--json'], 'resource shared'],
-    [['resource', 'list', '--json'], 'resource list'],
     [['resource', 'snapshot', 'r1', '--ref', 'published', '--name', 'n', '--json'], 'resource snapshot'],
     [['resource', 'snapshot-redact', 'r1', 'slug', '--json'], 'resource snapshot-redact'],
     [['agent', 'run'], 'agent run'],

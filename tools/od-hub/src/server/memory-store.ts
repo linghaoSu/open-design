@@ -1,7 +1,11 @@
+import { createHash } from 'node:crypto';
+
+import { versionIdFor } from '../shared/manifest.js';
 import { apiKeyIdFromHash, deriveMemberId, hashApiKey, mintApiKeySecret, newDigestToken } from './ids.js';
 import type {
   ApiKeyRow,
   AuditInput,
+  AuditRow,
   AuthenticateOptions,
   AuthenticatedPrincipal,
   CreateUserInput,
@@ -12,11 +16,23 @@ import type {
   OAuthGrantRow,
   OutboxEventInput,
   OutboxRow,
+  PublishVersionInput,
+  PublishVersionOptions,
+  PublishVersionResult,
+  PullReceiptRow,
+  RemoveTeamProjectResult,
+  ResourceRow,
+  ResourceVersionRow,
+  SideEffects,
   StoreBatch,
   SyncDigestFace,
   SyncDigestRow,
+  TeamProjectRow,
+  TombstoneResult,
   UpdateWorkspaceInput,
   UpsertMemberInput,
+  UpsertTeamProjectInput,
+  UpsertTeamProjectResult,
   UserRow,
   WorkspaceBillingRow,
   WorkspaceDirectoryItem,
@@ -114,6 +130,10 @@ export class MemoryHubStore implements HubStore {
   private readonly deviceAuths = new Map<string, DeviceAuthRow>();
   private readonly grants = new Map<string, OAuthGrantRow>();
   private readonly outbox: OutboxRow[] = [];
+  private readonly resources = new Map<string, ResourceRow>(); // `${ws}\0${resourceId}`
+  private readonly versions = new Map<string, ResourceVersionRow>(); // `${ws}\0${resourceId}\0${version}`
+  private readonly teamProjects = new Map<string, TeamProjectRow>(); // `${ws}\0${projectId}`
+  private readonly receipts = new Map<string, PullReceiptRow>();
   readonly audit: Array<AuditInput & { at: string }> = [];
   private outboxSeq = 0;
   private readonly now: () => Date;
@@ -438,11 +458,223 @@ export class MemoryHubStore implements HubStore {
     for (const row of this.outbox) if (set.has(row.id) && !row.publishedAt) row.publishedAt = now.toISOString();
   }
 
+  async listAudit(workspaceId?: string): Promise<AuditRow[]> {
+    return this.audit.filter((a) => workspaceId === undefined || a.workspaceId === workspaceId).map((a) => ({ ...a }));
+  }
+
   async appendAudit(entry: AuditInput): Promise<void> {
     this.audit.push({ ...entry, at: this.now().toISOString() });
+  }
+
+  // ---- resources ------------------------------------------------------------------
+
+  private resourceKey(workspaceId: string, resourceId: string): string {
+    return `${workspaceId}\0${resourceId}`;
+  }
+
+  private applyEffects(effects: SideEffects): void {
+    for (const bump of effects.digestBumps ?? []) this.bumpDigestSync(bump.workspaceId, bump.face);
+    for (const entry of effects.audit ?? []) this.audit.push({ ...entry, at: this.now().toISOString() });
+    for (const event of effects.outbox ?? []) this.pushOutbox(event);
+  }
+
+  async getResource(workspaceId: string, resourceId: string, options?: { includeDeleted?: boolean }): Promise<ResourceRow | null> {
+    const row = this.resources.get(this.resourceKey(workspaceId, resourceId));
+    if (!row) return null;
+    if (row.deletedAt && !options?.includeDeleted) return null;
+    return cloneResource(row);
+  }
+
+  async listResources(workspaceId: string): Promise<ResourceRow[]> {
+    return [...this.resources.values()]
+      .filter((r) => r.workspaceId === workspaceId && !r.deletedAt)
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.resourceId < b.resourceId ? -1 : 1))
+      .map(cloneResource);
+  }
+
+  async getResourceVersion(workspaceId: string, resourceId: string, version: number): Promise<ResourceVersionRow | null> {
+    const row = this.versions.get(`${this.resourceKey(workspaceId, resourceId)}\0${version}`);
+    return row ? cloneVersion(row) : null;
+  }
+
+  async getResourceVersionById(workspaceId: string, resourceId: string, versionId: string): Promise<ResourceVersionRow | null> {
+    for (const row of this.versions.values()) {
+      if (row.workspaceId === workspaceId && row.resourceId === resourceId && row.versionId === versionId) return cloneVersion(row);
+    }
+    return null;
+  }
+
+  async publishVersion(
+    input: PublishVersionInput,
+    options: PublishVersionOptions,
+    effects: (result: { resource: ResourceRow; version: ResourceVersionRow; created: boolean; teamProjects: TeamProjectRow[] }) => SideEffects,
+  ): Promise<PublishVersionResult> {
+    const key = this.resourceKey(input.workspaceId, input.resourceId);
+    const previous = this.resources.get(key);
+    if (previous?.deletedAt) return { kind: 'not_found' };
+    if (previous && previous.kind !== input.kind) return { kind: 'kind_conflict', storedKind: previous.kind };
+    if (previous && !options.actorCanManageAll && previous.ownerMemberId !== input.actorMemberId) {
+      return { kind: 'forbidden', ownerMemberId: previous.ownerMemberId };
+    }
+    const current = previous?.publishedVersion ?? 0;
+    if (input.expectedVersion !== null && input.expectedVersion !== current) {
+      return { kind: 'conflict', publishedVersion: current };
+    }
+    const at = this.now().toISOString();
+    const version = current + 1;
+    const versionRow: ResourceVersionRow = {
+      workspaceId: input.workspaceId,
+      resourceId: input.resourceId,
+      version,
+      versionId: versionIdFor(version, input.manifestDigest),
+      manifest: input.manifest.map((e) => ({ ...e })),
+      manifestDigest: input.manifestDigest,
+      entryCount: input.manifest.length,
+      createdByMemberId: input.actorMemberId,
+      createdAt: at,
+    };
+    const resource: ResourceRow = {
+      workspaceId: input.workspaceId,
+      resourceId: input.resourceId,
+      kind: input.kind,
+      ownerMemberId: previous?.ownerMemberId ?? input.actorMemberId,
+      metadata: input.metadata === undefined ? (previous?.metadata ?? null) : input.metadata,
+      publishedVersion: version,
+      publishedVersionId: versionRow.versionId,
+      manifestDigest: input.manifestDigest,
+      manifestEntryCount: input.manifest.length,
+      createdAt: previous?.createdAt ?? at,
+      updatedAt: at,
+      deletedAt: null,
+    };
+    this.resources.set(key, resource);
+    this.versions.set(`${key}\0${version}`, versionRow);
+    const teamProjects = await this.listTeamProjectsByResource(input.workspaceId, input.resourceId);
+    const result = { resource: cloneResource(resource), version: cloneVersion(versionRow), created: !previous, teamProjects };
+    this.applyEffects(effects(result));
+    return { kind: 'published', ...result };
+  }
+
+  async tombstoneResource(
+    workspaceId: string,
+    resourceId: string,
+    actor: { memberId: string; canManageAll: boolean },
+    effects: (resource: ResourceRow) => SideEffects,
+  ): Promise<TombstoneResult> {
+    const row = this.resources.get(this.resourceKey(workspaceId, resourceId));
+    if (!row) return { kind: 'not_found' };
+    if (row.deletedAt) return { kind: 'already_removed' };
+    if (!actor.canManageAll && row.ownerMemberId !== actor.memberId) return { kind: 'forbidden', ownerMemberId: row.ownerMemberId };
+    const at = this.now().toISOString();
+    row.deletedAt = at;
+    row.updatedAt = at;
+    const snapshot = cloneResource(row);
+    this.applyEffects(effects(snapshot));
+    return { kind: 'removed', resource: snapshot };
+  }
+
+  // ---- team projects ---------------------------------------------------------------
+
+  async getTeamProject(workspaceId: string, projectId: string): Promise<TeamProjectRow | null> {
+    const row = this.teamProjects.get(`${workspaceId}\0${projectId}`);
+    return row ? cloneTeamProject(row) : null;
+  }
+
+  async listTeamProjects(workspaceId: string): Promise<TeamProjectRow[]> {
+    return [...this.teamProjects.values()]
+      .filter((r) => r.workspaceId === workspaceId)
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.projectId < b.projectId ? -1 : 1))
+      .map(cloneTeamProject);
+  }
+
+  async listTeamProjectsByResource(workspaceId: string, resourceId: string): Promise<TeamProjectRow[]> {
+    return (await this.listTeamProjects(workspaceId)).filter((r) => r.resourceId === resourceId);
+  }
+
+  async upsertTeamProject(
+    input: UpsertTeamProjectInput,
+    options: { actorCanManageAll: boolean },
+    effects: (row: TeamProjectRow, created: boolean) => SideEffects,
+  ): Promise<UpsertTeamProjectResult> {
+    const key = `${input.workspaceId}\0${input.projectId}`;
+    const previous = this.teamProjects.get(key);
+    if (previous && !options.actorCanManageAll && previous.ownerMemberId !== input.actorMemberId) {
+      return { kind: 'forbidden', ownerMemberId: previous.ownerMemberId };
+    }
+    const at = this.now().toISOString();
+    const row: TeamProjectRow = {
+      id: previous?.id ?? teamProjectRowId(input.workspaceId, input.projectId),
+      workspaceId: input.workspaceId,
+      projectId: input.projectId,
+      resourceId: input.resourceId,
+      ownerMemberId: previous?.ownerMemberId ?? input.actorMemberId,
+      displayName: input.displayName === undefined ? (previous?.displayName ?? null) : input.displayName,
+      syncState: input.syncState ?? previous?.syncState ?? 'synced',
+      lastSyncedVersionId: input.lastSyncedVersionId === undefined ? (previous?.lastSyncedVersionId ?? null) : input.lastSyncedVersionId,
+      metadata: input.metadata === undefined ? (previous?.metadata ?? null) : input.metadata,
+      createdAt: previous?.createdAt ?? at,
+      updatedAt: at,
+    };
+    this.teamProjects.set(key, row);
+    const snapshot = cloneTeamProject(row);
+    this.applyEffects(effects(snapshot, !previous));
+    return { kind: 'upserted', row: snapshot, created: !previous };
+  }
+
+  async removeTeamProject(
+    workspaceId: string,
+    projectId: string,
+    actor: { memberId: string; canManageAll: boolean },
+    effects: (row: TeamProjectRow) => SideEffects,
+  ): Promise<RemoveTeamProjectResult> {
+    const key = `${workspaceId}\0${projectId}`;
+    const row = this.teamProjects.get(key);
+    if (!row) return { kind: 'not_found' };
+    if (!actor.canManageAll && row.ownerMemberId !== actor.memberId) return { kind: 'forbidden', ownerMemberId: row.ownerMemberId };
+    this.teamProjects.delete(key);
+    const snapshot = cloneTeamProject(row);
+    this.applyEffects(effects(snapshot));
+    return { kind: 'removed', row: snapshot };
+  }
+
+  // ---- pull receipts ---------------------------------------------------------------
+
+  async createPullReceipt(row: PullReceiptRow, effects?: SideEffects): Promise<void> {
+    if (this.receipts.has(row.nonce)) throw new Error(`pull receipt ${row.nonce} already exists`);
+    this.receipts.set(row.nonce, { ...row });
+    if (effects) this.applyEffects(effects);
+  }
+
+  async getPullReceipt(nonce: string): Promise<PullReceiptRow | null> {
+    const row = this.receipts.get(nonce);
+    return row ? { ...row } : null;
+  }
+
+  async consumePullReceipt(nonce: string, now: Date = this.now()): Promise<boolean> {
+    const row = this.receipts.get(nonce);
+    if (!row || row.consumedAt) return false;
+    row.consumedAt = now.toISOString();
+    return true;
   }
 
   async close(): Promise<void> {
     // nothing to release
   }
+}
+
+/** Deterministic catalog row id so re-creating a removed entry yields the same id. */
+export function teamProjectRowId(workspaceId: string, projectId: string): string {
+  return `tp_${createHash('sha256').update(`${workspaceId}:${projectId}`).digest('hex').slice(0, 24)}`;
+}
+
+function cloneResource(row: ResourceRow): ResourceRow {
+  return { ...row, metadata: row.metadata ? structuredClone(row.metadata) : null };
+}
+
+function cloneVersion(row: ResourceVersionRow): ResourceVersionRow {
+  return { ...row, manifest: row.manifest.map((e) => ({ ...e })) };
+}
+
+function cloneTeamProject(row: TeamProjectRow): TeamProjectRow {
+  return { ...row, metadata: row.metadata ? structuredClone(row.metadata) : null };
 }

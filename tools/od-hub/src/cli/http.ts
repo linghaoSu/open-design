@@ -41,9 +41,17 @@ export class ShimError extends Error {
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
 export interface HubRequestOptions {
-  method?: 'GET' | 'POST' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
   query?: Record<string, string | undefined>;
   body?: unknown;
+  /** Raw (non-JSON) body; wins over `body`. */
+  rawBody?: Uint8Array;
+  /**
+   * Streamed raw body (wins over `rawBody`/`body`). Sent with `duplex: 'half'`
+   * and an explicit `content-length` so a large blob never has to be buffered
+   * in the shim process.
+   */
+  rawStream?: { stream: ReadableStream<Uint8Array>; size: number };
   timeoutMs?: number;
   /** Override the workspace header (e.g. `--workspace-id` on billing commands). */
   workspaceId?: string | null;
@@ -85,6 +93,42 @@ export async function hubRequest<T = unknown>(
   options: HubRequestOptions = {},
   fetchImpl: FetchLike = fetch,
 ): Promise<T> {
+  const response = await hubFetch(ctx, scope, pathname, options, fetchImpl);
+  const text = await response.text();
+  if (!response.ok) {
+    throw ShimError.http(scope, response.status, errorCodeFromBody(text, response.status));
+  }
+  if (!text.trim()) return undefined as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw ShimError.network(scope, 'invalid JSON response');
+  }
+}
+
+/** Binary GET; the caller consumes `response.body`. Non-2xx is translated like `hubRequest`. */
+export async function hubFetchBinary(
+  ctx: ShimContext,
+  scope: string,
+  pathname: string,
+  options: HubRequestOptions = {},
+  fetchImpl: FetchLike = fetch,
+): Promise<Response> {
+  const response = await hubFetch(ctx, scope, pathname, options, fetchImpl);
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw ShimError.http(scope, response.status, errorCodeFromBody(text, response.status));
+  }
+  return response;
+}
+
+async function hubFetch(
+  ctx: ShimContext,
+  scope: string,
+  pathname: string,
+  options: HubRequestOptions,
+  fetchImpl: FetchLike,
+): Promise<Response> {
   if (!ctx.controlKey) {
     throw ShimError.local(scope, `not logged in (no VELA_CONTROL_KEY and no controlKey in ${ctx.configPath} for profile ${ctx.profile})`);
   }
@@ -96,18 +140,28 @@ export async function hubRequest<T = unknown>(
   const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 8_000);
   timer.unref?.();
   const headers = hubHeaders(ctx, options.workspaceId === undefined ? ctx.workspaceId : options.workspaceId);
-  let body: string | undefined;
-  if (options.body !== undefined) {
+  let body: string | Uint8Array | ReadableStream<Uint8Array> | undefined;
+  let duplex: 'half' | undefined;
+  if (options.rawStream !== undefined) {
+    body = options.rawStream.stream;
+    duplex = 'half';
+    headers['content-type'] = 'application/octet-stream';
+    headers['content-length'] = String(options.rawStream.size);
+  } else if (options.rawBody !== undefined) {
+    body = options.rawBody;
+    headers['content-type'] = 'application/octet-stream';
+  } else if (options.body !== undefined) {
     body = JSON.stringify(options.body);
     headers['content-type'] = 'application/json';
   }
-  let response: Response;
   try {
-    response = await fetchImpl(url.toString(), {
+    return await fetchImpl(url.toString(), {
       method: options.method ?? 'GET',
       headers,
       body,
       signal: controller.signal,
+      // `duplex` is required by undici for stream bodies; not yet in lib.dom's RequestInit.
+      ...(duplex ? ({ duplex } as Record<string, unknown>) : {}),
     });
   } catch (error) {
     const detail = error instanceof Error
@@ -115,16 +169,8 @@ export async function hubRequest<T = unknown>(
       : String(error);
     throw ShimError.network(scope, detail);
   } finally {
+    // Covers connect + headers. Body reads have their own bound: the blob
+    // routes stream fixed-length bodies and the pipeline fails on a stalled socket.
     clearTimeout(timer);
-  }
-  const text = await response.text();
-  if (!response.ok) {
-    throw ShimError.http(scope, response.status, errorCodeFromBody(text, response.status));
-  }
-  if (!text.trim()) return undefined as T;
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    throw ShimError.network(scope, 'invalid JSON response');
   }
 }

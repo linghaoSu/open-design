@@ -4,6 +4,10 @@
  * Column names are camelCased; `migrations/0001_init.sql` (tool root) is the SQL twin.
  */
 
+import type { ManifestEntry, ResourceKind } from '../shared/manifest.js';
+
+export type { ManifestEntry, ResourceKind };
+
 export type ApiKeyKind = 'control' | 'runtime';
 export type WorkspaceKind = 'personal' | 'team';
 export type WorkspaceRole = 'owner' | 'admin' | 'member';
@@ -193,6 +197,10 @@ export interface AuditInput {
   details?: Record<string, unknown> | null;
 }
 
+export interface AuditRow extends AuditInput {
+  at: string;
+}
+
 export interface UpdateWorkspaceInput {
   name?: string;
   iconKey?: string | null;
@@ -222,11 +230,133 @@ export interface AuthenticateOptions {
   slidingTtlMs?: number;
 }
 
+// ---- resources / versions / catalog / receipts (PLAN §3.2, §3.4) ----------------
+
+export interface ResourceRow {
+  workspaceId: string;
+  resourceId: string;
+  kind: ResourceKind;
+  /** memberId of the first publisher; fixed for the resource lifetime. */
+  ownerMemberId: string;
+  metadata: Record<string, unknown> | null;
+  /** 0 until the first publish. */
+  publishedVersion: number;
+  publishedVersionId: string | null;
+  manifestDigest: string | null;
+  manifestEntryCount: number | null;
+  createdAt: string;
+  updatedAt: string;
+  /** Tombstone: once set, every resource-scoped call answers 404 resource_not_found. */
+  deletedAt: string | null;
+}
+
+export interface ResourceVersionRow {
+  workspaceId: string;
+  resourceId: string;
+  version: number;
+  versionId: string;
+  manifest: ManifestEntry[];
+  manifestDigest: string;
+  entryCount: number;
+  createdByMemberId: string;
+  createdAt: string;
+}
+
+export type TeamProjectSyncState = 'pending_upload' | 'syncing' | 'synced' | 'failed';
+
+export interface TeamProjectRow {
+  id: string;
+  workspaceId: string;
+  projectId: string;
+  resourceId: string;
+  /** memberId of the first upserter; later upserts never change it. */
+  ownerMemberId: string;
+  displayName: string | null;
+  syncState: TeamProjectSyncState;
+  lastSyncedVersionId: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PullReceiptRow {
+  nonce: string;
+  workspaceId: string;
+  projectId: string;
+  resourceId: string;
+  viewerMemberId: string;
+  ownerMemberId: string;
+  version: number;
+  versionId: string;
+  manifestDigest: string;
+  authorizedAt: string;
+  expiresAt: string;
+  consumedAt: string | null;
+}
+
+/** Outbox rows, digest bumps, and audit entries committed together with a resource mutation. */
+export type SideEffects = Pick<StoreBatch, 'outbox' | 'digestBumps' | 'audit'>;
+
+export interface PublishVersionInput {
+  workspaceId: string;
+  resourceId: string;
+  kind: ResourceKind;
+  /** Already normalized (sorted, validated) — see shared/manifest.ts. */
+  manifest: ManifestEntry[];
+  manifestDigest: string;
+  /** CAS guard: when a number, the publish is rejected unless it equals the current published version. */
+  expectedVersion: number | null;
+  /** Replaces the resource metadata when provided; `undefined` keeps the stored value. */
+  metadata?: Record<string, unknown> | null;
+  actorMemberId: string;
+}
+
+export type PublishVersionResult =
+  | { kind: 'published'; resource: ResourceRow; version: ResourceVersionRow; created: boolean; teamProjects: TeamProjectRow[] }
+  | { kind: 'conflict'; publishedVersion: number }
+  | { kind: 'not_found' }
+  | { kind: 'kind_conflict'; storedKind: ResourceKind }
+  | { kind: 'forbidden'; ownerMemberId: string };
+
+export interface PublishVersionOptions {
+  /** True when the actor may publish over a resource somebody else owns (workspace owner/admin). */
+  actorCanManageAll: boolean;
+}
+
+export type TombstoneResult =
+  | { kind: 'removed'; resource: ResourceRow }
+  | { kind: 'already_removed' | 'not_found' }
+  | { kind: 'forbidden'; ownerMemberId: string };
+
+export interface UpsertTeamProjectInput {
+  workspaceId: string;
+  projectId: string;
+  resourceId: string;
+  displayName?: string | null;
+  syncState?: TeamProjectSyncState;
+  lastSyncedVersionId?: string | null;
+  metadata?: Record<string, unknown> | null;
+  actorMemberId: string;
+}
+
+export type UpsertTeamProjectResult =
+  | { kind: 'upserted'; row: TeamProjectRow; created: boolean }
+  | { kind: 'forbidden'; ownerMemberId: string };
+
+export type RemoveTeamProjectResult =
+  | { kind: 'removed'; row: TeamProjectRow }
+  | { kind: 'not_found' }
+  | { kind: 'forbidden'; ownerMemberId: string };
+
 /**
  * Persistence boundary shared by the HTTP server, the dev seed, and the CLI
  * facing endpoints. Every implementation (memory, SQLite) must satisfy the
- * parity suite in `tests/store.test.ts`. Resources, comments, and invites
+ * parity suite in `tests/store.test.ts`. Comments, presence, and invites
  * (PLAN §3.2) are declared in `migrations/` but not yet surfaced here.
+ *
+ * Mutations that take a `SideEffects` argument commit it in the same
+ * transaction as the mutation: an SSE event or digest bump is never visible
+ * without the row change that caused it (or vice versa).
  */
 export interface HubStore {
   // ---- reads used by the server ----
@@ -279,5 +409,44 @@ export interface HubStore {
   listUnpublishedOutbox(limit?: number): Promise<OutboxRow[]>;
   markOutboxPublished(ids: number[], now?: Date): Promise<void>;
   appendAudit(entry: AuditInput): Promise<void>;
+  /** Audit trail, oldest first (optionally filtered by workspace). Read-only diagnostics surface shared by tests. */
+  listAudit(workspaceId?: string): Promise<AuditRow[]>;
+
+  // ---- resources (PLAN §3.4) ----
+  /**
+   * Live (non-tombstoned) resource, or null. `includeDeleted` also returns a
+   * tombstoned row (with `deletedAt` set) so callers can tell "never existed"
+   * from "removed" (PLAN §3.4 tombstone gate).
+   */
+  getResource(workspaceId: string, resourceId: string, options?: { includeDeleted?: boolean }): Promise<ResourceRow | null>;
+  /** Live resources of a workspace, oldest first. */
+  listResources(workspaceId: string): Promise<ResourceRow[]>;
+  getResourceVersion(workspaceId: string, resourceId: string, version: number): Promise<ResourceVersionRow | null>;
+  getResourceVersionById(workspaceId: string, resourceId: string, versionId: string): Promise<ResourceVersionRow | null>;
+  /**
+   * Transactional publish: CAS on `published_version`, insert the immutable
+   * version row, move the `published` ref, and commit `effects` — all or
+   * nothing. `not_found` means the id is tombstoned. Blob existence is checked
+   * by the caller BEFORE this call (the blob store is outside the transaction),
+   * so a version row never references bytes the hub does not hold.
+   */
+  publishVersion(input: PublishVersionInput, options: PublishVersionOptions, effects: (result: { resource: ResourceRow; version: ResourceVersionRow; created: boolean; teamProjects: TeamProjectRow[] }) => SideEffects): Promise<PublishVersionResult>;
+  /** Set `deleted_at`. Idempotent: a second call reports `already_removed`. */
+  tombstoneResource(workspaceId: string, resourceId: string, actor: { memberId: string; canManageAll: boolean }, effects: (resource: ResourceRow) => SideEffects): Promise<TombstoneResult>;
+
+  // ---- team project catalog ----
+  getTeamProject(workspaceId: string, projectId: string): Promise<TeamProjectRow | null>;
+  listTeamProjects(workspaceId: string): Promise<TeamProjectRow[]>;
+  /** Catalog rows pointing at one resource (used to route project-content-changed). */
+  listTeamProjectsByResource(workspaceId: string, resourceId: string): Promise<TeamProjectRow[]>;
+  upsertTeamProject(input: UpsertTeamProjectInput, options: { actorCanManageAll: boolean }, effects: (row: TeamProjectRow, created: boolean) => SideEffects): Promise<UpsertTeamProjectResult>;
+  removeTeamProject(workspaceId: string, projectId: string, actor: { memberId: string; canManageAll: boolean }, effects: (row: TeamProjectRow) => SideEffects): Promise<RemoveTeamProjectResult>;
+
+  // ---- pull receipts ----
+  createPullReceipt(row: PullReceiptRow, effects?: SideEffects): Promise<void>;
+  getPullReceipt(nonce: string): Promise<PullReceiptRow | null>;
+  /** Single use: returns false when unknown or already consumed. */
+  consumePullReceipt(nonce: string, now?: Date): Promise<boolean>;
+
   close(): Promise<void>;
 }

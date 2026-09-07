@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 
-import { parseHubConfig } from './server/config.js';
+import { parseHubConfig, resolveBlobDirFlag } from './server/config.js';
 import { seedDevIdentity } from './server/dev-seed.js';
 import { createHttpGitLabClient, type GitLabClient } from './server/gitlab.js';
 import { createHubServer } from './server/http.js';
@@ -12,13 +12,16 @@ import type { HubStore } from './server/store.js';
 const HELP = `od-hub -- self-hosted Vela-compatible hub for OpenDesign
 
 Usage:
-  od-hub start [--port <n>] [--host <addr>] [--sqlite <path>]
+  od-hub start [--port <n>] [--host <addr>] [--sqlite <path>] [--blob-dir <dir>]
                [--seed-dev [--control-key <odc_...>]] [--seed <file.json>]
 
 Options:
   --port          TCP port (default: $OD_HUB_PORT or 18790)
   --host          Bind address (default: $OD_HUB_HOST or 127.0.0.1)
   --sqlite        Persist to a better-sqlite3 file instead of memory
+  --blob-dir      Root of the content-addressed blob store. Precedence:
+                  $BLOB_DIR, then --blob-dir, then <dir of --sqlite>/blobs,
+                  then <$OD_HUB_DATA_DIR|.tmp/od-hub>/blobs
   --seed-dev      Create a dev user, personal + team workspace, and a control key.
                   Idempotent, so it is safe to pass on every start of a --sqlite hub.
   --control-key   Plaintext odc_ control key to issue with --seed-dev
@@ -35,6 +38,8 @@ interface StartOptions {
   port: number;
   host: string;
   sqlite?: string;
+  /** Resolved blob root, or undefined to let `parseHubConfig` pick the env default. */
+  blobDir?: string;
   seedDev: boolean;
   controlKey?: string;
   seedFile?: string;
@@ -48,6 +53,7 @@ export function parseStartArgs(argv: string[], env: NodeJS.ProcessEnv): { comman
       port: { type: 'string' },
       host: { type: 'string' },
       sqlite: { type: 'string' },
+      'blob-dir': { type: 'string' },
       'seed-dev': { type: 'boolean' },
       'control-key': { type: 'string' },
       seed: { type: 'string' },
@@ -67,6 +73,7 @@ export function parseStartArgs(argv: string[], env: NodeJS.ProcessEnv): { comman
       port,
       host: values.host ?? env.OD_HUB_HOST ?? '127.0.0.1',
       sqlite: values.sqlite,
+      blobDir: resolveBlobDirFlag(values['blob-dir'], values.sqlite, env),
       seedDev: values['seed-dev'] === true,
       controlKey: values['control-key'],
       seedFile: values.seed,
@@ -110,6 +117,7 @@ async function main(argv: string[]): Promise<number> {
   }
 
   const config = parseHubConfig(process.env);
+  if (options.blobDir) config.blobDir = options.blobDir;
   let gitlab: GitLabClient | null = null;
   if (config.gitlabUrl && config.gitlabClientId) {
     gitlab = createHttpGitLabClient({
@@ -127,7 +135,7 @@ async function main(argv: string[]): Promise<number> {
   const hub = createHubServer({ store, gitlab, config, log: (line) => process.stderr.write(`${line}\n`) });
   const { url } = await hub.listen(options.port, options.host);
   process.stdout.write(
-    `od-hub listening on ${url} (store: ${options.sqlite ? `sqlite ${options.sqlite}` : 'memory'}, gitlab: ${gitlab ? config.gitlabUrl : 'disabled'})\n`,
+    `od-hub listening on ${url} (store: ${options.sqlite ? `sqlite ${options.sqlite}` : 'memory'}, blobs: ${config.blobDir}, gitlab: ${gitlab ? config.gitlabUrl : 'disabled'})\n`,
   );
   const shutdown = () => {
     hub.close().then(() => store.close()).finally(() => process.exit(0));

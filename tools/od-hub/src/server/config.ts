@@ -4,6 +4,8 @@
  * still boots. `parseHubConfig` is pure so tests can feed it a plain object.
  */
 
+import path from 'node:path';
+
 export type WorkspaceGroupMode = 'top-level' | 'include-subgroups';
 
 export interface HubConfig {
@@ -27,6 +29,8 @@ export interface HubConfig {
   directoryCacheMs: number;
   /** How long a removed membership row stays visible with memberStatus=removed. */
   removedRetentionMs: number;
+  /** Root of the content-addressed blob store (`BLOB_DIR`; default `<OD_HUB_DATA_DIR|.tmp/od-hub>/blobs`). */
+  blobDir: string;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -38,6 +42,21 @@ function trimmed(value: string | undefined): string | null {
 
 function stripSlash(value: string | null): string | null {
   return value ? value.replace(/\/+$/, '') : null;
+}
+
+/**
+ * Blob-root override from the `od-hub start` command line. `BLOB_DIR` (env)
+ * keeps precedence so a deployment that pins it is never surprised by a flag;
+ * otherwise `--blob-dir`, then a `blobs/` directory next to the SQLite file
+ * (both back up together). Returns undefined to keep the `parseHubConfig`
+ * default.
+ */
+export function resolveBlobDirFlag(flag: string | undefined, sqlite: string | undefined, env: NodeJS.ProcessEnv): string | undefined {
+  if (trimmed(env.BLOB_DIR)) return undefined;
+  if (trimmed(flag)) return trimmed(flag)!;
+  const file = trimmed(sqlite);
+  if (file && file !== ':memory:') return path.join(path.dirname(path.resolve(file)), 'blobs');
+  return undefined;
 }
 
 export function parseHubConfig(env: NodeJS.ProcessEnv): HubConfig {
@@ -67,5 +86,6 @@ export function parseHubConfig(env: NodeJS.ProcessEnv): HubConfig {
     controlKeyTtlMs: Math.round(ttlDays * DAY_MS),
     directoryCacheMs: 60_000,
     removedRetentionMs: 7 * DAY_MS,
+    blobDir: trimmed(env.BLOB_DIR) ?? path.join(trimmed(env.OD_HUB_DATA_DIR) ?? path.join('.tmp', 'od-hub'), 'blobs'),
   };
 }
