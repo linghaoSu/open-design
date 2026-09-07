@@ -189,6 +189,8 @@ export interface OutboxRow extends OutboxEventInput {
 
 export interface AuditInput {
   actorUserId: string | null;
+  /** memberId of the actor inside `workspaceId` when the action is workspace-scoped. */
+  actorMemberId?: string | null;
   workspaceId?: string | null;
   action: string;
   target?: string | null;
@@ -198,7 +200,23 @@ export interface AuditInput {
 }
 
 export interface AuditRow extends AuditInput {
+  /** Monotonic insertion id; the export cursor is `id`-based so paging is stable under concurrent appends. */
+  id: number;
   at: string;
+}
+
+/** Filter for the admin audit export (`GET /api/v1/admin/audit`). */
+export interface AuditQuery {
+  /** ISO timestamp; rows with `at >= since` only. */
+  since?: string | null;
+  actorUserId?: string | null;
+  action?: string | null;
+  /** Visibility: rows in any of these workspaces OR authored by `ownActorUserId`. */
+  workspaceIds: string[];
+  ownActorUserId: string;
+  /** Rows with `id > afterId` only (cursor). */
+  afterId?: number | null;
+  limit: number;
 }
 
 export interface UpdateWorkspaceInput {
@@ -377,12 +395,96 @@ export type PushCommentResult =
   /** A tombstone already holds the id; nothing was written and no seq consumed. */
   | { kind: 'tombstoned'; row: CommentRow };
 
+// ---- invites / continuations (PLAN §3.2 invites, invite_continuations) ------------
+
+/** contracts workspace-invites.ts:20 minus `declined` (the hub has no decline surface). */
+export type InviteStatus = 'pending' | 'accepted' | 'revoked' | 'expired';
+/** contracts workspace-invites.ts:26 — an invite never creates an owner. */
+export type InviteRole = Extract<WorkspaceRole, 'admin' | 'member'>;
+
+export interface InviteRow {
+  id: string;
+  workspaceId: string;
+  /** Lower-cased, trimmed. */
+  invitedEmail: string;
+  role: InviteRole;
+  /** sha256 hex of the landing token; the token itself is only ever in the URL. */
+  tokenHash: string;
+  status: InviteStatus;
+  expiresAt: string;
+  createdByUserId: string | null;
+  createdByMemberId: string | null;
+  createdAt: string;
+  acceptedAt: string | null;
+  acceptedByUserId: string | null;
+  updatedAt: string;
+}
+
+export interface CreateInviteInput {
+  id: string;
+  workspaceId: string;
+  invitedEmail: string;
+  role: InviteRole;
+  tokenHash: string;
+  expiresAt: string;
+  createdByUserId: string;
+  createdByMemberId: string;
+}
+
+/**
+ * Desktop hand-off continuation minted on accept. `nonceHash` is the sha256 of
+ * the nonce inside the deeplink; single-use and bound to the accepting user.
+ */
+export interface InviteContinuationRow {
+  nonceHash: string;
+  inviteId: string;
+  workspaceId: string;
+  userId: string;
+  memberId: string;
+  createdAt: string;
+  expiresAt: string;
+  consumedAt: string | null;
+}
+
+export type AcceptInviteResult =
+  | { kind: 'accepted'; invite: InviteRow; membership: WorkspaceMemberRow; continuation: InviteContinuationRow }
+  | { kind: 'not_found' }
+  | { kind: 'expired' | 'consumed' | 'revoked' };
+
+export interface AcceptInviteInput {
+  tokenHash: string;
+  userId: string;
+  /** Display fields written onto the new membership row. */
+  displayName: string | null;
+  avatarUrl: string | null;
+  continuation: { nonceHash: string; expiresAt: string };
+}
+
+export type ConsumeContinuationResult =
+  | { kind: 'consumed'; row: InviteContinuationRow }
+  | { kind: 'not_found' }
+  | { kind: 'expired' }
+  | { kind: 'already_consumed' }
+  | { kind: 'owner_mismatch' };
+
+// ---- public snapshots (PLAN §3.2 public_snapshots) ---------------------------------
+
+export interface PublicSnapshotRow {
+  slug: string;
+  workspaceId: string;
+  resourceId: string;
+  versionId: string;
+  name: string;
+  kind: ResourceKind;
+  createdAt: string;
+  redactedAt: string | null;
+}
+
 /**
  * Persistence boundary shared by the HTTP server, the dev seed, and the CLI
  * facing endpoints. Every implementation (memory, SQLite) must satisfy the
  * parity suite in `tests/store.test.ts`. Presence is process-local by design
- * (see presence-service.ts) and invites (PLAN §3.2) are declared in
- * `migrations/` but not yet surfaced here.
+ * (see presence-service.ts).
  *
  * Mutations that take a `SideEffects` argument commit it in the same
  * transaction as the mutation: an SSE event or digest bump is never visible
@@ -447,6 +549,8 @@ export interface HubStore {
   appendAudit(entry: AuditInput): Promise<void>;
   /** Audit trail, oldest first (optionally filtered by workspace). Read-only diagnostics surface shared by tests. */
   listAudit(workspaceId?: string): Promise<AuditRow[]>;
+  /** Admin export: visibility-filtered, `id`-ascending, at most `limit` rows after `afterId`. */
+  queryAudit(query: AuditQuery): Promise<AuditRow[]>;
 
   // ---- resources (PLAN §3.4) ----
   /**
@@ -496,6 +600,33 @@ export interface HubStore {
   /** Highest seq assigned in the project (0 before the first push). */
   latestCommentSeq(workspaceId: string, projectId: string): Promise<number>;
   getComment(workspaceId: string, projectId: string, id: string): Promise<CommentRow | null>;
+
+  // ---- invites (PLAN §3.2) ----
+  /** Insert a pending invite together with its audit row. */
+  createInvite(input: CreateInviteInput, effects?: SideEffects): Promise<InviteRow>;
+  getInvite(id: string): Promise<InviteRow | null>;
+  getInviteByTokenHash(tokenHash: string): Promise<InviteRow | null>;
+  /** Pending invites of a workspace addressed to `invitedEmail` (already lower-cased); expiry is the caller's call. */
+  listPendingInvites(workspaceId: string, invitedEmail: string): Promise<InviteRow[]>;
+  /** Mark expired/revoked (idempotent for the same status). */
+  setInviteStatus(id: string, status: Exclude<InviteStatus, 'accepted'>): Promise<InviteRow | null>;
+  /**
+   * Transactional accept: re-read the invite under the write lock, check
+   * status + expiry, upsert the membership at the invite role (an existing
+   * active row keeps its stronger role; a removed row is reactivated), mark the
+   * invite accepted, insert the continuation, commit `effects`.
+   */
+  acceptInvite(input: AcceptInviteInput, effects: (result: { invite: InviteRow; membership: WorkspaceMemberRow }) => SideEffects): Promise<AcceptInviteResult>;
+  getInviteContinuation(nonceHash: string): Promise<InviteContinuationRow | null>;
+  /** Single-use, owner-bound consume; the store decides atomically which failure applies. */
+  consumeInviteContinuation(nonceHash: string, userId: string, now: Date, effects: (row: InviteContinuationRow) => SideEffects): Promise<ConsumeContinuationResult>;
+
+  // ---- public snapshots (PLAN §3.2) ----
+  createPublicSnapshot(row: PublicSnapshotRow, effects?: SideEffects): Promise<void>;
+  /** Live or redacted row; callers check `redactedAt`. */
+  getPublicSnapshot(slug: string): Promise<PublicSnapshotRow | null>;
+  /** Set `redacted_at`; returns the row when it was live, null when unknown or already redacted. */
+  redactPublicSnapshot(slug: string, effects: (row: PublicSnapshotRow) => SideEffects): Promise<PublicSnapshotRow | null>;
 
   close(): Promise<void>;
 }

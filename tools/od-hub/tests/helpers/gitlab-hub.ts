@@ -1,6 +1,7 @@
 import { parseHubConfig, type HubConfig } from '../../src/server/config.js';
 import { createHttpGitLabClient } from '../../src/server/gitlab.js';
 import { createHubServer, type HubServer } from '../../src/server/http.js';
+import type { Mailer } from '../../src/server/mailer.js';
 import { MemoryHubStore } from '../../src/server/memory-store.js';
 import { SqliteHubStore } from '../../src/server/sqlite-store.js';
 import type { HubStore } from '../../src/server/store.js';
@@ -28,6 +29,9 @@ export interface GitLabHubFixtureOptions {
   gitlab?: FakeGitLabOptions;
   now?: Date;
   heartbeatIntervalMs?: number;
+  /** Register `GITLAB_GROUP_TOKEN` on the fake for group 1000 and pass it to the hub. */
+  groupToken?: string;
+  mailer?: Mailer | null;
 }
 
 /**
@@ -44,6 +48,7 @@ export async function startGitLabHub(options: GitLabHubFixtureOptions = {}): Pro
   gitlab.addGroup({ id: 3000, name: 'guests', full_name: 'Guests Only', full_path: 'guests', path: 'guests', parent_id: null, members: { [ALICE.id]: 10 } });
   gitlab.addGroup({ id: 1001, name: 'sub', full_name: 'Design Team / Sub', full_path: 'design/sub', path: 'sub', parent_id: 1000, members: { [ALICE.id]: 30 } });
   const gitlabUrl = await gitlab.start();
+  if (options.groupToken) gitlab.groupTokens.set(options.groupToken, 1000);
 
   const clock = { now: options.now ?? new Date('2026-09-08T00:00:00.000Z') };
   const now = () => clock.now;
@@ -52,6 +57,7 @@ export async function startGitLabHub(options: GitLabHubFixtureOptions = {}): Pro
     GITLAB_OAUTH_CLIENT_ID: GITLAB_CLIENT_ID,
     GITLAB_OAUTH_CLIENT_SECRET: GITLAB_CLIENT_SECRET,
     TOKEN_ENC_KEY: Buffer.alloc(32, 7).toString('base64'),
+    ...(options.groupToken ? { GITLAB_GROUP_TOKEN: options.groupToken } : {}),
     ...options.env,
   });
   const store: HubStore = options.store === 'sqlite' ? new SqliteHubStore(':memory:', { now }) : new MemoryHubStore({}, { now });
@@ -61,6 +67,7 @@ export async function startGitLabHub(options: GitLabHubFixtureOptions = {}): Pro
     gitlab: createHttpGitLabClient({ baseUrl: gitlabUrl, clientId: GITLAB_CLIENT_ID, clientSecret: GITLAB_CLIENT_SECRET }),
     now,
     heartbeatIntervalMs: options.heartbeatIntervalMs ?? 50,
+    mailer: options.mailer ?? null,
   });
   const { url: hubUrl } = await hub.listen(0);
   return {

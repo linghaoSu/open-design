@@ -7,22 +7,41 @@ import Database from 'better-sqlite3';
 import { versionIdFor, type ManifestEntry, type ResourceKind } from '../shared/manifest.js';
 import { decideCommentWrite } from './comments.js';
 import { apiKeyIdFromHash, deriveMemberId, hashApiKey, isoNow, mintApiKeySecret, newDigestToken } from './ids.js';
-import { DEFAULT_BILLING, freshSyncDigest, slideExpiry, sortDirectory, teamProjectRowId, toDirectoryItem } from './memory-store.js';
+import {
+  acceptedMembershipInput,
+  DEFAULT_BILLING,
+  decideContinuationConsume,
+  decideInviteAccept,
+  freshSyncDigest,
+  slideExpiry,
+  sortDirectory,
+  teamProjectRowId,
+  toDirectoryItem,
+} from './memory-store.js';
 import type {
+  AcceptInviteInput,
+  AcceptInviteResult,
   ApiKeyRow,
   AuditInput,
+  AuditQuery,
   AuditRow,
   AuthenticateOptions,
   AuthenticatedPrincipal,
   CommentRow,
+  ConsumeContinuationResult,
+  CreateInviteInput,
   CreateUserInput,
   CreateWorkspaceInput,
   DeviceAuthRow,
   HubStore,
+  InviteContinuationRow,
+  InviteRow,
+  InviteStatus,
   IssueApiKeyInput,
   OAuthGrantRow,
   OutboxEventInput,
   OutboxRow,
+  PublicSnapshotRow,
   PublishVersionInput,
   PublishVersionOptions,
   PublishVersionResult,
@@ -146,6 +165,23 @@ interface CommentSqlRow {
   workspace_id: string; project_id: string; id: string; seq: number; body: string; deleted: number;
   updated_at: number; server_received_at: string; author_member_id: string | null;
 }
+interface InviteSqlRow {
+  id: string; workspace_id: string; invited_email: string; role: InviteRow['role']; token_hash: string; status: InviteRow['status'];
+  expires_at: string; created_by_member_id: string | null; created_at: string; created_by_user_id: string | null;
+  accepted_at: string | null; accepted_by_user_id: string | null; updated_at: string | null;
+}
+interface ContinuationSqlRow {
+  nonce: string; invite_id: string; user_id: string; member_id: string; expires_at: string; consumed_at: string | null;
+  workspace_id: string | null; created_at: string | null;
+}
+interface SnapshotSqlRow {
+  slug: string; workspace_id: string; resource_id: string; version_id: string; name: string | null; kind: string | null;
+  created_at: string; redacted_at: string | null;
+}
+interface AuditSqlRow {
+  id: number; at: string; actor_user_id: string | null; actor_member_id: string | null; workspace_id: string | null; action: string;
+  target: string | null; ip: string | null; user_agent: string | null; details: string | null;
+}
 interface PullReceiptSqlRow {
   nonce: string; workspace_id: string; project_id: string; resource_id: string | null; viewer_member_id: string;
   owner_member_id: string | null; version: number; version_id: string | null; manifest_digest: string | null;
@@ -181,6 +217,24 @@ const commentFromRow = (r: CommentSqlRow): CommentRow => ({
   workspaceId: r.workspace_id, projectId: r.project_id, id: r.id, seq: Number(r.seq),
   body: (parseJsonObject(r.body) ?? {}), deleted: r.deleted === 1, authorMemberId: r.author_member_id ?? '',
   updatedAt: Number(r.updated_at), serverReceivedAt: r.server_received_at,
+});
+
+const inviteFromRow = (r: InviteSqlRow): InviteRow => ({
+  id: r.id, workspaceId: r.workspace_id, invitedEmail: r.invited_email, role: r.role, tokenHash: r.token_hash, status: r.status,
+  expiresAt: r.expires_at, createdByUserId: r.created_by_user_id, createdByMemberId: r.created_by_member_id, createdAt: r.created_at,
+  acceptedAt: r.accepted_at, acceptedByUserId: r.accepted_by_user_id, updatedAt: r.updated_at ?? r.created_at,
+});
+const continuationFromRow = (r: ContinuationSqlRow): InviteContinuationRow => ({
+  nonceHash: r.nonce, inviteId: r.invite_id, workspaceId: r.workspace_id ?? '', userId: r.user_id, memberId: r.member_id,
+  createdAt: r.created_at ?? '', expiresAt: r.expires_at, consumedAt: r.consumed_at,
+});
+const snapshotFromRow = (r: SnapshotSqlRow): PublicSnapshotRow => ({
+  slug: r.slug, workspaceId: r.workspace_id, resourceId: r.resource_id, versionId: r.version_id, name: r.name ?? '',
+  kind: (r.kind ?? 'project') as ResourceKind, createdAt: r.created_at, redactedAt: r.redacted_at,
+});
+const auditFromRow = (r: AuditSqlRow): AuditRow => ({
+  id: Number(r.id), at: r.at, actorUserId: r.actor_user_id, actorMemberId: r.actor_member_id, workspaceId: r.workspace_id,
+  action: r.action, target: r.target, ip: r.ip, userAgent: r.user_agent, details: parseJsonObject(r.details),
 });
 
 const userFromRow = (r: UserSqlRow): UserRow => ({
@@ -537,9 +591,9 @@ export class SqliteHubStore implements HubStore {
 
   private insertAudit(entry: AuditInput): void {
     this.db.prepare(
-      `INSERT INTO audit_log (at, actor_user_id, workspace_id, action, target, ip, user_agent, details)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(isoNow(this.now()), entry.actorUserId, entry.workspaceId ?? null, entry.action, entry.target ?? null,
+      `INSERT INTO audit_log (at, actor_user_id, actor_member_id, workspace_id, action, target, ip, user_agent, details)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(isoNow(this.now()), entry.actorUserId, entry.actorMemberId ?? null, entry.workspaceId ?? null, entry.action, entry.target ?? null,
       entry.ip ?? null, entry.userAgent ?? null, entry.details ? JSON.stringify(entry.details) : null);
   }
 
@@ -579,14 +633,29 @@ export class SqliteHubStore implements HubStore {
   async listAudit(workspaceId?: string): Promise<AuditRow[]> {
     const rows = (workspaceId === undefined
       ? this.db.prepare('SELECT * FROM audit_log ORDER BY id').all()
-      : this.db.prepare('SELECT * FROM audit_log WHERE workspace_id = ? ORDER BY id').all(workspaceId)) as Array<{
-        at: string; actor_user_id: string | null; workspace_id: string | null; action: string; target: string | null;
-        ip: string | null; user_agent: string | null; details: string | null;
-      }>;
-    return rows.map((r) => ({
-      at: r.at, actorUserId: r.actor_user_id, workspaceId: r.workspace_id, action: r.action, target: r.target,
-      ip: r.ip, userAgent: r.user_agent, details: parseJsonObject(r.details),
-    }));
+      : this.db.prepare('SELECT * FROM audit_log WHERE workspace_id = ? ORDER BY id').all(workspaceId)) as AuditSqlRow[];
+    return rows.map(auditFromRow);
+  }
+
+  async queryAudit(query: AuditQuery): Promise<AuditRow[]> {
+    // Mirrors memory-store.ts matchesAuditQuery clause for clause. ISO-8601 UTC
+    // strings compare lexicographically, so `at >= since` is a string compare.
+    const where: string[] = [];
+    const values: unknown[] = [];
+    if (query.afterId != null) { where.push('id > ?'); values.push(query.afterId); }
+    if (query.since) { where.push('at >= ?'); values.push(new Date(Date.parse(query.since)).toISOString()); }
+    if (query.actorUserId) { where.push('actor_user_id = ?'); values.push(query.actorUserId); }
+    if (query.action) { where.push('action = ?'); values.push(query.action); }
+    const scope = ['actor_user_id = ?'];
+    values.push(query.ownActorUserId);
+    if (query.workspaceIds.length > 0) {
+      scope.push(`workspace_id IN (${query.workspaceIds.map(() => '?').join(', ')})`);
+      values.push(...query.workspaceIds);
+    }
+    where.push(`(${scope.join(' OR ')})`);
+    values.push(query.limit);
+    const rows = this.db.prepare(`SELECT * FROM audit_log WHERE ${where.join(' AND ')} ORDER BY id LIMIT ?`).all(...values) as AuditSqlRow[];
+    return rows.map(auditFromRow);
   }
 
   async appendAudit(entry: AuditInput): Promise<void> {
@@ -890,6 +959,156 @@ export class SqliteHubStore implements HubStore {
 
   async getComment(workspaceId: string, projectId: string, id: string): Promise<CommentRow | null> {
     return this.commentSync(workspaceId, projectId, id);
+  }
+
+  // ---- invites -----------------------------------------------------------------------
+
+  private inviteSync(id: string): InviteRow | null {
+    const row = this.db.prepare('SELECT * FROM invites WHERE id = ?').get(id) as InviteSqlRow | undefined;
+    return row ? inviteFromRow(row) : null;
+  }
+
+  private inviteByTokenSync(tokenHash: string): InviteRow | null {
+    const row = this.db.prepare('SELECT * FROM invites WHERE token_hash = ?').get(tokenHash) as InviteSqlRow | undefined;
+    return row ? inviteFromRow(row) : null;
+  }
+
+  private setInviteStatusSync(id: string, status: InviteStatus, at: string): void {
+    this.db.prepare('UPDATE invites SET status = ?, updated_at = ? WHERE id = ? AND status <> ?').run(status, at, id, status);
+  }
+
+  async createInvite(input: CreateInviteInput, effects?: SideEffects): Promise<InviteRow> {
+    const run = this.db.transaction((): InviteRow => {
+      const at = isoNow(this.now());
+      this.db.prepare(
+        `INSERT INTO invites (id, workspace_id, invited_email, role, token_hash, status, expires_at, created_by_member_id, created_at,
+           created_by_user_id, accepted_at, accepted_by_user_id, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, NULL, NULL, ?)`,
+      ).run(input.id, input.workspaceId, input.invitedEmail, input.role, input.tokenHash, input.expiresAt, input.createdByMemberId, at,
+        input.createdByUserId, at);
+      if (effects) this.applyEffects(effects);
+      return this.inviteSync(input.id)!;
+    });
+    return run.immediate();
+  }
+
+  async getInvite(id: string): Promise<InviteRow | null> {
+    return this.inviteSync(id);
+  }
+
+  async getInviteByTokenHash(tokenHash: string): Promise<InviteRow | null> {
+    return this.inviteByTokenSync(tokenHash);
+  }
+
+  async listPendingInvites(workspaceId: string, invitedEmail: string): Promise<InviteRow[]> {
+    const rows = this.db.prepare(
+      "SELECT * FROM invites WHERE workspace_id = ? AND invited_email = ? AND status = 'pending' ORDER BY created_at, id",
+    ).all(workspaceId, invitedEmail) as InviteSqlRow[];
+    return rows.map(inviteFromRow);
+  }
+
+  async setInviteStatus(id: string, status: Exclude<InviteStatus, 'accepted'>): Promise<InviteRow | null> {
+    if (!this.inviteSync(id)) return null;
+    this.setInviteStatusSync(id, status, isoNow(this.now()));
+    return this.inviteSync(id);
+  }
+
+  async acceptInvite(
+    input: AcceptInviteInput,
+    effects: (result: { invite: InviteRow; membership: WorkspaceMemberRow }) => SideEffects,
+  ): Promise<AcceptInviteResult> {
+    // IMMEDIATE: two browsers accepting the same token race on `status`; the
+    // second one re-reads `accepted` under the lock and answers consumed.
+    const run = this.db.transaction((): AcceptInviteResult => {
+      const row = this.inviteByTokenSync(input.tokenHash);
+      if (!row) return { kind: 'not_found' };
+      const now = this.now();
+      const at = isoNow(now);
+      const decision = decideInviteAccept(row, now);
+      if (decision !== 'ok') {
+        if (decision === 'expired' && row.status === 'pending') this.setInviteStatusSync(row.id, 'expired', at);
+        return { kind: decision };
+      }
+      const previous = this.db.prepare('SELECT * FROM workspace_members WHERE workspace_id = ? AND user_id = ?')
+        .get(row.workspaceId, input.userId) as MemberSqlRow | undefined;
+      this.writeMember(acceptedMembershipInput(row, input, previous ? memberFromRow(previous) : null));
+      const membership = memberFromRow(
+        this.db.prepare('SELECT * FROM workspace_members WHERE workspace_id = ? AND user_id = ?').get(row.workspaceId, input.userId) as MemberSqlRow,
+      );
+      this.db.prepare("UPDATE invites SET status = 'accepted', accepted_at = ?, accepted_by_user_id = ?, updated_at = ? WHERE id = ?")
+        .run(at, input.userId, at, row.id);
+      this.db.prepare(
+        `INSERT INTO invite_continuations (nonce, invite_id, user_id, member_id, expires_at, consumed_at, workspace_id, created_at)
+         VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`,
+      ).run(input.continuation.nonceHash, row.id, input.userId, membership.memberId, input.continuation.expiresAt, row.workspaceId, at);
+      const invite = this.inviteSync(row.id)!;
+      this.applyEffects(effects({ invite, membership }));
+      const continuation = continuationFromRow(
+        this.db.prepare('SELECT * FROM invite_continuations WHERE nonce = ?').get(input.continuation.nonceHash) as ContinuationSqlRow,
+      );
+      return { kind: 'accepted', invite, membership, continuation };
+    });
+    return run.immediate();
+  }
+
+  async getInviteContinuation(nonceHash: string): Promise<InviteContinuationRow | null> {
+    const row = this.db.prepare('SELECT * FROM invite_continuations WHERE nonce = ?').get(nonceHash) as ContinuationSqlRow | undefined;
+    return row ? continuationFromRow(row) : null;
+  }
+
+  async consumeInviteContinuation(
+    nonceHash: string,
+    userId: string,
+    now: Date,
+    effects: (row: InviteContinuationRow) => SideEffects,
+  ): Promise<ConsumeContinuationResult> {
+    const run = this.db.transaction((): ConsumeContinuationResult => {
+      const raw = this.db.prepare('SELECT * FROM invite_continuations WHERE nonce = ?').get(nonceHash) as ContinuationSqlRow | undefined;
+      if (!raw) return { kind: 'not_found' };
+      const row = continuationFromRow(raw);
+      const decision = decideContinuationConsume(row, userId, now);
+      if (decision !== 'ok') return { kind: decision };
+      const at = isoNow(now);
+      this.db.prepare('UPDATE invite_continuations SET consumed_at = ? WHERE nonce = ? AND consumed_at IS NULL').run(at, nonceHash);
+      const consumed = { ...row, consumedAt: at };
+      this.applyEffects(effects(consumed));
+      return { kind: 'consumed', row: consumed };
+    });
+    return run.immediate();
+  }
+
+  // ---- public snapshots ----------------------------------------------------------------
+
+  private snapshotSync(slug: string): PublicSnapshotRow | null {
+    const row = this.db.prepare('SELECT * FROM public_snapshots WHERE slug = ?').get(slug) as SnapshotSqlRow | undefined;
+    return row ? snapshotFromRow(row) : null;
+  }
+
+  async createPublicSnapshot(row: PublicSnapshotRow, effects?: SideEffects): Promise<void> {
+    this.db.transaction(() => {
+      this.db.prepare(
+        `INSERT INTO public_snapshots (slug, workspace_id, resource_id, version_id, name, kind, created_at, redacted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(row.slug, row.workspaceId, row.resourceId, row.versionId, row.name, row.kind, row.createdAt, row.redactedAt);
+      if (effects) this.applyEffects(effects);
+    }).immediate();
+  }
+
+  async getPublicSnapshot(slug: string): Promise<PublicSnapshotRow | null> {
+    return this.snapshotSync(slug);
+  }
+
+  async redactPublicSnapshot(slug: string, effects: (row: PublicSnapshotRow) => SideEffects): Promise<PublicSnapshotRow | null> {
+    const run = this.db.transaction((): PublicSnapshotRow | null => {
+      const row = this.snapshotSync(slug);
+      if (!row || row.redactedAt) return null;
+      const at = isoNow(this.now());
+      this.db.prepare('UPDATE public_snapshots SET redacted_at = ? WHERE slug = ? AND redacted_at IS NULL').run(at, slug);
+      const snapshot = { ...row, redactedAt: at };
+      this.applyEffects(effects(snapshot));
+      return snapshot;
+    });
+    return run.immediate();
   }
 
   async close(): Promise<void> {

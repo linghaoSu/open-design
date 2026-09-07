@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { pipeline } from 'node:stream/promises';
@@ -21,11 +21,24 @@ import { parseHubConfig, type HubConfig } from './config.js';
 import { DirectoryService } from './directory-service.js';
 import { EventRelay, sseFrame } from './event-relay.js';
 import type { GitLabClient } from './gitlab.js';
+import { GitLabTokenError } from './gitlab.js';
+import { hashApiKey } from './ids.js';
+import {
+  acceptUrlFor,
+  InviteService,
+  InviteServiceError,
+  mintSecret,
+  pkceChallenge,
+  SECRET_PATTERN,
+} from './invite-service.js';
+import { createSmtpMailer, type Mailer } from './mailer.js';
 import { DEFAULT_BILLING } from './memory-store.js';
 import { PresenceService } from './presence-service.js';
-import { ResourceService, ResourceServiceError, type Actor } from './resource-service.js';
+import { contentTypeFor, normalizePublicFilePath } from './public-files.js';
+import { canManageAll, ResourceService, ResourceServiceError, type Actor } from './resource-service.js';
+import { Templates, type TemplateVars } from './templates.js';
 import { createEphemeralTokenCipher, createTokenCipher, type TokenCipher } from './token-cipher.js';
-import type { AuthenticatedPrincipal, HubStore } from './store.js';
+import type { AuditRow, AuthenticatedPrincipal, HubStore } from './store.js';
 import { isResourceKind, RESOURCE_ID_PATTERN, SHA256_HEX_PATTERN } from '../shared/manifest.js';
 
 export interface HubServerOptions {
@@ -39,6 +52,10 @@ export interface HubServerOptions {
   heartbeatIntervalMs?: number;
   /** Presence lease TTL; defaults to `config.presenceTtlMs` (PRESENCE_TTL_MS env, 30s). */
   presenceTtlMs?: number;
+  /** Invite mail transport; defaults to SMTP when `config.smtpUrl` is set, else null (URL is logged). */
+  mailer?: Mailer | null;
+  /** Console page templates; defaults to `<tool root>/templates`. */
+  templates?: Templates;
   now?: () => Date;
   log?: (line: string) => void;
 }
@@ -51,6 +68,7 @@ export interface HubServer {
   readonly resources: ResourceService;
   readonly collab: CollabService;
   readonly presence: PresenceService;
+  readonly invites: InviteService;
   readonly blobs: BlobStore;
   listen(port: number, host?: string): Promise<{ port: number; url: string }>;
   close(): Promise<void>;
@@ -183,6 +201,120 @@ function clientIp(req: IncomingMessage): string | null {
   return headerString(req, 'x-forwarded-for')?.split(',')[0]?.trim() ?? req.socket.remoteAddress ?? null;
 }
 
+/** Content negotiation for the dual JSON/HTML invite preview: HTML only when the client says so explicitly. */
+function wantsHtml(req: IncomingMessage): boolean {
+  const accept = headerString(req, 'accept') ?? '';
+  const html = accept.indexOf('text/html');
+  const jsonAt = accept.indexOf('application/json');
+  if (html === -1) return false;
+  return jsonAt === -1 || html < jsonAt;
+}
+
+function html(res: ServerResponse, status: number, body: string, extraHeaders: Record<string, string> = {}): void {
+  res.writeHead(status, {
+    'content-type': 'text/html; charset=utf-8',
+    'content-length': Buffer.byteLength(body),
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+    'referrer-policy': 'no-referrer',
+    // Console pages carry identity and one-click accept links: never framable.
+    'x-frame-options': 'DENY',
+    'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; img-src data: https:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    ...extraHeaders,
+  });
+  res.end(body);
+}
+
+function parseCookies(req: IncomingMessage): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of (req.headers.cookie ?? '').split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    const name = part.slice(0, eq).trim();
+    if (name) out[name] = part.slice(eq + 1).trim();
+  }
+  return out;
+}
+
+/** Constant-time string compare for OAuth `state`; a length mismatch is simply false. */
+function secretEquals(a: string, b: string): boolean {
+  const left = Buffer.from(a, 'utf8');
+  const right = Buffer.from(b, 'utf8');
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+/**
+ * Browser copy for error.html, keyed by the machine code the JSON surface
+ * answers with (InviteServiceError codes, OAuth callback failures, GitLab
+ * outcomes). Codes not listed fall back to a generic title/message; the code
+ * itself is still shown so support can identify the case.
+ */
+const ERROR_COPY: Record<string, { title: string; message: string }> = {
+  invite_not_found: { title: 'Invitation not found', message: 'This invitation link is not valid. Check the link or ask for a new invitation.' },
+  invite_expired: { title: 'Invitation expired', message: 'This invitation has expired. Ask the workspace administrator for a new one.' },
+  invite_consumed: { title: 'Invitation already used', message: 'This invitation has already been accepted. Open the OpenDesign app to switch to the workspace.' },
+  invite_revoked: { title: 'Invitation revoked', message: 'This invitation was revoked by the workspace administrator.' },
+  invite_email_mismatch: { title: 'Different account', message: 'The GitLab account you signed in with does not match the invited address.' },
+  already_member: { title: 'Already a member', message: 'You are already a member of this workspace. Open the OpenDesign app to switch to it.' },
+  active_pending_invite: { title: 'Invitation pending', message: 'An invitation for this address is already pending.' },
+  workspace_not_found: { title: 'Workspace not found', message: 'The workspace this invitation points to no longer exists.' },
+  workspace_forbidden: { title: 'Not allowed', message: 'You are not allowed to join this workspace.' },
+  workspace_subscription_locked: { title: 'Workspace unavailable', message: 'This workspace is not accepting new members right now.' },
+  oauth_state_missing: { title: 'Sign-in session missing', message: 'Your sign-in session expired or the cookie was not sent. Open the invitation link again.' },
+  oauth_state_invalid: { title: 'Sign-in could not be verified', message: 'The sign-in session was not valid. Open the invitation link again.' },
+  oauth_state_expired: { title: 'Sign-in took too long', message: 'The sign-in session expired. Open the invitation link again.' },
+  oauth_state_mismatch: { title: 'Sign-in could not be verified', message: 'The sign-in response did not match this browser session. Start again from the invitation link.' },
+  gitlab_access_denied: { title: 'Sign-in cancelled', message: 'GitLab reported that you declined the sign-in.' },
+  gitlab_invalid_grant: { title: 'GitLab sign-in failed', message: 'GitLab rejected the sign-in code. Start again from the invitation link.' },
+  gitlab_session_revoked: { title: 'GitLab sign-in failed', message: 'GitLab rejected the sign-in. Start again from the invitation link.' },
+  gitlab_unavailable: { title: 'GitLab unavailable', message: 'GitLab could not be reached, or the hub service account lacks rights on this group (check GITLAB_GROUP_TOKEN). Nothing was changed; try again in a moment or contact the operator.' },
+  not_supported: { title: 'Sign-in not configured', message: 'This hub has no GitLab sign-in configured; ask the operator.' },
+  not_found: { title: 'Not found', message: 'There is nothing at this address.' },
+  user_not_found: { title: 'Unknown device authorization', message: 'This device authorization is not known.' },
+  internal_error: { title: 'Something went wrong', message: 'The hub hit an unexpected error. Try again in a moment.' },
+};
+
+function padTwo(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+/** `2026-09-15 00:00 UTC` — stable, no locale dependency; a non-date falls through unchanged. */
+export function humanUtc(value: string | number | Date): string {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return `${d.getUTCFullYear()}-${padTwo(d.getUTCMonth() + 1)}-${padTwo(d.getUTCDate())} ${padTwo(d.getUTCHours())}:${padTwo(d.getUTCMinutes())} UTC`;
+}
+
+const OAUTH_COOKIE = 'od_hub_oauth';
+const OAUTH_COOKIE_TTL_S = 600;
+
+function oauthCookie(value: string, secure: boolean, maxAge: number = OAUTH_COOKIE_TTL_S): string {
+  return `${OAUTH_COOKIE}=${value}; Path=/console/oauth; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
+}
+
+/** Cursor for the audit export: opaque base64url of the last row id. */
+function encodeAuditCursor(id: number): string {
+  return Buffer.from(String(id), 'utf8').toString('base64url');
+}
+function decodeAuditCursor(raw: string | null): number | null | undefined {
+  if (!raw) return null;
+  const id = Number.parseInt(Buffer.from(raw, 'base64url').toString('utf8'), 10);
+  return Number.isSafeInteger(id) && id >= 0 ? id : undefined;
+}
+
+function toAuditWire(row: AuditRow) {
+  return {
+    id: row.id,
+    at: row.at,
+    actorUserId: row.actorUserId,
+    actorMemberId: row.actorMemberId ?? null,
+    workspaceId: row.workspaceId ?? null,
+    action: row.action,
+    target: row.target ?? null,
+    details: row.details ?? null,
+  };
+}
+
 export function createHubServer(options: HubServerOptions): HubServer {
   const { store } = options;
   const now = options.now ?? (() => new Date());
@@ -206,6 +338,28 @@ export function createHubServer(options: HubServerOptions): HubServer {
     // A removed member must not linger in project rosters until the TTL sweeps it.
     onMembershipRemoved: (workspaceId, memberId) => collab.evictMemberPresence(workspaceId, memberId),
   });
+  const mailer = options.mailer !== undefined ? options.mailer : (config.smtpUrl ? createSmtpMailer(config.smtpUrl) : null);
+  const templates = options.templates ?? new Templates();
+  const invites = new InviteService({
+    store, directory, gitlab, mailer, now, log,
+    gitlabGroupToken: config.gitlabGroupToken,
+    mailFrom: config.smtpFrom,
+    inviteTtlMs: config.inviteTtlMs,
+    continuationTtlMs: config.inviteContinuationTtlMs,
+    downloadUrl: config.downloadUrl,
+    onOutbox: () => void relay.publish(),
+  });
+  /** Browser-facing origin for console URLs: HUB_CONSOLE_URL, else HUB_PUBLIC_URL, else the request. */
+  const consoleOrigin = (req: IncomingMessage): string => config.consoleUrl ?? requestOrigin(req);
+  /**
+   * Render error.html for browser-context failures (never JSON in a tab).
+   * Copy comes from ERROR_COPY by code; `message` is only a fallback for codes
+   * the table does not know (e.g. `gitlab_<upstream>` pass-throughs).
+   */
+  const htmlError = (res: ServerResponse, status: number, code: string, message: string, backUrl = '') => {
+    const copy = ERROR_COPY[code] ?? { title: status >= 500 ? 'Something went wrong' : 'Cannot continue', message };
+    html(res, status, templates.render('error', { title: copy.title, message: copy.message, code, backUrl }));
+  };
   const routes: Route[] = [];
 
   const route = (method: string, path: string, authRequired: boolean, handler: Handler) => {
@@ -650,6 +804,314 @@ export function createHubServer(options: HubServerOptions): HubServer {
     json(ctx.res, 200, await collab.leavePresence(actor, ctx.params.projectId, body));
   }, mirrorMembershipOr403));
 
+  // ---- public snapshots (collab-sync.ts:1312-1340, :563-565) --------------------------------
+  route('POST', '/api/v1/resources/:id/snapshots', true, resourceRoute(async (ctx, actor) => {
+    if (!validResourceId(ctx, ctx.params.id)) return;
+    const body = await readJsonBody(ctx.req);
+    json(ctx.res, 201, await resources.createSnapshot(actor, ctx.params.id, body));
+  }));
+
+  route('DELETE', '/api/v1/resources/:id/snapshots/:slug', true, resourceRoute(async (ctx, actor) => {
+    if (!validResourceId(ctx, ctx.params.id)) return;
+    await drainBody(ctx.req).catch(() => Buffer.alloc(0));
+    await resources.redactSnapshot(actor, ctx.params.id, ctx.params.slug);
+    json(ctx.res, 200, { ok: true });
+  }));
+
+  // Anonymous by design: the 256-bit slug is the capability. The path is taken
+  // from the RAW request line so encoded traversal is judged before any decoding
+  // (the dispatcher already rejected requests the URL parser had to normalise).
+  route('GET', '/api/v1/public/snapshots/:slug/files/*', false, async (ctx) => {
+    const rawPath = (ctx.req.url ?? '').split('?')[0] ?? '';
+    const rawTail = (/^\/api\/v1\/public\/snapshots\/[^/]+\/files\/(.*)$/.exec(rawPath) ?? [])[1] ?? '';
+    const path = normalizePublicFilePath(rawTail);
+    // A traversal probe learns nothing more than a missing file would tell it.
+    if (!path) return json(ctx.res, 404, { error: 'not_found' });
+    const resolved = await resources.resolvePublicFile(ctx.params.slug, path);
+    if (!resolved) return json(ctx.res, 404, { error: 'not_found' });
+    const size = await blobs.size(resolved.entry.sha256);
+    if (size === null) return json(ctx.res, 404, { error: 'not_found' });
+    const etag = `"${resolved.entry.sha256}"`;
+    const headers: Record<string, string | number> = {
+      'cache-control': 'public, max-age=300',
+      'x-content-type-options': 'nosniff',
+      etag,
+    };
+    if (ctx.req.headers['if-none-match'] === etag) {
+      ctx.res.writeHead(304, headers);
+      ctx.res.end();
+      return;
+    }
+    ctx.res.writeHead(200, {
+      ...headers,
+      'content-type': contentTypeFor(path),
+      'content-length': size,
+      // Shared links render untrusted HTML: sandbox it so it cannot reach the hub API with the viewer's cookies.
+      'content-security-policy': "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads; default-src 'self' data: blob: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:",
+    });
+    await pipeline(blobs.open(resolved.entry.sha256), ctx.res);
+  });
+
+  // ---- invites (contracts workspace-invites.ts; invite-create.ts; invite-continue.ts) -----------
+  const inviteRoute = (handler: Handler): Handler => async (ctx) => {
+    try {
+      await handler(ctx);
+    } catch (error) {
+      if (error instanceof InviteServiceError) return json(ctx.res, error.status, { error: error.code });
+      if (error instanceof ResourceServiceError) return json(ctx.res, error.status, { error: error.code });
+      throw error;
+    }
+  };
+
+  /** Caller must be an active owner/admin of `:workspaceId` (header not required: the path names the workspace). */
+  route('POST', '/api/v1/workspaces/:workspaceId/invites', true, inviteRoute(async (ctx) => {
+    const workspaceId = ctx.params.workspaceId;
+    if (!WORKSPACE_ID_PATTERN.test(workspaceId)) return json(ctx.res, 404, { error: 'workspace_not_found' });
+    const token = await gitlabAccessOr401(ctx);
+    if (token === undefined) return;
+    try {
+      await directory.ensureFresh(ctx.principal!.user, token);
+    } catch (error) {
+      if (error instanceof GitLabSessionRevokedError) return unauthorized(ctx.res);
+      throw error;
+    }
+    const workspace = await store.getWorkspace(workspaceId);
+    const membership = await store.getMembership(ctx.principal!.user.id, workspaceId);
+    if (!workspace || !membership || membership.memberStatus !== 'active') return json(ctx.res, 403, { error: 'workspace_forbidden' });
+    const body = await readJsonBody(ctx.req);
+    const { invite } = await invites.create(
+      { user: ctx.principal!.user, membership, ip: clientIp(ctx.req), userAgent: headerString(ctx.req, 'user-agent') },
+      workspace,
+      body,
+      consoleOrigin(ctx.req),
+    );
+    // invite-create.ts:95-104 reads `inviteId` (or `id`).
+    json(ctx.res, 201, { inviteId: invite.id });
+  }));
+
+  const previewVars = (preview: Awaited<ReturnType<InviteService['preview']>>, req: IncomingMessage, token: string): TemplateVars => ({
+    workspaceName: preview.workspace.name,
+    inviterName: preview.inviter?.name ?? 'A teammate',
+    role: preview.invite.role,
+    invitedEmailMasked: preview.wire.invitedEmailMasked,
+    expiresAt: humanUtc(preview.wire.expiresAt),
+    acceptUrl: acceptUrlFor(consoleOrigin(req), token),
+    downloadUrl: preview.wire.clientHints.downloadUrl,
+    state: preview.invite.status === 'pending' ? 'pending' : preview.invite.status === 'accepted' ? 'already-accepted' : 'expired',
+    statePending: preview.invite.status === 'pending',
+    stateExpired: preview.invite.status === 'expired' || preview.invite.status === 'revoked',
+    stateAlreadyAccepted: preview.invite.status === 'accepted',
+  });
+
+  /** JSON preview (contracts :97-107); `Accept: text/html` renders invite-landing.html instead. */
+  const previewHandler: Handler = async (ctx) => {
+    const token = ctx.params.token;
+    if (wantsHtml(ctx.req)) {
+      try {
+        const preview = await invites.preview(token);
+        return html(ctx.res, 200, templates.render('invite-landing', previewVars(preview, ctx.req, token)));
+      } catch (error) {
+        if (error instanceof InviteServiceError) return htmlError(ctx.res, error.status, error.code, 'This invite link is not valid.');
+        throw error;
+      }
+    }
+    try {
+      json(ctx.res, 200, (await invites.preview(token)).wire);
+    } catch (error) {
+      if (error instanceof InviteServiceError) return json(ctx.res, error.status, { error: error.code });
+      throw error;
+    }
+  };
+  route('GET', '/api/v1/workspace-invites/:token', false, previewHandler);
+  // The browser landing URL mailed to the invitee is the console alias of the same preview.
+  route('GET', '/console/invites/:token', false, previewHandler);
+
+  /** JSON accept (contracts :116-153) for a signed-in API client. */
+  route('POST', '/api/v1/workspace-invites/:token/accept', true, inviteRoute(async (ctx) => {
+    // Mirror the acceptor's GitLab memberships first so `already_member` sees a
+    // member who has never called the hub before (the create-time email check
+    // cannot, because GitLab may hide the address).
+    const token = await gitlabAccessOr401(ctx);
+    if (token === undefined) return;
+    try {
+      await directory.ensureFresh(ctx.principal!.user, token);
+    } catch (error) {
+      if (error instanceof GitLabSessionRevokedError) return unauthorized(ctx.res);
+      throw error;
+    }
+    const body = await readJsonBody(ctx.req);
+    const result = await invites.accept(ctx.params.token, ctx.principal!.user, {
+      continueWithCurrentAccount: body.continueWithCurrentAccount === true,
+      ip: clientIp(ctx.req),
+      userAgent: headerString(ctx.req, 'user-agent'),
+    });
+    json(ctx.res, 200, result);
+  }));
+
+  /** Desktop hand-off (invite-continue.ts:59-75): Bearer, no body, single use. */
+  route('POST', '/api/v1/workspace-invites/continuations/:nonce/consume', true, inviteRoute(async (ctx) => {
+    await drainBody(ctx.req).catch(() => Buffer.alloc(0));
+    const result = await invites.consume(ctx.params.nonce, ctx.principal!.user, { ip: clientIp(ctx.req), userAgent: headerString(ctx.req, 'user-agent') });
+    json(ctx.res, 200, result);
+  }));
+
+  // ---- browser OAuth authorization-code flow for invite accept --------------------------------
+  // State + PKCE verifier + invite token travel in one HttpOnly cookie sealed
+  // with the token cipher (never in the URL, never in the store); GitLab only
+  // ever sees `state`. The callback path is fixed so the cookie is scoped to it.
+  route('GET', '/console/invites/:token/accept', false, async (ctx) => {
+    const token = ctx.params.token;
+    if (!SECRET_PATTERN.test(token)) return htmlError(ctx.res, 404, 'invite_not_found', 'This invite link is not valid.');
+    if (!auth.enabled) return htmlError(ctx.res, 501, NOT_SUPPORTED_CODE, 'GitLab sign-in is not configured on this hub.');
+    let preview;
+    try {
+      preview = await invites.preview(token);
+    } catch (error) {
+      if (error instanceof InviteServiceError) return htmlError(ctx.res, error.status, error.code, 'This invite link is not valid.');
+      throw error;
+    }
+    if (preview.invite.status !== 'pending') {
+      return html(ctx.res, 200, templates.render('invite-landing', previewVars(preview, ctx.req, token)));
+    }
+    const origin = consoleOrigin(ctx.req);
+    const state = mintSecret();
+    const verifier = mintSecret();
+    const sealed = cipher.encrypt(JSON.stringify({ state, verifier, token, at: now().getTime() })).toString('base64url');
+    const location = auth.browserAuthorizationUrl({ redirectUri: `${origin}/console/oauth/callback`, state, codeChallenge: pkceChallenge(verifier) });
+    ctx.res.writeHead(302, {
+      location,
+      'set-cookie': oauthCookie(sealed, origin.startsWith('https:')),
+      'cache-control': 'no-store',
+    });
+    ctx.res.end();
+  });
+
+  route('GET', '/console/oauth/callback', false, async (ctx) => {
+    const origin = consoleOrigin(ctx.req);
+    const clear = oauthCookie('', origin.startsWith('https:'), 0);
+    const fail = (status: number, code: string, message: string) => {
+      ctx.res.setHeader('set-cookie', clear);
+      htmlError(ctx.res, status, code, message);
+    };
+    const sealed = parseCookies(ctx.req)[OAUTH_COOKIE];
+    if (!sealed) return fail(400, 'oauth_state_missing', 'Your sign-in session expired. Open the invite link again.');
+    let session: { state: string; verifier: string; token: string; at: number };
+    try {
+      session = JSON.parse(cipher.decrypt(Buffer.from(sealed, 'base64url'), cipher.keyId)) as typeof session;
+    } catch {
+      return fail(400, 'oauth_state_invalid', 'Your sign-in session is not valid. Open the invite link again.');
+    }
+    if (now().getTime() - session.at > OAUTH_COOKIE_TTL_S * 1000) return fail(400, 'oauth_state_expired', 'Your sign-in session expired. Open the invite link again.');
+    const upstreamError = ctx.url.searchParams.get('error');
+    if (upstreamError) return fail(403, `gitlab_${upstreamError}`, 'GitLab did not authorize the sign-in.');
+    const state = ctx.url.searchParams.get('state') ?? '';
+    const code = ctx.url.searchParams.get('code') ?? '';
+    if (!code || typeof session.state !== 'string' || !secretEquals(state, session.state)) return fail(400, 'oauth_state_mismatch', 'The sign-in response did not match this browser session.');
+    let user;
+    try {
+      user = await auth.completeBrowserLogin({ code, redirectUri: `${origin}/console/oauth/callback`, codeVerifier: session.verifier });
+    } catch (error) {
+      if (error instanceof GitLabTokenError) return fail(403, `gitlab_${error.code}`, 'GitLab rejected the sign-in code.');
+      throw error;
+    }
+    // Mirror the fresh account's GitLab memberships so `already_member` is judged on facts.
+    try {
+      await directory.ensureFresh(user, await auth.ensureGitLabAccess(user));
+    } catch (error) {
+      if (error instanceof GitLabSessionRevokedError) return fail(403, 'gitlab_session_revoked', 'GitLab rejected the sign-in.');
+      if (!(error instanceof GitLabUnavailableError)) throw error;
+      log(`[od-hub] directory refresh after browser login for ${user.id} failed transiently: ${error.message}`);
+    }
+    try {
+      const result = await invites.accept(session.token, user, {
+        continueWithCurrentAccount: true,
+        ip: clientIp(ctx.req),
+        userAgent: headerString(ctx.req, 'user-agent'),
+      });
+      const workspace = await store.getWorkspace(result.workspaceId);
+      ctx.res.setHeader('set-cookie', clear);
+      html(ctx.res, 200, templates.render('invite-accepted', {
+        workspaceName: workspace?.name ?? result.workspaceId,
+        role: result.role,
+        deeplinkUrl: result.continuation.deeplinkUrl,
+        fallbackDownloadUrl: result.continuation.fallbackDownloadUrl,
+        expiresInMinutes: Math.max(1, Math.round((result.continuation.expiresAt - now().getTime()) / 60_000)),
+      }));
+    } catch (error) {
+      if (error instanceof InviteServiceError) {
+        const message = error.code === 'already_member'
+          ? 'You are already a member of this workspace.'
+          : error.code === 'invite_consumed'
+            ? 'This invite has already been accepted.'
+            : error.code === 'invite_expired'
+              ? 'This invite has expired. Ask the inviter for a new one.'
+              : 'The invite could not be accepted.';
+        return fail(error.status, error.code, message);
+      }
+      throw error;
+    }
+  });
+
+  /**
+   * Friendlier landing after the device flow completed; the CLI may print this
+   * URL. Identity is shown only when the request itself proves it (a Bearer
+   * the store accepts); a `?user=` hint is ignored because a URL parameter is
+   * not proof of identity and GitLab ids are enumerable.
+   */
+  route('GET', '/console/device/done', false, async (ctx) => {
+    const principal = ctx.bearer ? await store.authenticate(ctx.bearer, now(), { slidingTtlMs: config.controlKeyTtlMs }) : null;
+    const gitlabHost = config.gitlabUrl ? new URL(config.gitlabUrl).host : 'GitLab';
+    const deeplink = ctx.url.searchParams.get('deeplink') ?? '';
+    html(ctx.res, 200, templates.render('device-authorized', {
+      userName: principal?.user.name ?? 'your GitLab account',
+      userEmail: principal?.user.email ?? '',
+      gitlabHost,
+      deeplinkUrl: deeplink.startsWith('opendesign://') ? deeplink : '',
+    }));
+  });
+
+  // Any other /console path renders the error page, never a JSON 404 in a browser tab.
+  route('GET', '/console/*', false, (ctx) => htmlError(ctx.res, 404, 'not_found', 'There is nothing at this address.'));
+
+  // ---- audit export ---------------------------------------------------------------------------
+  /**
+   * Visibility: rows in workspaces the caller administers (owner/admin, active)
+   * plus the caller's own actions anywhere. Cursor paging by row id.
+   */
+  route('GET', '/api/v1/admin/audit', true, async (ctx) => {
+    const token = await gitlabAccessOr401(ctx);
+    if (token === undefined) return;
+    try {
+      await directory.ensureFresh(ctx.principal!.user, token);
+    } catch (error) {
+      if (error instanceof GitLabSessionRevokedError) return unauthorized(ctx.res);
+      throw error;
+    }
+    const memberships = await store.listMemberships(ctx.principal!.user.id);
+    const administered = memberships.filter((m) => m.memberStatus === 'active' && canManageAll(m)).map((m) => m.workspaceId);
+    if (administered.length === 0) return json(ctx.res, 403, { error: 'admin_required' });
+    const q = ctx.url.searchParams;
+    const since = q.get('since');
+    if (since && Number.isNaN(Date.parse(since))) return json(ctx.res, 400, { error: 'invalid_since' });
+    const limitRaw = q.get('limit');
+    const limit = limitRaw === null ? 100 : Number.parseInt(limitRaw, 10);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1000) return json(ctx.res, 400, { error: 'invalid_limit' });
+    const afterId = decodeAuditCursor(q.get('cursor'));
+    if (afterId === undefined) return json(ctx.res, 400, { error: 'invalid_cursor' });
+    const rows = await store.queryAudit({
+      since: since || null,
+      actorUserId: q.get('actor')?.trim() || null,
+      action: q.get('action')?.trim() || null,
+      workspaceIds: administered,
+      ownActorUserId: ctx.principal!.user.id,
+      afterId,
+      limit: limit + 1,
+    });
+    const page = rows.slice(0, limit);
+    const nextCursor = rows.length > limit ? encodeAuditCursor(page[page.length - 1]!.id) : null;
+    json(ctx.res, 200, { events: page.map(toAuditWire), nextCursor });
+  });
+
   // ---- telemetry / analytics sinks -----------------------------------------
   route('POST', '/api/v1/open-design/telemetry', true, async ({ req, res }) => {
     await drainBody(req).catch(() => Buffer.alloc(0));
@@ -680,6 +1142,16 @@ export function createHubServer(options: HubServerOptions): HubServer {
     const method = req.method ?? 'GET';
     const url = new URL(req.url ?? '/', 'http://od-hub.local');
     try {
+      // The WHATWG parser silently resolves `.`/`..` (and `%2e%2e`) segments. A
+      // request whose raw path is not already normal was written by something
+      // probing for traversal; refuse it before any route sees it.
+      const rawPath = (req.url ?? '/').split('?')[0]!.split('#')[0]!;
+      if (rawPath !== url.pathname) {
+        // Under the anonymous public tree a probe gets the same answer as a
+        // missing file, so it cannot distinguish "blocked" from "absent".
+        if (rawPath.startsWith('/api/v1/public/')) return json(res, 404, { error: 'not_found' });
+        return json(res, 400, { error: 'invalid_path' });
+      }
       const matched = routes.find((r) => r.method === method && r.pattern.test(url.pathname));
       if (!matched) {
         const pathKnown = routes.some((r) => r.pattern.test(url.pathname));
@@ -703,14 +1175,16 @@ export function createHubServer(options: HubServerOptions): HubServer {
       await matched.handler({ req, res, url, principal, params, bearer });
     } catch (error) {
       if (error instanceof GitLabNotConfiguredError) {
-        if (!res.headersSent) return notSupported(res);
+        if (!res.headersSent) return url.pathname.startsWith('/console/') ? htmlError(res, 501, NOT_SUPPORTED_CODE, 'GitLab sign-in is not configured on this hub.') : notSupported(res);
       }
       if (error instanceof BodyError) {
         if (!res.headersSent) return json(res, error.status, { error: error.code });
       }
       log(`[od-hub] ${method} ${url.pathname} failed: ${error instanceof Error ? error.message : String(error)}`);
-      if (!res.headersSent) json(res, 500, { error: 'internal_error' });
-      else res.end();
+      if (!res.headersSent) {
+        if (url.pathname.startsWith('/console/')) htmlError(res, 500, 'internal_error', 'The hub hit an unexpected error. Try again in a moment.');
+        else json(res, 500, { error: 'internal_error' });
+      } else res.end();
     }
   });
 
@@ -722,6 +1196,7 @@ export function createHubServer(options: HubServerOptions): HubServer {
     resources,
     collab,
     presence,
+    invites,
     blobs,
     listen(port, host = '127.0.0.1') {
       return new Promise((resolve, reject) => {

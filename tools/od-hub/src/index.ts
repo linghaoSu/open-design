@@ -131,6 +131,12 @@ async function main(argv: string[]): Promise<number> {
   if (gitlab && !config.tokenEncKey) {
     process.stderr.write('od-hub: TOKEN_ENC_KEY is not set; GitLab tokens are encrypted with a process-lifetime key and every restart forces re-login\n');
   }
+  if (gitlab && !config.gitlabGroupToken) {
+    process.stderr.write('od-hub: GITLAB_GROUP_TOKEN is not set; accepted invites are recorded in the hub mirror only and will not be added to the GitLab group\n');
+  }
+  if (!config.smtpUrl) {
+    process.stderr.write('od-hub: SMTP_URL is not set; invite landing URLs are logged instead of mailed\n');
+  }
 
   const hub = createHubServer({ store, gitlab, config, log: (line) => process.stderr.write(`${line}\n`) });
   const { url } = await hub.listen(options.port, options.host);

@@ -33,6 +33,20 @@ export interface HubConfig {
   blobDir: string;
   /** Presence lease lifetime (`PRESENCE_TTL_MS`, default 30000 = daemon presence-tracker.ts:31). */
   presenceTtlMs: number;
+  /** Invite landing-token lifetime (`INVITE_TTL_HOURS`, default 168 = 7 days). */
+  inviteTtlMs: number;
+  /** Desktop hand-off continuation lifetime after accept (10 minutes). */
+  inviteContinuationTtlMs: number;
+  /** Desktop download page returned as `clientHints.downloadUrl` / `fallbackDownloadUrl` (`DOWNLOAD_URL`). */
+  downloadUrl: string;
+  /** Browser-facing console origin for invite landing/accept URLs (`HUB_CONSOLE_URL`, falls back to `HUB_PUBLIC_URL`, then the request origin). */
+  consoleUrl: string | null;
+  /** GitLab Group Access Token used to add accepted invitees to the group (`GITLAB_GROUP_TOKEN`); null = mirror-only membership. */
+  gitlabGroupToken: string | null;
+  /** `smtp://user:pass@host:port` or `smtps://...`; null = invite mails are logged, not sent (`SMTP_URL`). */
+  smtpUrl: string | null;
+  /** Sender address for invite mails (`SMTP_FROM`, default `od-hub@<console host>`). */
+  smtpFrom: string | null;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -72,6 +86,10 @@ export function parseHubConfig(env: NodeJS.ProcessEnv): HubConfig {
   }
   const presenceTtlMs = Number.parseInt(env.PRESENCE_TTL_MS ?? '30000', 10);
   if (!Number.isInteger(presenceTtlMs) || presenceTtlMs <= 0) throw new Error('PRESENCE_TTL_MS must be a positive integer');
+  const inviteTtlHours = Number.parseFloat(env.INVITE_TTL_HOURS ?? '168');
+  if (!Number.isFinite(inviteTtlHours) || inviteTtlHours <= 0) throw new Error('INVITE_TTL_HOURS must be a positive number');
+  const smtpUrl = trimmed(env.SMTP_URL);
+  if (smtpUrl && !/^smtps?:\/\//.test(smtpUrl)) throw new Error('SMTP_URL must start with smtp:// or smtps://');
   let tokenEncKey: Buffer | null = null;
   const rawKey = trimmed(env.TOKEN_ENC_KEY);
   if (rawKey) {
@@ -92,5 +110,12 @@ export function parseHubConfig(env: NodeJS.ProcessEnv): HubConfig {
     removedRetentionMs: 7 * DAY_MS,
     blobDir: trimmed(env.BLOB_DIR) ?? path.join(trimmed(env.OD_HUB_DATA_DIR) ?? path.join('.tmp', 'od-hub'), 'blobs'),
     presenceTtlMs,
+    inviteTtlMs: Math.round(inviteTtlHours * 60 * 60 * 1000),
+    inviteContinuationTtlMs: 10 * 60 * 1000,
+    downloadUrl: trimmed(env.DOWNLOAD_URL) ?? 'https://open-design.ai/download',
+    consoleUrl: stripSlash(trimmed(env.HUB_CONSOLE_URL)) ?? stripSlash(trimmed(env.HUB_PUBLIC_URL)),
+    gitlabGroupToken: trimmed(env.GITLAB_GROUP_TOKEN),
+    smtpUrl,
+    smtpFrom: trimmed(env.SMTP_FROM),
   };
 }

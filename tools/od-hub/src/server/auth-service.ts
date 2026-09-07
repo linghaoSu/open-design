@@ -236,6 +236,27 @@ export class AuthService {
     };
   }
 
+  // ---- browser authorization-code flow (invite accept) ----------------------------------
+
+  /** `authorizationUrl` for the invite-accept redirect; scope is the same as device login. */
+  browserAuthorizationUrl(input: { redirectUri: string; state: string; codeChallenge: string }): string {
+    return this.requireGitLab().authorizationUrl({ ...input, scope: DEVICE_SCOPE });
+  }
+
+  /**
+   * Finish a browser login: exchange the code, upsert the GitLab user, store
+   * the grant. No API keys are minted — the browser session ends with the
+   * invite page; the desktop client logs in through the device flow.
+   */
+  async completeBrowserLogin(input: { code: string; redirectUri: string; codeVerifier: string }): Promise<UserRow> {
+    const gitlab = this.requireGitLab();
+    const token = await gitlab.exchangeAuthorizationCode(input);
+    const gitlabUser = await gitlab.getCurrentUser(token.access_token);
+    const user = await this.upsertGitLabUser(gitlabUser);
+    await this.storeGrant(user.id, token.access_token, token.refresh_token ?? null, token.expires_in);
+    return user;
+  }
+
   /** PLAN §3.1: private email falls back to public_email, then `<username>@<gitlab-host>`. */
   emailFor(gitlabUser: GitLabUser): string {
     const direct = gitlabUser.email?.trim();

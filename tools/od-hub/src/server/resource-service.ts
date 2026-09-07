@@ -13,6 +13,7 @@ import { digestFacesForEvent } from './digest.js';
 import type {
   HubStore,
   OutboxEventInput,
+  PublicSnapshotRow,
   PullReceiptRow,
   ResourceRow,
   ResourceVersionRow,
@@ -24,6 +25,18 @@ import type {
 
 /** authorized-team-project-pull.ts:13 — the daemon rejects receipts living longer than this. */
 export const PULL_RECEIPT_TTL_MS = 2_000;
+
+/** Public snapshot slugs: 32 random bytes as base64url (256-bit), one path segment. */
+export const SNAPSHOT_SLUG_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
+/** vela-cli-resource-adapter.ts:345-362 (parseVelaResourceSnapshot) — `slug` required, the rest strings. */
+export interface PublicSnapshotWire {
+  slug: string;
+  name: string;
+  kind: ResourceKind;
+  versionId: string;
+  createdAt: string;
+}
 
 /** Typed failure the HTTP layer maps to `{status, error}`; `code` strings are daemon contract (PLAN §6.3). */
 export class ResourceServiceError extends Error {
@@ -461,6 +474,86 @@ export class ResourceService {
       nonce: receipt.nonce,
     };
   }
+
+  // ---- public snapshots (collab-sync.ts:1312-1340; PLAN §3.2 public_snapshots) ----------
+
+  /**
+   * `POST /api/v1/resources/:id/snapshots {ref:"published", name}` -> pin the
+   * current published version under a random slug. The pin is by versionId so
+   * a later publish never changes what a shared link serves. Owner/admin may
+   * snapshot anybody's resource; a plain member only their own.
+   */
+  async createSnapshot(actor: Actor, resourceId: string, body: Record<string, unknown>): Promise<PublicSnapshotWire> {
+    requirePublishedRef(typeof body.ref === 'string' ? body.ref : PUBLISHED_REF);
+    const resource = await this.requireResource(actor.workspaceId, resourceId);
+    if (!canManageAll(actor.membership) && resource.ownerMemberId !== actor.membership.memberId) {
+      throw new ResourceServiceError(403, 'resource_forbidden');
+    }
+    if (resource.publishedVersion === 0 || !resource.publishedVersionId) throw new ResourceServiceError(409, 'resource_not_published');
+    const name = typeof body.name === 'string' ? body.name.trim().slice(0, 256) : '';
+    const row: PublicSnapshotRow = {
+      slug: randomBytes(32).toString('base64url'),
+      workspaceId: actor.workspaceId,
+      resourceId,
+      versionId: resource.publishedVersionId,
+      name,
+      kind: resource.kind,
+      createdAt: this.deps.now().toISOString(),
+      redactedAt: null,
+    };
+    await this.deps.store.createPublicSnapshot(row, {
+      audit: [{
+        actorUserId: actor.userId, actorMemberId: actor.membership.memberId, workspaceId: actor.workspaceId, action: 'snapshot_create', target: row.slug,
+        details: { resourceId, versionId: row.versionId, kind: row.kind, name },
+      }],
+    });
+    return toSnapshotWire(row);
+  }
+
+  /**
+   * `DELETE /api/v1/resources/:id/snapshots/:slug` -> `{ok:true}`, idempotent:
+   * an already-redacted or unknown slug is still ok (collab-sync.ts:1335 retries
+   * redaction as compensation and must converge). A slug that belongs to a
+   * different resource or workspace is `404 snapshot_not_found` so a redact
+   * cannot be aimed across scopes.
+   */
+  async redactSnapshot(actor: Actor, resourceId: string, slug: string): Promise<'redacted' | 'already_redacted'> {
+    if (!SNAPSHOT_SLUG_PATTERN.test(slug)) throw new ResourceServiceError(404, 'snapshot_not_found');
+    const row = await this.deps.store.getPublicSnapshot(slug);
+    if (!row) return 'already_redacted';
+    if (row.workspaceId !== actor.workspaceId || row.resourceId !== resourceId) throw new ResourceServiceError(404, 'snapshot_not_found');
+    if (!canManageAll(actor.membership)) {
+      const resource = await this.deps.store.getResource(actor.workspaceId, resourceId, { includeDeleted: true });
+      if (resource && resource.ownerMemberId !== actor.membership.memberId) throw new ResourceServiceError(403, 'resource_forbidden');
+    }
+    const redacted = await this.deps.store.redactPublicSnapshot(slug, (snapshot) => ({
+      audit: [{
+        actorUserId: actor.userId, actorMemberId: actor.membership.memberId, workspaceId: actor.workspaceId, action: 'snapshot_redact', target: slug,
+        details: { resourceId, versionId: snapshot.versionId },
+      }],
+    }));
+    return redacted ? 'redacted' : 'already_redacted';
+  }
+
+  /**
+   * Anonymous read: the manifest entry a public slug pins for `path`, or null
+   * when the slug is unknown/redacted or the path is not in the version.
+   * Callers stream the blob; the store is never consulted about workspaces or
+   * membership — the slug IS the capability.
+   */
+  async resolvePublicFile(slug: string, path: string): Promise<{ snapshot: PublicSnapshotRow; entry: ManifestEntry } | null> {
+    if (!SNAPSHOT_SLUG_PATTERN.test(slug)) return null;
+    const snapshot = await this.deps.store.getPublicSnapshot(slug);
+    if (!snapshot || snapshot.redactedAt) return null;
+    const version = await this.deps.store.getResourceVersionById(snapshot.workspaceId, snapshot.resourceId, snapshot.versionId);
+    if (!version) return null;
+    const entry = version.manifest.find((e) => e.path === path);
+    return entry ? { snapshot, entry } : null;
+  }
+}
+
+export function toSnapshotWire(row: PublicSnapshotRow): PublicSnapshotWire {
+  return { slug: row.slug, name: row.name, kind: row.kind, versionId: row.versionId, createdAt: row.createdAt };
 }
 
 function requirePublishedRef(ref: string): void {

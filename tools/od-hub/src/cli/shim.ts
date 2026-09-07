@@ -1,4 +1,5 @@
 import { BILLING_SUMMARY_STUB, OD_VELA_VERSION } from '../shared/wire.js';
+import { handleAdmin } from './admin.js';
 import { flagString, parseArgs } from './args.js';
 import { handleCollab } from './collab.js';
 import { resolveShimContext, type Env, type ShimContext } from './config.js';
@@ -200,6 +201,7 @@ export async function runCli(argv: string[], env: Env, deps: CliDeps = {}): Prom
     case 'login':
     case 'logout': return handleAuth(command, ctx, env, deps);
     case 'collab': return handleCollab(rest, ctx, deps.fetch);
+    case 'admin': return handleAdmin(rest, ctx, deps.fetch);
     case 'resource': return handleResource(rest, ctx, deps.stdin ?? (async () => ''), deps.fetch);
     case 'agent': return handleTodo(command, rest, 1);
     default:

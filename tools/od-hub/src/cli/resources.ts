@@ -125,13 +125,42 @@ export async function handleResource(argv: string[], ctx: ShimContext, stdin: ()
         requireWorkspace(scope, ctx);
         return ok(jsonLine(await hubRequest(ctx, scope, '/api/v1/resources/shared', {}, fetchImpl)));
       }
+      case 'snapshot': return ok(jsonLine(await snapshot(positionals.slice(1), flags, ctx, fetchImpl)));
+      case 'snapshot-redact': return ok(jsonLine(await snapshotRedact(positionals.slice(1), ctx, fetchImpl)));
       default:
-        // snapshot / snapshot-redact (F8) and unknown verbs: typed 501.
+        // Unknown verbs: typed 501.
         return fail(ShimError.notSupported(['resource', ...positionals.slice(0, 1)].join(' ')));
     }
   } catch (error) {
     return fail(toShimError(scope, error));
   }
+}
+
+/**
+ * `snapshot <id> --ref published --name N --json` -> `{slug, name, kind, versionId, createdAt}`
+ * (collab-sync.ts:1312-1322; parsed by vela-cli-resource-adapter.ts:345-362).
+ */
+async function snapshot(positionals: string[], flags: ParsedArgs['flags'], ctx: ShimContext, fetchImpl?: FetchLike): Promise<unknown> {
+  const scope = 'resource snapshot';
+  const resourceId = positionals[0]?.trim() ?? '';
+  if (!resourceId) throw ShimError.local(scope, 'usage: resource snapshot <resourceId> --ref published --name <name> --json');
+  requireWorkspace(scope, ctx);
+  requireRef(scope, flags);
+  const name = flagString(flags, 'name') ?? '';
+  return hubRequest(ctx, scope, `/api/v1/resources/${encode(resourceId)}/snapshots`, {
+    method: 'POST',
+    body: { ref: PUBLISHED_REF, name },
+  }, fetchImpl);
+}
+
+/** `snapshot-redact <id> <slug> --json` -> `{ok:true}`, idempotent (collab-sync.ts:1335-1340, 1408-1413). */
+async function snapshotRedact(positionals: string[], ctx: ShimContext, fetchImpl?: FetchLike): Promise<unknown> {
+  const scope = 'resource snapshot-redact';
+  const resourceId = positionals[0]?.trim() ?? '';
+  const slug = positionals[1]?.trim() ?? '';
+  if (!resourceId || !slug) throw ShimError.local(scope, 'usage: resource snapshot-redact <resourceId> <slug> --json');
+  requireWorkspace(scope, ctx);
+  return hubRequest(ctx, scope, `/api/v1/resources/${encode(resourceId)}/snapshots/${encode(slug)}`, { method: 'DELETE' }, fetchImpl);
 }
 
 /** `push <kind> <id> <dir> --ref published --json [--exclude]* [--exclude-prefix]* [--metadata-json]`. */

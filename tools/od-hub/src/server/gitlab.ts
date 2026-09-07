@@ -84,6 +84,10 @@ export interface GitLabClient {
   /** Throws GitLabTokenError for every non-2xx token response. */
   pollDeviceToken(input: { deviceCode: string }): Promise<GitLabTokenResponse>;
   refreshToken(input: { refreshToken: string }): Promise<GitLabTokenResponse>;
+  /** Browser redirect target for the authorization-code grant (RFC 6749 §4.1.1 + PKCE S256). */
+  authorizationUrl(input: { redirectUri: string; state: string; scope: string; codeChallenge: string }): string;
+  /** `grant_type=authorization_code` exchange with the PKCE verifier; throws GitLabTokenError on non-2xx. */
+  exchangeAuthorizationCode(input: { code: string; redirectUri: string; codeVerifier: string }): Promise<GitLabTokenResponse>;
   getCurrentUser(accessToken: string): Promise<GitLabUser>;
   /** GET /api/v4/groups?min_access_level=N (all pages); `topLevelOnly` adds top_level_only=true. */
   listGroups(accessToken: string, input: { minAccessLevel: number; topLevelOnly: boolean }): Promise<GitLabGroup[]>;
@@ -91,6 +95,12 @@ export interface GitLabClient {
   getGroupMember(accessToken: string, groupId: number, userId: number): Promise<GitLabGroupMember | null>;
   /** GET /api/v4/groups/:id — null when 404 (deleted or no longer visible). */
   getGroup(accessToken: string, groupId: number): Promise<GitLabGroup | null>;
+  /**
+   * POST /api/v4/groups/:id/members with a Group Access Token (`PRIVATE-TOKEN`).
+   * A 409 (already a member) is followed by PUT to raise the access level when
+   * the current one is lower; never lowers.
+   */
+  addGroupMember(groupToken: string, groupId: number, userId: number, accessLevel: number): Promise<GitLabGroupMember>;
 }
 
 export interface HttpGitLabClientOptions {
@@ -150,6 +160,17 @@ export function createHttpGitLabClient(options: HttpGitLabClientOptions): GitLab
     return (await res.json()) as T;
   }
 
+  /** Write call authenticated with a Group Access Token (PRIVATE-TOKEN header, not OAuth). */
+  async function tokenWrite<T>(method: 'POST' | 'PUT', path: string, groupToken: string, fields: Record<string, string>): Promise<T> {
+    const res = await request(`/api/v4${path}`, {
+      method,
+      headers: { 'private-token': groupToken, accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(fields).toString(),
+    });
+    if (!res.ok) throw new GitLabHttpError(res.status, path, await res.text().catch(() => ''));
+    return (await res.json()) as T;
+  }
+
   async function apiPaged<T>(path: string, accessToken: string): Promise<T[]> {
     const out: T[] = [];
     for (let page = 1; page <= 50; page += 1) {
@@ -172,6 +193,20 @@ export function createHttpGitLabClient(options: HttpGitLabClientOptions): GitLab
     pollDeviceToken: ({ deviceCode }) =>
       form('/oauth/token', { grant_type: 'urn:ietf:params:oauth:grant-type:device_code', device_code: deviceCode }),
     refreshToken: ({ refreshToken }) => form('/oauth/token', { grant_type: 'refresh_token', refresh_token: refreshToken }),
+    authorizationUrl: ({ redirectUri, state, scope, codeChallenge }) => {
+      const params = new URLSearchParams({
+        client_id: options.clientId,
+        redirect_uri: redirectUri,
+        response_type: 'code',
+        state,
+        scope,
+        code_challenge: codeChallenge,
+        code_challenge_method: 'S256',
+      });
+      return `${base}/oauth/authorize?${params.toString()}`;
+    },
+    exchangeAuthorizationCode: ({ code, redirectUri, codeVerifier }) =>
+      form('/oauth/token', { grant_type: 'authorization_code', code, redirect_uri: redirectUri, code_verifier: codeVerifier }),
     getCurrentUser: (token) => api<GitLabUser>('/user', token),
     listGroups: (token, { minAccessLevel, topLevelOnly }) =>
       apiPaged<GitLabGroup>(`/groups?min_access_level=${minAccessLevel}${topLevelOnly ? '&top_level_only=true' : ''}`, token),
@@ -189,6 +224,23 @@ export function createHttpGitLabClient(options: HttpGitLabClientOptions): GitLab
       } catch (error) {
         if (error instanceof GitLabHttpError && error.status === 404) return null;
         throw error;
+      }
+    },
+    async addGroupMember(groupToken, groupId, userId, accessLevel) {
+      const fields = { user_id: String(userId), access_level: String(accessLevel) };
+      try {
+        return await tokenWrite<GitLabGroupMember>('POST', `/groups/${groupId}/members`, groupToken, fields);
+      } catch (error) {
+        // 409 "Member already exists": raise the level if the invite grants more, never lower it.
+        if (!(error instanceof GitLabHttpError) || error.status !== 409) throw error;
+        const res = await request(`/api/v4/groups/${groupId}/members/${userId}`, {
+          method: 'GET',
+          headers: { 'private-token': groupToken, accept: 'application/json' },
+        });
+        if (!res.ok) throw new GitLabHttpError(res.status, `/groups/${groupId}/members/${userId}`, await res.text().catch(() => ''));
+        const current = (await res.json()) as GitLabGroupMember;
+        if (current.access_level >= accessLevel) return current;
+        return tokenWrite<GitLabGroupMember>('PUT', `/groups/${groupId}/members/${userId}`, groupToken, { access_level: String(accessLevel) });
       }
     },
   };

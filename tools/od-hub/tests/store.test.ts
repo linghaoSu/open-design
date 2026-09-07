@@ -252,11 +252,11 @@ describe('SqliteHubStore migrations', () => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  it('resolves migrations/ from src/ and applies 0001 through 0005 in order', () => {
+  it('resolves migrations/ from src/ and applies 0001 through 0006 in order', () => {
     const dir = resolveMigrationsDir();
     expect(dir.endsWith(`${path.sep}migrations`)).toBe(true);
     const db = new Database(':memory:');
-    expect(applyMigrations(db, dir)).toEqual([1, 2, 3, 4, 5]);
+    expect(applyMigrations(db, dir)).toEqual([1, 2, 3, 4, 5, 6]);
     const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>)
       .map((r) => r.name);
     expect(tables).toEqual(expect.arrayContaining(['schema_migrations', 'users', 'api_keys', 'workspaces', 'workspace_members', 'sync_digests', 'device_auths', 'oauth_grants', 'events_outbox', 'audit_log']));
@@ -268,9 +268,12 @@ describe('SqliteHubStore migrations', () => {
     const receiptColumns = (db.prepare('PRAGMA table_info(pull_receipts)').all() as Array<{ name: string }>).map((c) => c.name);
     expect(receiptColumns).toEqual(expect.arrayContaining(['nonce', 'resource_id', 'owner_member_id', 'version_id', 'manifest_digest', 'authorized_at', 'consumed_at']));
     expect((db.prepare('PRAGMA table_info(resources)').all() as Array<{ name: string }>).map((c) => c.name)).toContain('updated_at');
+    const inviteColumns = (db.prepare('PRAGMA table_info(invites)').all() as Array<{ name: string }>).map((c) => c.name);
+    expect(inviteColumns).toEqual(expect.arrayContaining(['token_hash', 'created_by_user_id', 'accepted_at', 'accepted_by_user_id']));
+    expect((db.prepare('PRAGMA table_info(invite_continuations)').all() as Array<{ name: string }>).map((c) => c.name)).toContain('workspace_id');
     // Second pass is a no-op.
     expect(applyMigrations(db, dir)).toEqual([]);
-    expect(db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get()).toEqual({ n: 5 });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get()).toEqual({ n: 6 });
     db.close();
   });
 

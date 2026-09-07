@@ -383,9 +383,7 @@ describe('resource remove / shared / list', () => {
     expect(expectOk(await run(['resource', 'list', '--json']))).toEqual(shared);
   });
 
-  it('snapshot / snapshot-redact / unknown verbs stay typed 501', async () => {
-    expectHttpError(await run(['resource', 'snapshot', 'rt-plugin', '--ref', 'published', '--name', 'n', '--json']), 'resource snapshot', 501, 'not_supported');
-    expectHttpError(await run(['resource', 'snapshot-redact', 'rt-plugin', 'slug', '--json']), 'resource snapshot-redact', 501, 'not_supported');
+  it('unknown verbs stay typed 501 (snapshot / snapshot-redact are covered in tests/snapshots.test.ts)', async () => {
     expectHttpError(await run(['resource', 'frob', '--json']), 'resource frob', 501, 'not_supported');
   });
 });

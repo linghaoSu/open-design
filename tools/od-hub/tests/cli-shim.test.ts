@@ -327,10 +327,10 @@ describe('TODO stubs keep the typed 501 contract', () => {
 
   const cases: Array<[string[], string]> = [
     // collab member|comment|presence are implemented; see tests/collab-cli.test.ts.
+    // resource snapshot|snapshot-redact are implemented; see tests/snapshots.test.ts.
     [['collab', 'invite', 'create'], 'collab invite create'],
-    [['resource', 'snapshot', 'r1', '--ref', 'published', '--name', 'n', '--json'], 'resource snapshot'],
-    [['resource', 'snapshot-redact', 'r1', 'slug', '--json'], 'resource snapshot-redact'],
     [['agent', 'run'], 'agent run'],
+    [['admin', 'frob'], 'admin frob'],
   ];
   for (const [argv, scope] of cases) {
     it(`${argv.join(' ')}`, async () => {

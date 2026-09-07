@@ -1,15 +1,19 @@
+import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 /**
  * Fake GitLab over node:http covering exactly the surface od-hub touches:
  *   POST /oauth/authorize_device            RFC 8628 §3.2
- *   POST /oauth/token                       device_code + refresh_token grants
+ *   GET  /oauth/authorize                   authorization-code redirect (browser leg; PKCE S256)
+ *   POST /oauth/token                       device_code + refresh_token + authorization_code grants
  *   GET  /api/v4/user
  *   GET  /api/v4/groups?min_access_level=&top_level_only=
  *   GET  /api/v4/groups/:id
  *   GET  /api/v4/groups/:id/members/all/:userId
  *   GET  /api/v4/groups/:id/members/all
+ *   POST /api/v4/groups/:id/members         Group Access Token (PRIVATE-TOKEN)
+ *   PUT  /api/v4/groups/:id/members/:userId Group Access Token
  *
  * Authorization state is driven by the test (`approve`, `deny`, `expire`), so the
  * pending -> success sequence the CLI must survive is deterministic.
@@ -67,6 +71,10 @@ export class FakeGitLab {
   readonly accessTokens = new Map<string, TokenState>();
   readonly refreshTokens = new Map<string, number>(); // refresh -> userId
   readonly revokedRefreshTokens = new Set<string>();
+  /** authorization-code grant: code -> {userId, redirectUri, codeChallenge, used}. */
+  readonly authCodes = new Map<string, { userId: number; redirectUri: string; codeChallenge: string | null; used: boolean }>();
+  /** Group Access Tokens accepted on member writes: token -> group id. */
+  readonly groupTokens = new Map<string, number>();
   readonly requests: Array<{ method: string; path: string; auth: string | null; body: string }> = [];
   private server: Server | null = null;
   private counter = 0;
@@ -75,6 +83,11 @@ export class FakeGitLab {
   failRefresh = false;
   /** When set, every refresh_token grant answers this status with an opaque body (GitLab outage). */
   refreshOutageStatus: number | null = null;
+  /**
+   * Who the browser "is" when it lands on /oauth/authorize: the fake redirects
+   * straight back with a code for this user (null = user denies -> error=access_denied).
+   */
+  browserUserId: number | null = null;
   private controlEndpoint = false;
 
   constructor(private readonly options: FakeGitLabOptions = {}) {}
@@ -212,9 +225,44 @@ export class FakeGitLab {
       });
     }
 
+    if (req.method === 'GET' && url.pathname === '/oauth/authorize') {
+      // Browser leg of the authorization-code grant: validate the request, then
+      // bounce back to redirect_uri with a code (or an error) exactly as GitLab would.
+      const redirectUri = url.searchParams.get('redirect_uri') ?? '';
+      const state = url.searchParams.get('state') ?? '';
+      if (this.options.clientId && url.searchParams.get('client_id') !== this.options.clientId) return this.json(res, 401, { error: 'invalid_client' });
+      if (url.searchParams.get('response_type') !== 'code' || !redirectUri) return this.json(res, 400, { error: 'invalid_request' });
+      const target = new URL(redirectUri);
+      if (state) target.searchParams.set('state', state);
+      if (this.browserUserId === null || !this.users.has(this.browserUserId)) {
+        target.searchParams.set('error', 'access_denied');
+      } else {
+        this.counter += 1;
+        const code = `gl-code-${this.counter}-${Math.random().toString(36).slice(2, 10)}`;
+        this.authCodes.set(code, { userId: this.browserUserId, redirectUri, codeChallenge: url.searchParams.get('code_challenge'), used: false });
+        target.searchParams.set('code', code);
+      }
+      res.writeHead(302, { location: target.toString() });
+      res.end();
+      return;
+    }
+
     if (req.method === 'POST' && url.pathname === '/oauth/token') {
       const form = new URLSearchParams(body);
       const grant = form.get('grant_type');
+      if (grant === 'authorization_code') {
+        if (this.options.clientId && form.get('client_id') !== this.options.clientId) return this.json(res, 401, { error: 'invalid_client' });
+        const record = this.authCodes.get(form.get('code') ?? '');
+        if (!record || record.used) return this.json(res, 400, { error: 'invalid_grant' });
+        if (record.redirectUri !== form.get('redirect_uri')) return this.json(res, 400, { error: 'invalid_grant', error_description: 'redirect_uri mismatch' });
+        if (record.codeChallenge) {
+          const verifier = form.get('code_verifier') ?? '';
+          const expected = createHash('sha256').update(verifier).digest('base64url');
+          if (expected !== record.codeChallenge) return this.json(res, 400, { error: 'invalid_grant', error_description: 'code_verifier mismatch' });
+        }
+        record.used = true;
+        return this.json(res, 200, this.issueTokens(record.userId));
+      }
       if (grant === 'urn:ietf:params:oauth:grant-type:device_code') {
         const device = this.devices.get(form.get('device_code') ?? '');
         if (!device) return this.json(res, 400, { error: 'invalid_grant' });
@@ -245,6 +293,35 @@ export class FakeGitLab {
         return this.json(res, 200, this.issueTokens(userId));
       }
       return this.json(res, 400, { error: 'unsupported_grant_type' });
+    }
+
+    // Group Access Token writes (PRIVATE-TOKEN): POST adds, PUT changes level, GET reads one direct member.
+    const memberWrite = /^\/api\/v4\/groups\/(\d+)\/members(?:\/(\d+))?$/.exec(url.pathname);
+    if (memberWrite && (req.method === 'POST' || req.method === 'PUT' || (req.method === 'GET' && req.headers['private-token']))) {
+      const groupId = Number(memberWrite[1]);
+      const privateToken = typeof req.headers['private-token'] === 'string' ? req.headers['private-token'] : '';
+      if (!privateToken || this.groupTokens.get(privateToken) !== groupId) return this.json(res, 401, { message: '401 Unauthorized' });
+      const group = this.groups.get(groupId);
+      if (!group) return this.json(res, 404, { message: '404 Group Not Found' });
+      const form = new URLSearchParams(body);
+      if (req.method === 'POST') {
+        const userId = Number(form.get('user_id'));
+        const level = Number(form.get('access_level'));
+        if (!this.users.has(userId) || !Number.isInteger(level)) return this.json(res, 400, { message: '400 Bad request' });
+        if (group.members[userId] !== undefined) return this.json(res, 409, { message: 'Member already exists' });
+        group.members[userId] = level;
+        return this.json(res, 201, { id: userId, username: this.users.get(userId)!.username, name: this.users.get(userId)!.name, access_level: level, state: 'active' });
+      }
+      const userId = Number(memberWrite[2]);
+      const current = group.members[userId];
+      if (current === undefined) return this.json(res, 404, { message: '404 Not found' });
+      if (req.method === 'PUT') {
+        const level = Number(form.get('access_level'));
+        if (!Number.isInteger(level)) return this.json(res, 400, { message: '400 Bad request' });
+        group.members[userId] = level;
+      }
+      const member = this.users.get(userId);
+      return this.json(res, 200, { id: userId, username: member?.username ?? `u${userId}`, name: member?.name ?? '', access_level: group.members[userId], state: 'active' });
     }
 
     if (req.method === 'GET' && url.pathname.startsWith('/api/v4/')) {

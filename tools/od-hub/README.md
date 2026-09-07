@@ -6,20 +6,23 @@ daemon run the team-workspace code paths (directory, SSE, billing gates,
 sync digest) against infrastructure you control instead of
 `amr-api.open-design.ai`.
 
-This package is the **M0-M3 hub** from
+This package is the **M0-M4 hub** from
 `PLAN-selfhosted-hub-gitlab-oauth.md`: argv routing, error formats, storage
 interface, GitLab OAuth Device Flow login, the GitLab-mirrored workspace
 directory, the outbox-backed SSE event stream, content-addressed resource
 versions (blobs + manifests + CAS publish), the team-project catalog,
 member-side pull receipts, the collab member directory, the per-project
-comment stream, and project presence. Public snapshots and invites are
-declared (see `migrations/`) but not yet implemented; the shim answers those
-subcommands with the typed `501: not_supported` line so the daemon degrades
-cleanly instead of guessing.
+comment stream, project presence, workspace invites with the desktop
+hand-off continuation (browser accept through GitLab's authorization-code
+grant), anonymous public snapshots, and the admin audit export. The shim
+answers the remaining subcommands (`agent run`, `collab invite *`) with the
+typed `501: not_supported` line so the daemon degrades cleanly instead of
+guessing.
 
 Dependencies: `better-sqlite3` (same pin as `apps/daemon`) for the optional
 `--sqlite` store; the HTTP layer is plain `node:http` + `fetch`; token
-encryption is `node:crypto` AES-256-GCM. Dev deps mirror `tools/serve`.
+encryption is `node:crypto` AES-256-GCM; invite mail is a minimal
+`node:net`/`node:tls` SMTP client. Dev deps mirror `tools/serve`.
 
 ## Layout
 
@@ -29,6 +32,12 @@ src/server/http.ts        HTTP + SSE routes (node:http)
 src/server/blob-store.ts  content-addressed blob files (<BLOB_DIR>/<aa>/<sha256>, tmp+rename)
 src/server/resource-service.ts publish (CAS) / head / manifest / tombstone / catalog / pull receipts
 src/server/collab-service.ts members (register/list), comment push/pull, presence heartbeat/list/leave
+src/server/invite-service.ts invites: create / preview / accept / continuation consume (contracts workspace-invites.ts)
+src/server/workspace-context.ts rich `currentWorkspaceContext` wire incl. a cited copy of buildWorkspacePermissions
+src/server/mailer.ts      minimal SMTP client (STARTTLS, AUTH PLAIN/LOGIN) for the invite mail; SMTP_URL unset = log the URL
+src/server/templates.ts   {{var}} / {{#if}} renderer (HTML-escapes every value) over templates/*.html
+src/server/public-files.ts content-type by extension + public path normalisation for anonymous snapshot files
+templates/                invite-landing / invite-accepted / device-authorized / error placeholder pages (see "Console pages")
 src/server/comments.ts    pure comment reconciliation rules (seq, upsert by id, tombstone wins, updatedAt clamp)
 src/server/presence-service.ts in-process presence rosters, 30 s lease TTL, lazy sweep
 src/server/config.ts      env -> HubConfig (GitLab, TTLs, public URL)
@@ -51,11 +60,13 @@ src/cli/config.ts         VELA_* / $AMR_HOME/config.json resolution and profile 
 src/cli/http.ts           hub client + stderr error contract (PLAN §6.3)
 src/cli/resources.ts      `resource *` / `team-projects *` subcommands
 src/cli/collab.ts         `collab member|comment|presence *` subcommands (8 s presence budget)
+src/cli/admin.ts          `admin audit export` (hub-only operator command, pages /api/v1/admin/audit)
 src/cli/tree.ts           directory snapshot (exclude rules), verified materialize, atomic dir swap
 src/shared/wire.ts        constants pinned to daemon parsers (file:line cited)
 src/shared/manifest.ts    manifest entries, digest, versionId, exclude matcher (shared by hub + shim)
 tests/                    server endpoint, GitLab flow, SSE, and shim contract tests
-tests/helpers/fake-gitlab.ts node:http fake GitLab (device flow, /user, /groups)
+tests/daemon-*-parsers.ts verbatim copies of the daemon parsers the contract tests assert through (file:line cited)
+tests/helpers/fake-gitlab.ts node:http fake GitLab (device flow, authorization-code flow, /user, /groups, group-member writes)
 tests/helpers/fake-gitlab-main.ts the same fake as a standalone process (used by the smoke)
 scripts/smoke-login.ts    out-of-process login smoke: fake GitLab + od-hub --sqlite + od-vela login
 scripts/conformance.ts    out-of-process daemon-contract conformance: od-hub --seed + bin/od-vela.mjs
@@ -99,6 +110,19 @@ scripts/conformance.ts    out-of-process daemon-contract conformance: od-hub --s
 | `GET /api/v1/collab/projects/:projectId/presence` | Bearer + workspace (mirror only) | `{viewers}` after sweeping expired leases (an eviction emits `presence-changed`) |
 | `POST /api/v1/collab/projects/:projectId/presence/leave` | Bearer + workspace (mirror only) | `{clientId?}` -> remaining `{viewers}`; without `clientId` every lease of the caller in the project is dropped (legacy leave). Emits `presence-changed` when something was removed |
 | `POST /api/v1/team-projects/:projectId/pull-authorization` | Bearer + workspace | `{ref:"published", expectedVersion}` -> pull receipt (schema below). The viewer must be an active member other than the owner and `expectedVersion` must equal the current published version, else `409 authorized_team_project_pull_rejected`. Receipts are persisted (`pull_receipts`) and single-use |
+| `POST /api/v1/resources/:id/snapshots` | Bearer + workspace | `{ref:"published", name?}` -> `201 {slug, name, kind, versionId, createdAt}` (vela-cli-resource-adapter.ts:345-362). Pins the CURRENT published `versionId` under a 256-bit base64url slug; later publishes never move it. Owner/admin may snapshot anyone's resource, a plain member only their own (`403 resource_forbidden`); `409 resource_not_published`; `404 resource_not_found` (incl. tombstoned); any other ref `404 ref_not_found`. Audit `snapshot_create` |
+| `DELETE /api/v1/resources/:id/snapshots/:slug` | Bearer + workspace | `{ok:true}`, idempotent (unknown or already-redacted slug is still ok — collab-sync.ts:1335 retries redaction as compensation). A slug belonging to another resource or workspace is `404 snapshot_not_found`. Audit `snapshot_redact` on the first call |
+| `GET /api/v1/public/snapshots/:slug/files/*` | **none** | Anonymous file read of the pinned version: the slug is the capability. Path segments are decoded one by one; `..`, `.`, empty segments, `%2F` inside a segment, backslash, NUL, absolute paths, and any raw path the URL parser had to normalise answer `400`. `content-type` by extension (`application/octet-stream` fallback), `cache-control: public, max-age=300`, `x-content-type-options: nosniff`, `etag: "<sha256>"` (`304` on match), and a `content-security-policy: sandbox ...` so a shared HTML file cannot call the hub with a viewer's cookies. `404 not_found` for unknown slugs, redacted slugs, and paths not in the manifest |
+| `POST /api/v1/workspaces/:workspaceId/invites` | Bearer | `{invitedEmail, role:"admin"\|"member"}` -> `201 {inviteId}` (invite-create.ts:95-104). Caller must be an active owner/admin of a team workspace, else `403 workspace_forbidden` (also for unknown workspaces: no existence oracle). `409 already_member` when an active member's stored email matches (case-insensitive; re-checked by user id at accept because GitLab may hide addresses); `409 active_pending_invite` while an unexpired pending invite exists for the address (an expired one is marked and replaced); `400 invalid_email\|invalid_role`. Seat codes are never emitted. The 256-bit landing token is only ever in the URL (sha256 stored); expiry `INVITE_TTL_HOURS` (7 days). Mail via `SMTP_URL`, else the landing URL is logged. Audit `invite_create` (masked email, never the token) |
+| `GET /api/v1/workspace-invites/:token` | no | `WorkspaceInvitePreviewResponse` (contracts :97-107): `{inviteId, workspaceId, workspaceName, invitedEmailMasked, role, status, expiresAt (epoch ms), clientHints:{preferredDesktopScheme:"opendesign", downloadUrl}}`; `status` reads `expired` once the TTL passed. `Accept: text/html` (before `application/json`) renders `invite-landing.html` in its pending / expired / already-accepted state instead. `404 invite_not_found` |
+| `GET /console/invites/:token` | no | browser alias of the preview (this is the URL in the mail) |
+| `GET /console/invites/:token/accept` | no (browser) | starts GitLab's authorization-code grant: `302` to `/oauth/authorize` with `state`, PKCE `S256`, scope `read_user read_api`, `redirect_uri=<console>/console/oauth/callback`. State + PKCE verifier + invite token travel in one HttpOnly `SameSite=Lax` cookie sealed with the token cipher (`Path=/console/oauth`, 10 min) — nothing but `state` reaches GitLab. A non-pending invite renders the landing page state instead of redirecting |
+| `GET /console/oauth/callback` | no (browser) | verifies the cookie + `state`, exchanges the code with the PKCE verifier, upserts the GitLab user, mirrors their groups, runs the accept below with `continueWithCurrentAccount` implied (the user just proved the account), and renders `invite-accepted.html` with the `opendesign://workspace/invite/continue?workspace_id&member_id&invite_id&nonce` deeplink and the download fallback. Every failure (missing/forged state, GitLab `error=`, `already_member`, consumed, expired) renders `error.html` with the code; the cookie is cleared either way |
+| `POST /api/v1/workspace-invites/:token/accept` | Bearer | JSON accept (contracts :116-153) `{continueWithCurrentAccount?, client?}` -> `WorkspaceInviteAcceptResponse`: `{workspaceId, workspaceMemberId, memberId, inviteId, role, lifecycleState, continuation:{nonce, deeplinkUrl, expiresAt (epoch ms, +10 min), fallbackDownloadUrl}, currentWorkspaceContext}`. Order of checks: `404 invite_not_found`, `409 invite_consumed`, `410 invite_expired` (also revoked), `404 workspace_not_found`, `409 workspace_subscription_locked` (lifecycle not active), `403 invite_email_mismatch` when the bearer's email differs and `continueWithCurrentAccount` is not `true`, `409 already_member` (by user id, after a directory refresh), then GitLab group enrolment (`GITLAB_GROUP_TOKEN`; admin -> 40, member -> 30; raises but never lowers an existing level; `503 gitlab_unavailable` and nothing written when GitLab refuses; mirror-only with a warning when the token is unset), then one transaction: membership upsert (an active member keeps the stronger role, a removed one is reactivated), invite `accepted`, continuation row (sha256 of the nonce), `workspace-directory-changed{membership-added}` + `workspace-context-changed` + `workspace-members-changed{added}` outbox rows, `membersToken`/`contextToken` bumps, audit `invite_accept`. The acceptor's directory cache is invalidated so `/api/v1/workspaces` shows the row at once |
+| `POST /api/v1/workspace-invites/continuations/:nonce/consume` | Bearer, no body | invite-continue.ts:59-75. Single use and bound to the accepting user: `404 invalid_nonce` (unknown or malformed), `403 nonce_owner_mismatch` (checked first, so a foreign caller learns nothing), `409 nonce_consumed`, `410 expired` — the daemon maps each to `continuation_<status>`. Success `{workspaceId, workspaceMemberId, memberId, inviteId, currentWorkspaceContext}`. Audit `continuation_consume` (never the nonce) |
+| `GET /console/device/done?user=<id>[&deeplink=opendesign://...]` | no (browser) | renders `device-authorized.html` for a known user (`404` error page otherwise); a `deeplink` outside the `opendesign://` scheme is dropped |
+| `GET /console/*` | no | anything else under `/console/` renders `error.html` (404), never JSON in a browser tab |
+| `GET /api/v1/admin/audit?since=<iso>&actor=<userId>&action=<a>&limit=<1..1000>&cursor=<c>` | Bearer | `{events:[{id, at, actorUserId, actorMemberId, workspaceId, action, target, details}], nextCursor}` oldest first. Caller must be an active owner/admin of at least one workspace (`403 admin_required`); rows are limited to the workspaces they administer plus their own actions anywhere. `limit` defaults to 100; `nextCursor` is an opaque id cursor (`400 invalid_since\|invalid_limit\|invalid_cursor`) |
 | any other `/api/v1/*` | — | `501 {error:"not_supported"}` (never a bare 404) |
 
 Auth failures return `401 {"error":"invalid_api_key"}` **only** for a missing,
@@ -171,6 +195,64 @@ default, 64 MiB for manifests) `413 {"error":"payload_too_large"}`.
   authorMemberId and pushedByMemberId, never the text). Presence writes no
   audit.
 
+### Invites, continuations, public snapshots (PLAN §3.2)
+
+- `currentWorkspaceContext` (accept + consume) is the rich shape
+  `mapVelaWorkspaceContext` (apps/daemon/src/collab/vela-workspace-context.ts:116-182)
+  reads: `workspaceId, workspaceMemberId, workspaceType, workspaceName,
+  displayName?, role, memberStatus, lifecycleState, providerMode:"platform_credits",
+  billingState, planId, seatSummary:{seatLimit:0, usedSeats:0}, permissions`.
+  `permissions` are the eight booleans of `buildWorkspacePermissions`
+  (packages/contracts/src/api/collab.ts:466-489), reproduced in
+  `src/server/workspace-context.ts` because `tools/` does not depend on
+  `@open-design/contracts`; the daemon re-derives with the same function when
+  any key is missing, so the two must stay identical. `seatSummary` is the
+  daemon's `0/0` unknown-capacity sentinel (collab.ts:279-291): od-hub has no
+  seats, and any other `seatLimit: 0` summary would read as "full" and hide the
+  invite form.
+- The landing token and the continuation nonce are both 32 random bytes as
+  base64url; only their sha256 is stored. The deeplink is built exactly like
+  `buildInviteDeeplink` (contracts workspace-invites.ts:352-361) and round-trips
+  through `parseInviteDeeplink`.
+- A continuation lives 10 minutes and is bound to the user who accepted; the
+  desktop client logs in through the device flow and then consumes it with its
+  own bearer (`invite-continue.ts`).
+- Accepting mirrors the same event fan-out a GitLab directory diff produces
+  (`directory-service.ts`), so an open team stream sees `workspace-members-changed`
+  immediately and the digest faces move. If `GITLAB_GROUP_TOKEN` is set the
+  user is also added to the GitLab group first; otherwise the membership is
+  hub-mirror only, which the next GitLab-backed refresh of that user will
+  revert (logged as a warning at accept time).
+- Public snapshots pin `(workspace, resource, versionId)`; the anonymous file
+  route never consults memberships and never lists — a slug without a path is
+  not a route. Redaction is a tombstone (`redacted_at`), never a delete, so the
+  audit trail keeps pointing at a row.
+- Audit rows: `invite_create`, `invite_accept`, `continuation_consume`,
+  `snapshot_create`, `snapshot_redact`; every row carries `actor_member_id`
+  when workspace-scoped. Tokens, nonces, and raw emails never appear in
+  `details` (emails are masked `c***@example.test`).
+
+### Console pages (templates/)
+
+The four browser pages are plain HTML files under `templates/` rendered by
+`src/server/templates.ts`: `{{name}}` substitutes the variable HTML-escaped
+(there is no raw form), `{{#if name}}...{{/if}}` keeps a block for truthy values
+and nests, unknown variables render empty. The shipped files are functional
+placeholders; designed replacements drop in 1:1 as long as they keep the
+filenames and variables below. `templates/` is resolved from the tool root at
+runtime (like `migrations/`), so `dist/` needs no copy step.
+
+| File | Variables |
+|---|---|
+| `device-authorized.html` | `userName`, `userEmail`, `gitlabHost`, `deeplinkUrl` |
+| `invite-landing.html` | `workspaceName`, `inviterName`, `role`, `invitedEmailMasked`, `expiresAt` (ISO), `acceptUrl`, `downloadUrl`, `state` (`pending`\|`expired`\|`already-accepted`) plus the booleans `statePending`, `stateExpired`, `stateAlreadyAccepted` for `{{#if}}` |
+| `invite-accepted.html` | `workspaceName`, `role`, `deeplinkUrl`, `fallbackDownloadUrl`, `expiresInMinutes` |
+| `error.html` | `title`, `message`, `code`, `backUrl` |
+
+Pages are served with `x-content-type-options: nosniff`, `referrer-policy:
+no-referrer`, and a `default-src 'none'; style-src 'unsafe-inline'` CSP: a
+designed template may inline styles but must not load scripts.
+
 ### GitLab mapping (PLAN §3.1, §5.2)
 
 | Hub | GitLab |
@@ -194,16 +276,16 @@ are written in the same store transaction as the mutation.
 
 Implemented now: `--version`, `login`, `logout`, `billing summary`, `billing
 workspace-snapshot`, `model list|preset`, `models`, `media models`,
-`run terminal`, `resource push|head|pull|pull-batch|remove|shared|list`,
+`run terminal`, `resource push|head|pull|pull-batch|remove|shared|list|snapshot|snapshot-redact`,
 `team-projects --help|list|get|upsert|remove|pull`, `collab member
 list|register`, `collab comment push|pull`, `collab presence
-heartbeat|list|leave`. Closed on purpose (exit 1,
+heartbeat|list|leave`, `admin audit export` (hub-only). Closed on purpose (exit 1,
 typed stderr): `billing workspace-balance|team-catalog|checkout`. `image *` /
 `video *` exit 1 with
 `{"error":{"code":"not_supported","message":"od-hub does not provide media generation","retryable":false}}`
 on stdout, which the daemon surfaces as a non-retryable provider verdict.
-Everything else — other `collab *` verbs, `resource snapshot|snapshot-redact`,
-`agent run` — is a TODO stub emitting:
+Everything else — other `collab *` verbs (`collab invite *`), `agent run` — is
+a TODO stub emitting:
 
 ```
 Error: <verb> <noun>: API request failed with status 501: not_supported
@@ -224,6 +306,8 @@ Argv and output follow `apps/daemon/src/collab/vela-cli-resource-adapter.ts`,
 | `resource pull-batch --requests-file - --json` | stdin `{requests:[{key, kind, resourceId, dir, ref?}]}` (at most 128, unique keys) -> stdout `{results:[{...request, ok:true, version, versionId} or {...request, ok:false, error, errorCode}], succeeded, failed}`, exit 0 whenever the batch itself was well-formed |
 | `resource remove <id> --json` | `{ok:true}`, also on a second call (idempotent); an id that never existed reports `status 404: resource_not_found`, which the daemon reads as "retracted" |
 | `resource shared --json` / `resource list --json` | `GET /api/v1/resources/shared` |
+| `resource snapshot <id> --ref published --name N --json` | `POST /api/v1/resources/<id>/snapshots {ref, name}` -> stdout `{slug, name, kind, versionId, createdAt}` (collab-sync.ts:1312-1322 publish-public; parsed by vela-cli-resource-adapter.ts:345-362) |
+| `resource snapshot-redact <id> <slug> --json` | `DELETE /api/v1/resources/<id>/snapshots/<slug>` -> `{ok:true}`, idempotent (collab-sync.ts:1335-1340 compensation, :1408-1413 unpublish) |
 | `team-projects list` / `get <p> --json` / `upsert <p> --resource-id R [--display-name --sync-state --last-synced-version-id --metadata-json]` / `remove <p>` | the catalog endpoints above; `--json` is accepted everywhere and ignored. An omitted `--sync-state` stores `synced`; `remove` is idempotent (`{ok:true}` for a row that is already gone) |
 | `team-projects pull <p> --authorize-only --ref published --expected-version N --json` | receipt only (with `manifestEntryCount`); nothing is downloaded |
 | `team-projects pull <p> <stageDir> --live-dir <live> --ref published --expected-version N --json` | `stageDir` must be an existing, empty, real directory. The shim downloads the manifest and blobs FIRST (hard-linking files from `--live-dir` whose sha256 matches), verifies every digest, then requests the receipt and replaces the `stageDir` inode with the verified tree, so the 2 s receipt window is never spent on transfer. If the published version moved between download and receipt the pull fails with `authorized_team_project_pull_rejected` and nothing is staged |
@@ -249,6 +333,16 @@ Presence commands use an internal 8 s HTTP budget so the shim itself never
 hits the daemon's 10 s SIGTERM; a stalled hub yields
 `Error: collab presence heartbeat: request failed: timeout` (exit 1), which the
 daemon classifies as a retryable infrastructure failure rather than a kill.
+
+### admin (hub-only)
+
+`admin audit export [--since <iso>] [--actor <userId>] [--action <a>] [--limit <1..1000>] [--json]`
+pages through `GET /api/v1/admin/audit` until `nextCursor` is null. `--json`
+prints one `{events, count}` object; without it one line per event
+(`<at> <action> <actorUserId> <workspaceId|-> <target|->`). No workspace header
+is sent; visibility is decided by the hub (owner/admin of at least one
+workspace, else `status 403: admin_required`). This is an operator command
+with no daemon contract; other `admin *` verbs are typed 501.
 
 Error code strings the daemon classifies are passed through verbatim:
 `resource_not_found`, `ref_not_found`, `resource_version_conflict`,
@@ -305,6 +399,12 @@ Read by the hub server:
 | `OD_HUB_DATA_DIR` | parent directory for hub-owned data when `BLOB_DIR` is not set |
 | `OD_HUB_PORT` / `OD_HUB_HOST` | listen defaults (`18790`, `127.0.0.1`) |
 | `PRESENCE_TTL_MS` | presence lease lifetime (default `30000`, matching the daemon's local tracker). Lower it only for conformance runs |
+| `INVITE_TTL_HOURS` | lifetime of an invite landing token (default `168` = 7 days) |
+| `DOWNLOAD_URL` | desktop download page returned as `clientHints.downloadUrl` and `fallbackDownloadUrl` (default `https://open-design.ai/download`) |
+| `HUB_CONSOLE_URL` | browser-facing origin used in mailed landing URLs, the accept link, and the GitLab `redirect_uri` (`<origin>/console/oauth/callback`); falls back to `HUB_PUBLIC_URL`, then the request origin. Must be registered as a redirect URI on the GitLab application, and `https` in production (the OAuth cookie is `Secure` then) |
+| `GITLAB_GROUP_TOKEN` | Group Access Token (scope `api`, role Owner) used to add accepted invitees to the GitLab group at access level 40 (admin) / 30 (member). Unset = the membership exists in the hub mirror only and is logged as such; the next GitLab-backed refresh of that user drops it again |
+| `SMTP_URL` | `smtp://[user:pass@]host[:port]` (STARTTLS when offered) or `smtps://...` (implicit TLS) for the plain-text invite mail. Unset = no mail; the landing URL is written to the log at info level so an operator can hand it over |
+| `SMTP_FROM` | sender address for invite mails (default `od-hub@<console host>`) |
 
 Read by the shim (precedence mirrors `apps/daemon/src/integrations/vela.ts:751-795`):
 
@@ -395,8 +495,11 @@ VELA_API_URL=http://127.0.0.1:18790 VELA_PROFILE=selfhost AMR_HOME=~/.amr \
 ```
 
 The GitLab application needs the `read_user` and `read_api` scopes and the
-Device Authorization Grant enabled (GitLab 17.2+). `od-vela logout` revokes
-the key at the hub and removes it from the profile.
+Device Authorization Grant enabled (GitLab 17.2+). For browser invite
+acceptance the same application also needs `<HUB_CONSOLE_URL>/console/oauth/callback`
+registered as a redirect URI (authorization-code grant with PKCE; a
+confidential application keeps using `GITLAB_OAUTH_CLIENT_SECRET`). `od-vela
+logout` revokes the key at the hub and removes it from the profile.
 
 Quick manual check without a daemon:
 

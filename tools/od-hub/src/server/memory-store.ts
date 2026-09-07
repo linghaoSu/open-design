@@ -4,20 +4,29 @@ import { versionIdFor } from '../shared/manifest.js';
 import { decideCommentWrite } from './comments.js';
 import { apiKeyIdFromHash, deriveMemberId, hashApiKey, mintApiKeySecret, newDigestToken } from './ids.js';
 import type {
+  AcceptInviteInput,
+  AcceptInviteResult,
   ApiKeyRow,
   AuditInput,
+  AuditQuery,
   AuditRow,
   AuthenticateOptions,
   AuthenticatedPrincipal,
   CommentRow,
+  ConsumeContinuationResult,
+  CreateInviteInput,
   CreateUserInput,
   CreateWorkspaceInput,
   DeviceAuthRow,
   HubStore,
+  InviteContinuationRow,
+  InviteRow,
+  InviteStatus,
   IssueApiKeyInput,
   OAuthGrantRow,
   OutboxEventInput,
   OutboxRow,
+  PublicSnapshotRow,
   PublishVersionInput,
   PublishVersionOptions,
   PublishVersionResult,
@@ -140,7 +149,11 @@ export class MemoryHubStore implements HubStore {
   private readonly receipts = new Map<string, PullReceiptRow>();
   private readonly comments = new Map<string, CommentRow>(); // `${ws}\0${projectId}\0${id}`
   private readonly commentSeq = new Map<string, number>(); // `${ws}\0${projectId}`
-  readonly audit: Array<AuditInput & { at: string }> = [];
+  private readonly invites = new Map<string, InviteRow>(); // id
+  private readonly continuations = new Map<string, InviteContinuationRow>(); // nonceHash
+  private readonly snapshots = new Map<string, PublicSnapshotRow>(); // slug
+  readonly audit: AuditRow[] = [];
+  private auditSeq = 0;
   private outboxSeq = 0;
   private readonly now: () => Date;
 
@@ -466,7 +479,7 @@ export class MemoryHubStore implements HubStore {
     for (const member of batch.members ?? []) this.putMember(member);
     for (const { workspaceId, userId } of batch.memberDeletes ?? []) this.members.delete(`${workspaceId}:${userId}`);
     for (const bump of batch.digestBumps ?? []) this.bumpDigestSync(bump.workspaceId, bump.face);
-    for (const entry of batch.audit ?? []) this.audit.push({ ...entry, at: this.now().toISOString() });
+    for (const entry of batch.audit ?? []) this.pushAudit(entry);
     const outbox = (batch.outbox ?? []).map((event) => ({ ...this.pushOutbox(event) }));
     return { outbox };
   }
@@ -485,7 +498,21 @@ export class MemoryHubStore implements HubStore {
   }
 
   async appendAudit(entry: AuditInput): Promise<void> {
-    this.audit.push({ ...entry, at: this.now().toISOString() });
+    this.pushAudit(entry);
+  }
+
+  async queryAudit(query: AuditQuery): Promise<AuditRow[]> {
+    const workspaces = new Set(query.workspaceIds);
+    const since = query.since ? Date.parse(query.since) : null;
+    return this.audit
+      .filter((row) => matchesAuditQuery(row, query, workspaces, since))
+      .slice(0, query.limit)
+      .map((row) => ({ ...row }));
+  }
+
+  private pushAudit(entry: AuditInput): void {
+    this.auditSeq += 1;
+    this.audit.push({ ...entry, id: this.auditSeq, at: this.now().toISOString() });
   }
 
   // ---- resources ------------------------------------------------------------------
@@ -496,7 +523,7 @@ export class MemoryHubStore implements HubStore {
 
   private applyEffects(effects: SideEffects): void {
     for (const bump of effects.digestBumps ?? []) this.bumpDigestSync(bump.workspaceId, bump.face);
-    for (const entry of effects.audit ?? []) this.audit.push({ ...entry, at: this.now().toISOString() });
+    for (const entry of effects.audit ?? []) this.pushAudit(entry);
     for (const event of effects.outbox ?? []) this.pushOutbox(event);
   }
 
@@ -714,9 +741,191 @@ export class MemoryHubStore implements HubStore {
     return row ? cloneComment(row) : null;
   }
 
+  // ---- invites -----------------------------------------------------------------------
+
+  async createInvite(input: CreateInviteInput, effects?: SideEffects): Promise<InviteRow> {
+    if (this.invites.has(input.id)) throw new Error(`invite ${input.id} already exists`);
+    for (const row of this.invites.values()) if (row.tokenHash === input.tokenHash) throw new Error('invite token hash collision');
+    const at = this.now().toISOString();
+    const row: InviteRow = {
+      id: input.id,
+      workspaceId: input.workspaceId,
+      invitedEmail: input.invitedEmail,
+      role: input.role,
+      tokenHash: input.tokenHash,
+      status: 'pending',
+      expiresAt: input.expiresAt,
+      createdByUserId: input.createdByUserId,
+      createdByMemberId: input.createdByMemberId,
+      createdAt: at,
+      acceptedAt: null,
+      acceptedByUserId: null,
+      updatedAt: at,
+    };
+    this.invites.set(row.id, row);
+    if (effects) this.applyEffects(effects);
+    return { ...row };
+  }
+
+  async getInvite(id: string): Promise<InviteRow | null> {
+    const row = this.invites.get(id);
+    return row ? { ...row } : null;
+  }
+
+  async getInviteByTokenHash(tokenHash: string): Promise<InviteRow | null> {
+    for (const row of this.invites.values()) if (row.tokenHash === tokenHash) return { ...row };
+    return null;
+  }
+
+  async listPendingInvites(workspaceId: string, invitedEmail: string): Promise<InviteRow[]> {
+    return [...this.invites.values()]
+      .filter((r) => r.workspaceId === workspaceId && r.invitedEmail === invitedEmail && r.status === 'pending')
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0))
+      .map((r) => ({ ...r }));
+  }
+
+  async setInviteStatus(id: string, status: Exclude<InviteStatus, 'accepted'>): Promise<InviteRow | null> {
+    const row = this.invites.get(id);
+    if (!row) return null;
+    if (row.status !== status) {
+      row.status = status;
+      row.updatedAt = this.now().toISOString();
+    }
+    return { ...row };
+  }
+
+  async acceptInvite(
+    input: AcceptInviteInput,
+    effects: (result: { invite: InviteRow; membership: WorkspaceMemberRow }) => SideEffects,
+  ): Promise<AcceptInviteResult> {
+    let row: InviteRow | undefined;
+    for (const candidate of this.invites.values()) if (candidate.tokenHash === input.tokenHash) row = candidate;
+    if (!row) return { kind: 'not_found' };
+    const now = this.now();
+    const decision = decideInviteAccept(row, now);
+    if (decision !== 'ok') {
+      if (decision === 'expired' && row.status === 'pending') {
+        row.status = 'expired';
+        row.updatedAt = now.toISOString();
+      }
+      return { kind: decision };
+    }
+    const membership = this.putMember(acceptedMembershipInput(row, input, this.members.get(`${row.workspaceId}:${input.userId}`)));
+    row.status = 'accepted';
+    row.acceptedAt = now.toISOString();
+    row.acceptedByUserId = input.userId;
+    row.updatedAt = now.toISOString();
+    const continuation: InviteContinuationRow = {
+      nonceHash: input.continuation.nonceHash,
+      inviteId: row.id,
+      workspaceId: row.workspaceId,
+      userId: input.userId,
+      memberId: membership.memberId,
+      createdAt: now.toISOString(),
+      expiresAt: input.continuation.expiresAt,
+      consumedAt: null,
+    };
+    this.continuations.set(continuation.nonceHash, continuation);
+    const result = { invite: { ...row }, membership: { ...membership } };
+    this.applyEffects(effects(result));
+    return { kind: 'accepted', ...result, continuation: { ...continuation } };
+  }
+
+  async getInviteContinuation(nonceHash: string): Promise<InviteContinuationRow | null> {
+    const row = this.continuations.get(nonceHash);
+    return row ? { ...row } : null;
+  }
+
+  async consumeInviteContinuation(
+    nonceHash: string,
+    userId: string,
+    now: Date,
+    effects: (row: InviteContinuationRow) => SideEffects,
+  ): Promise<ConsumeContinuationResult> {
+    const row = this.continuations.get(nonceHash);
+    if (!row) return { kind: 'not_found' };
+    const decision = decideContinuationConsume(row, userId, now);
+    if (decision !== 'ok') return { kind: decision };
+    row.consumedAt = now.toISOString();
+    const snapshot = { ...row };
+    this.applyEffects(effects(snapshot));
+    return { kind: 'consumed', row: snapshot };
+  }
+
+  // ---- public snapshots ----------------------------------------------------------------
+
+  async createPublicSnapshot(row: PublicSnapshotRow, effects?: SideEffects): Promise<void> {
+    if (this.snapshots.has(row.slug)) throw new Error(`public snapshot ${row.slug} already exists`);
+    this.snapshots.set(row.slug, { ...row });
+    if (effects) this.applyEffects(effects);
+  }
+
+  async getPublicSnapshot(slug: string): Promise<PublicSnapshotRow | null> {
+    const row = this.snapshots.get(slug);
+    return row ? { ...row } : null;
+  }
+
+  async redactPublicSnapshot(slug: string, effects: (row: PublicSnapshotRow) => SideEffects): Promise<PublicSnapshotRow | null> {
+    const row = this.snapshots.get(slug);
+    if (!row || row.redactedAt) return null;
+    row.redactedAt = this.now().toISOString();
+    const snapshot = { ...row };
+    this.applyEffects(effects(snapshot));
+    return snapshot;
+  }
+
   async close(): Promise<void> {
     // nothing to release
   }
+}
+
+/**
+ * Shared accept gate so memory and SQLite agree: only a `pending` invite that
+ * has not passed `expiresAt` may be accepted. Order matters — an accepted
+ * invite that also aged out still reads `consumed` (contracts
+ * workspace-invites.ts:243 `invite_consumed`), never `expired`.
+ */
+export function decideInviteAccept(row: InviteRow, now: Date): 'ok' | 'expired' | 'consumed' | 'revoked' {
+  if (row.status === 'accepted') return 'consumed';
+  if (row.status === 'revoked') return 'revoked';
+  if (row.status === 'expired' || Date.parse(row.expiresAt) <= now.getTime()) return 'expired';
+  return 'ok';
+}
+
+/** Shared consume gate: owner check first so a foreign nonce never leaks its state through 409/410. */
+export function decideContinuationConsume(row: InviteContinuationRow, userId: string, now: Date): 'ok' | 'owner_mismatch' | 'already_consumed' | 'expired' {
+  if (row.userId !== userId) return 'owner_mismatch';
+  if (row.consumedAt) return 'already_consumed';
+  if (Date.parse(row.expiresAt) <= now.getTime()) return 'expired';
+  return 'ok';
+}
+
+/**
+ * Membership row an accept writes. An already active member keeps the stronger
+ * of the two roles (accepting a `member` invite must never demote an owner);
+ * a removed member is reactivated at the invite role.
+ */
+export function acceptedMembershipInput(invite: InviteRow, input: AcceptInviteInput, previous: WorkspaceMemberRow | null | undefined): UpsertMemberInput {
+  const rank: Record<WorkspaceRole, number> = { owner: 3, admin: 2, member: 1 };
+  const role: WorkspaceRole = previous && previous.memberStatus === 'active' && rank[previous.role] > rank[invite.role] ? previous.role : invite.role;
+  return {
+    workspaceId: invite.workspaceId,
+    userId: input.userId,
+    role,
+    memberStatus: 'active',
+    displayName: input.displayName,
+    avatarUrl: input.avatarUrl,
+  };
+}
+
+/** Visibility + filter predicate shared with the SQLite twin's WHERE clause. */
+export function matchesAuditQuery(row: AuditRow, query: AuditQuery, workspaces: Set<string>, sinceMs: number | null): boolean {
+  if (query.afterId != null && row.id <= query.afterId) return false;
+  if (sinceMs !== null && Date.parse(row.at) < sinceMs) return false;
+  if (query.actorUserId && row.actorUserId !== query.actorUserId) return false;
+  if (query.action && row.action !== query.action) return false;
+  const visible = (row.workspaceId != null && workspaces.has(row.workspaceId)) || row.actorUserId === query.ownActorUserId;
+  return visible;
 }
 
 /** Deterministic catalog row id so re-creating a removed entry yields the same id. */
