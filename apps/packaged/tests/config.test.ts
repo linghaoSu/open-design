@@ -41,7 +41,7 @@ describe('resolvePackagedAmrProfile', () => {
 
   it('rejects unsupported profiles', () => {
     expect(() => resolvePackagedAmrProfile('staging')).toThrow(
-      'unsupported packaged AMR profile; expected prod, test, feature-test, or local: staging',
+      'unsupported packaged AMR profile; expected prod, test, feature-test, local, or selfhost: staging',
     );
   });
 });

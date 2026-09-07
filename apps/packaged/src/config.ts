@@ -22,7 +22,7 @@ export const PACKAGED_WEB_STANDALONE_ROOT_ENV = "OD_WEB_STANDALONE_ROOT";
 export const PACKAGED_WEB_OUTPUT_MODE_ENV = "OD_WEB_OUTPUT_MODE";
 
 export type PackagedWebOutputMode = "server" | "standalone";
-export type PackagedAmrProfile = "prod" | "test" | "feature-test" | "local";
+export type PackagedAmrProfile = "prod" | "test" | "feature-test" | "local" | "selfhost";
 export type PackagedVelaWebUrls = Partial<Record<PackagedAmrProfile, string>>;
 
 export type RawPackagedConfig = {
@@ -140,7 +140,7 @@ function cleanVelaWebUrls(
   value: Partial<Record<PackagedAmrProfile, string>> | undefined,
 ): PackagedVelaWebUrls {
   const result: PackagedVelaWebUrls = {};
-  for (const profile of ['prod', 'test', 'feature-test', 'local'] as const) {
+  for (const profile of ['prod', 'test', 'feature-test', 'local', 'selfhost'] as const) {
     const origin = cleanOptionalString(value?.[profile]);
     if (origin) result[profile] = origin.replace(/\/+$/, '');
   }
@@ -156,10 +156,16 @@ function resolvePackagedWebOutputMode(value: string | undefined): PackagedWebOut
 export function resolvePackagedAmrProfile(value: string | undefined): PackagedAmrProfile | null {
   const cleaned = cleanOptionalString(value);
   if (cleaned == null) return null;
-  if (cleaned === "prod" || cleaned === "test" || cleaned === "feature-test" || cleaned === "local") {
+  if (
+    cleaned === "prod"
+    || cleaned === "test"
+    || cleaned === "feature-test"
+    || cleaned === "local"
+    || cleaned === "selfhost"
+  ) {
     return cleaned;
   }
-  throw new Error(`unsupported packaged AMR profile; expected prod, test, feature-test, or local: ${value}`);
+  throw new Error(`unsupported packaged AMR profile; expected prod, test, feature-test, local, or selfhost: ${value}`);
 }
 
 function isTruthyEnv(value: string | undefined): boolean {

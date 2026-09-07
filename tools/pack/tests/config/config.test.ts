@@ -56,7 +56,7 @@ describe("resolveToolPackConfig AMR profile", () => {
   it("rejects unsupported AMR profiles before packaging", () => {
     process.env.OPEN_DESIGN_AMR_PROFILE = "staging";
     expect(() => resolveToolPackConfig("mac")).toThrow(
-      /OPEN_DESIGN_AMR_PROFILE must be prod, test, feature-test, or local/,
+      /OPEN_DESIGN_AMR_PROFILE must be prod, test, feature-test, local, or selfhost/,
     );
   });
 });

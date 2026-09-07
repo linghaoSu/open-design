@@ -161,7 +161,7 @@ describe("AMR Environment Profile desktop menu helpers", () => {
     });
   });
 
-  it("builds radio menu items for prod, test, feature-test, and local", () => {
+  it("builds radio menu items for prod, test, feature-test, local, and selfhost", () => {
     const selected: string[] = [];
     const [profileMenu] = createAmrEnvironmentProfileMenuItems("test", (profile) => {
       selected.push(profile);
@@ -173,6 +173,7 @@ describe("AMR Environment Profile desktop menu helpers", () => {
       expect.objectContaining({ label: "test", type: "radio", checked: true }),
       expect.objectContaining({ label: "feature-test", type: "radio", checked: false }),
       expect.objectContaining({ label: "local", type: "radio", checked: false }),
+      expect.objectContaining({ label: "selfhost", type: "radio", checked: false }),
     ]);
 
     const localItem = Array.isArray(profileMenu.submenu)

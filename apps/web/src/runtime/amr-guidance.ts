@@ -42,6 +42,7 @@ const KNOWN_AMR_PROFILES: ReadonlySet<string> = new Set([
   'test',
   'feature-test',
   'local',
+  'selfhost',
 ]);
 
 // Console origin the daemon reported for THIS runtime (GET
@@ -123,6 +124,7 @@ export function amrProfileBadgeLabel(profile: string | null | undefined): string
   if (profile === 'test') return 'TEST';
   if (profile === 'feature-test') return 'FEATURE TEST';
   if (profile === 'local') return 'LOCAL';
+  if (profile === 'selfhost') return 'SELF-HOSTED';
   return null;
 }
 

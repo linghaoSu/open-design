@@ -2087,6 +2087,24 @@ describe('ALL /api/integrations/vela/api-proxy/*', () => {
     }
   });
 
+  it('forwards to a self-hosted hub when OD_AMR_API_UPSTREAM_ORIGIN is set', async () => {
+    const hub = createServer((req, res) => {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ hub: true, path: req.url }));
+    });
+    await new Promise<void>((resolve) => hub.listen(0, '127.0.0.1', resolve));
+    const hubPort = (hub.address() as AddressInfo).port;
+    process.env.OD_AMR_API_UPSTREAM_ORIGIN = `http://127.0.0.1:${hubPort}/ignored/path`;
+    try {
+      const resp = await fetch(`${baseUrl}/api/integrations/vela/api-proxy/api/v1/wallet/balance`);
+      expect(resp.status).toBe(200);
+      expect(await resp.json()).toEqual({ hub: true, path: '/api/v1/wallet/balance' });
+    } finally {
+      delete process.env.OD_AMR_API_UPSTREAM_ORIGIN;
+      await new Promise<void>((resolve) => hub.close(() => resolve()));
+    }
+  });
+
   it('preserves a valid Workspace scope while stripping request hop-by-hop headers', async () => {
     let forwardedHeaders: Record<string, string | string[]> | undefined;
     const requestSpy = vi.spyOn(https, 'request').mockImplementation(((_target, options, callback) => {

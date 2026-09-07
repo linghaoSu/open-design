@@ -15,6 +15,7 @@
 const WORKSPACE_TEAM_AMR_PROFILES: ReadonlySet<string> = new Set([
   "feature-test",
   "prod",
+  "selfhost",
   "test",
 ]);
 

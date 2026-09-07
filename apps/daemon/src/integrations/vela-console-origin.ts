@@ -4,7 +4,8 @@ type EnvMap = NodeJS.ProcessEnv | Record<string, string | undefined>;
 
 // Publicly named console origins already used by the web client. feature-test
 // remains build-injected because its deployment hostname is intentionally not
-// part of the public repository.
+// part of the public repository. selfhost has no public default at all: its
+// origin must come from OD_VELA_WEB_URLS / OD_VELA_WEB_URL.
 const PUBLIC_ORIGINS: Partial<Record<string, string>> = {
   prod: 'https://open-design.ai/cloud',
   test: 'https://vela.powerformer.net',
@@ -24,7 +25,7 @@ function originsByProfile(env: EnvMap): Record<string, string> {
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     const result: Record<string, string> = {};
-    for (const profile of ['prod', 'test', 'feature-test', 'local'] as const) {
+    for (const profile of ['prod', 'test', 'feature-test', 'local', 'selfhost'] as const) {
       const origin = normalizedOrigin((parsed as Record<string, unknown>)[profile]);
       if (origin) result[profile] = origin;
     }

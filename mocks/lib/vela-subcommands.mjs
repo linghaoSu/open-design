@@ -37,7 +37,7 @@ const DEFAULT_MODELS_STDOUT = [
  * project the same on-disk artifact a successful real login produces.
  *
  * Envs (compat with fake-vela.mjs):
- *   VELA_PROFILE                — profile slot to populate (prod|test|feature-test|local)
+ *   VELA_PROFILE                — profile slot to populate (prod|test|feature-test|local|selfhost)
  *   FAKE_VELA_LOGIN_DELAY_MS    — sleep before the write (test in-flight states)
  *   FAKE_VELA_LOGIN_USER_EMAIL  — email written into the profile
  *   FAKE_VELA_LOGIN_USER_PLAN   — plan written into the profile
@@ -48,10 +48,10 @@ export async function runVelaLogin() {
     process.stderr.write(`${process.env.FAKE_VELA_LOGIN_FAIL}\n`);
     process.exit(1);
   }
-  const allowed = new Set(['prod', 'test', 'feature-test', 'local']);
+  const allowed = new Set(['prod', 'test', 'feature-test', 'local', 'selfhost']);
   const requested = (process.env.VELA_PROFILE || 'prod').trim() || 'prod';
   if (!allowed.has(requested)) {
-    process.stderr.write(`[mock-vela] unknown profile ${requested}; expected prod, test, feature-test, or local\n`);
+    process.stderr.write(`[mock-vela] unknown profile ${requested}; expected prod, test, feature-test, local, or selfhost\n`);
     process.exit(1);
   }
   const profile = requested;

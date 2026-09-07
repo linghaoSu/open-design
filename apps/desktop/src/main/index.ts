@@ -105,7 +105,7 @@ export {
 
 const AMR_PROFILE_ENV_KEY = "OPEN_DESIGN_AMR_PROFILE";
 const AMR_PROFILE_AGENT_ID = "amr";
-const AMR_ENVIRONMENT_PROFILES = ["prod", "test", "feature-test", "local"] as const;
+const AMR_ENVIRONMENT_PROFILES = ["prod", "test", "feature-test", "local", "selfhost"] as const;
 const APP_CONFIG_CHANGED_IPC_CHANNEL = "od:app-config-changed";
 type AmrEnvironmentProfile = (typeof AMR_ENVIRONMENT_PROFILES)[number];
 type DesktopAppConfigPrefs = {
@@ -266,7 +266,7 @@ export function mergeAmrEnvironmentProfileConfig(
 ): DesktopAppConfigPrefs {
   if (!AMR_ENVIRONMENT_PROFILES.includes(profile)) {
     throw new Error(
-      `AMR Environment Profile must be prod, test, feature-test, or local: ${String(profile)}`,
+      `AMR Environment Profile must be prod, test, feature-test, local, or selfhost: ${String(profile)}`,
     );
   }
   const currentProfile = normalizeAmrEnvironmentProfile(

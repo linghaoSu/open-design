@@ -40,6 +40,19 @@ describe('resolveVelaConsoleOrigin', () => {
     })).toBe('https://feature.example.invalid');
   });
 
+  it('resolves the self-hosted origin only from OD_VELA_WEB_URLS / OD_VELA_WEB_URL', () => {
+    // selfhost has no public console; a runtime switch to it without an
+    // injected origin must yield nothing rather than a guessed hostname.
+    expect(resolveVelaConsoleOrigin({}, { OPEN_DESIGN_AMR_PROFILE: 'selfhost' })).toBeUndefined();
+    expect(resolveVelaConsoleOrigin({
+      OD_VELA_WEB_URLS: JSON.stringify({ selfhost: 'https://hub.example.invalid/' }),
+    }, { OPEN_DESIGN_AMR_PROFILE: 'selfhost' })).toBe('https://hub.example.invalid');
+    expect(resolveVelaConsoleOrigin({
+      OPEN_DESIGN_AMR_PROFILE: 'selfhost',
+      OD_VELA_WEB_URL: 'https://hub.example.invalid',
+    })).toBe('https://hub.example.invalid');
+  });
+
   it('never reuses the packaged origin after switching to an unmapped profile', () => {
     expect(resolveVelaConsoleOrigin({
       OPEN_DESIGN_AMR_PROFILE: 'test',

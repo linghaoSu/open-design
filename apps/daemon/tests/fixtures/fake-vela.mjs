@@ -585,9 +585,9 @@ function loginAndExit() {
     writeFileSync(env.FAKE_VELA_ENV_DUMP_PATH, JSON.stringify(env, null, 2), 'utf8');
   }
   const profile = (env.VELA_PROFILE || 'prod').trim() || 'prod';
-  const allowed = new Set(['prod', 'test', 'feature-test', 'local']);
+  const allowed = new Set(['prod', 'test', 'feature-test', 'local', 'selfhost']);
   if (!allowed.has(profile)) {
-    stderr.write(`[fake-vela] unknown profile ${profile}; expected prod, test, feature-test, or local\n`);
+    stderr.write(`[fake-vela] unknown profile ${profile}; expected prod, test, feature-test, local, or selfhost\n`);
     exit(1);
   }
   const profileName = profile;

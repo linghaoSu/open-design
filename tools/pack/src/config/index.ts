@@ -41,7 +41,7 @@ export function assertDesignLoomPackagedPlatform(platform: ToolPackPlatform): vo
 export type ToolPackBuildOutput = "all" | "app" | "appimage" | "dir" | "dmg" | "nsis" | "zip";
 export type ToolPackMacCompression = "store" | "normal" | "maximum";
 export type ToolPackWebOutputMode = "server" | "standalone";
-export type ToolPackAmrProfile = "prod" | "test" | "feature-test" | "local";
+export type ToolPackAmrProfile = "prod" | "test" | "feature-test" | "local" | "selfhost";
 export type ToolPackVelaWebUrls = Partial<Record<ToolPackAmrProfile, string>>;
 
 export type ToolPackCliOptions = {
@@ -211,10 +211,16 @@ function resolveToolPackAmrProfile(value: string | undefined): ToolPackAmrProfil
   if (value == null) return undefined;
   const normalized = value.trim();
   if (normalized.length === 0) return undefined;
-  if (normalized === "prod" || normalized === "test" || normalized === "feature-test" || normalized === "local") {
+  if (
+    normalized === "prod"
+    || normalized === "test"
+    || normalized === "feature-test"
+    || normalized === "local"
+    || normalized === "selfhost"
+  ) {
     return normalized;
   }
-  throw new Error(`OPEN_DESIGN_AMR_PROFILE must be prod, test, feature-test, or local: ${value}`);
+  throw new Error(`OPEN_DESIGN_AMR_PROFILE must be prod, test, feature-test, local, or selfhost: ${value}`);
 }
 
 function resolveToolPackVelaWebUrl(value: string | undefined): string | undefined {
@@ -239,6 +245,7 @@ function resolveToolPackVelaWebUrls(env: NodeJS.ProcessEnv): ToolPackVelaWebUrls
     ['test', env.OD_VELA_WEB_URL_TEST],
     ['feature-test', env.OD_VELA_WEB_URL_FEATURE_TEST],
     ['local', env.OD_VELA_WEB_URL_LOCAL],
+    ['selfhost', env.OD_VELA_WEB_URL_SELFHOST],
   ];
   const result: ToolPackVelaWebUrls = {};
   for (const [profile, value] of candidates) {

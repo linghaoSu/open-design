@@ -56,11 +56,13 @@ import {
   fetchVelaRemoteModelsWithRetry,
 } from '../runtimes/defs/amr.js';
 import { classifyAmrAccountFailure } from '../integrations/vela-errors.js';
+import {
+  AMR_API_PROXY_PREFIX,
+  resolveAmrApiUpstreamOrigin,
+} from '../integrations/vela-selfhost.js';
 
-const AMR_API_PROXY_PREFIX = '/api/integrations/vela/api-proxy';
 const VELA_MESSAGE_CENTER_PREFIX = '/api/integrations/vela/message-center';
 const VELA_PUBLIC_MESSAGE_CENTER_PREFIX = '/api/integrations/vela/message-center-public';
-const AMR_API_UPSTREAM_ORIGIN = 'https://amr-api.open-design.ai';
 const PROXY_HOP_BY_HOP_HEADERS = new Set([
   'connection',
   'keep-alive',
@@ -251,13 +253,13 @@ export function pipeProxyStreamWithGuard(
   source.pipe(dest);
 }
 
-function proxyAmrApiRequest(req: Request, res: Response): void {
+function proxyAmrApiRequest(req: Request, res: Response, upstreamOrigin: string): void {
   const suffix = req.originalUrl.slice(AMR_API_PROXY_PREFIX.length);
   if (!suffix.startsWith('/api/v1/')) {
     res.status(404).json({ error: 'unknown_amr_api_proxy_path' });
     return;
   }
-  const target = new URL(suffix, AMR_API_UPSTREAM_ORIGIN);
+  const target = new URL(suffix, upstreamOrigin);
   if (!target.pathname.startsWith('/api/v1/')) {
     res.status(404).json({ error: 'unknown_amr_api_proxy_path' });
     return;
@@ -288,7 +290,8 @@ function proxyAmrApiRequest(req: Request, res: Response): void {
   }
   if (body) headers['content-length'] = String(body.length);
 
-  const upstream = https.request(
+  const transport = target.protocol === 'https:' ? https : http;
+  const upstream = transport.request(
     target,
     {
       method: req.method,
@@ -622,7 +625,24 @@ export function registerVelaRoutes(app: Express, deps: RegisterVelaRoutesDeps): 
     }
   });
 
-  app.all('/api/integrations/vela/api-proxy/*splat', proxyAmrApiRequest);
+  app.all('/api/integrations/vela/api-proxy/*splat', async (req, res) => {
+    // A self-hosted Vela-compatible hub replaces the public AMR API. The
+    // upstream is resolved per request so a profile switch or a fresh login
+    // (which may record a new apiUrl) takes effect without a daemon restart.
+    let upstreamOrigin: string;
+    try {
+      const appConfig = await readAppConfig(RUNTIME_DATA_DIR);
+      const configuredEnv = agentCliEnvForAgent(appConfig.agentCliEnv, 'amr');
+      upstreamOrigin = resolveAmrApiUpstreamOrigin(
+        env,
+        readVelaApiContext(env, configuredEnv).apiUrl,
+      );
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+      return;
+    }
+    proxyAmrApiRequest(req, res, upstreamOrigin);
+  });
 
   app.get('/api/integrations/vela/message-center-public/messages', async (req, res) => {
     try {

@@ -87,6 +87,14 @@ describe('resolveAmrProfile', () => {
     expect(resolveAmrProfile({ OPEN_DESIGN_AMR_PROFILE: 'feature-test' })).toBe('feature-test');
   });
 
+  it('accepts the self-hosted hub profile without warning', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(resolveAmrProfile({ OPEN_DESIGN_AMR_PROFILE: 'selfhost' })).toBe('selfhost');
+    expect(resolveAmrProfile({ VELA_PROFILE: 'selfhost' })).toBe('selfhost');
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
   it('uses VELA_PROFILE when OPEN_DESIGN_AMR_PROFILE is unset', () => {
     expect(resolveAmrProfile({ VELA_PROFILE: 'local' })).toBe('local');
     expect(

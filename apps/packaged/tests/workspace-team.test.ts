@@ -25,6 +25,17 @@ describe('workspaceTeamTransportEnv', () => {
     });
   });
 
+  it('enables the transports for a self-hosted hub given its Vela URL', () => {
+    expect(workspaceTeamTransportEnv('selfhost', 'https://hub.example/')).toEqual({
+      OD_WORKSPACE_CONTEXT_SOURCE: 'vela',
+      OD_TEAM_PROJECTS_TRANSPORT: 'vela-cli',
+      OD_COLLAB_TRANSPORT: 'vela-cli',
+      OD_RESOURCE_TRANSPORT: 'vela-cli',
+      OD_VELA_WEB_URL: 'https://hub.example',
+    });
+    expect(workspaceTeamTransportEnv('selfhost', undefined)).toEqual({});
+  });
+
   it('keeps an origin-less build dormant on every profile', () => {
     // Half a configuration is the dangerous one: without an injected origin the
     // packaged daemon would otherwise point Workspace Team at an unknown
