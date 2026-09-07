@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 
+import { parseHubConfig } from './server/config.js';
 import { seedDevIdentity } from './server/dev-seed.js';
+import { createHttpGitLabClient, type GitLabClient } from './server/gitlab.js';
 import { createHubServer } from './server/http.js';
 import { MemoryHubStore, type MemoryHubStoreSeed } from './server/memory-store.js';
 import { SqliteHubStore } from './server/sqlite-store.js';
@@ -24,7 +26,9 @@ Options:
   --seed          JSON file of explicit users/workspaces (memory store only)
   -h, --help      Show this help
 
-Without --seed-dev or --seed the hub starts empty and every bearer is rejected.
+GitLab login (od-vela login) is enabled when GITLAB_URL and
+GITLAB_OAUTH_CLIENT_ID are set; see README.md for the full env table.
+Without --seed-dev, --seed, or GitLab the hub starts empty and every bearer is rejected.
 `;
 
 interface StartOptions {
@@ -105,9 +109,26 @@ async function main(argv: string[]): Promise<number> {
     })}\n`);
   }
 
-  const hub = createHubServer({ store, log: (line) => process.stderr.write(`${line}\n`) });
+  const config = parseHubConfig(process.env);
+  let gitlab: GitLabClient | null = null;
+  if (config.gitlabUrl && config.gitlabClientId) {
+    gitlab = createHttpGitLabClient({
+      baseUrl: config.gitlabUrl,
+      clientId: config.gitlabClientId,
+      clientSecret: config.gitlabClientSecret,
+    });
+  } else if (config.gitlabUrl || config.gitlabClientId) {
+    process.stderr.write('od-hub: GITLAB_URL and GITLAB_OAUTH_CLIENT_ID must both be set to enable login; login disabled\n');
+  }
+  if (gitlab && !config.tokenEncKey) {
+    process.stderr.write('od-hub: TOKEN_ENC_KEY is not set; GitLab tokens are encrypted with a process-lifetime key and every restart forces re-login\n');
+  }
+
+  const hub = createHubServer({ store, gitlab, config, log: (line) => process.stderr.write(`${line}\n`) });
   const { url } = await hub.listen(options.port, options.host);
-  process.stdout.write(`od-hub listening on ${url} (store: ${options.sqlite ? `sqlite ${options.sqlite}` : 'memory'})\n`);
+  process.stdout.write(
+    `od-hub listening on ${url} (store: ${options.sqlite ? `sqlite ${options.sqlite}` : 'memory'}, gitlab: ${gitlab ? config.gitlabUrl : 'disabled'})\n`,
+  );
   const shutdown = () => {
     hub.close().then(() => store.close()).finally(() => process.exit(0));
   };

@@ -63,10 +63,11 @@ describe('authentication', () => {
 });
 
 describe('GET /api/v1/me', () => {
-  it('returns the bearer owner as {user:{id,email,name?,image?}}', async () => {
+  it('returns the bearer owner as {user:{id,email,name?,image?,plan,balanceUsd}}', async () => {
     const res = await fetch(`${url}/api/v1/me`, { headers: authHeaders() });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ user: { id: 'u1', email: 'alice@example.test', name: 'Alice' } });
+    // vela.ts:238-250 VelaUser: extra fields are additive; image omitted when unknown
+    expect(await res.json()).toEqual({ user: { id: 'u1', email: 'alice@example.test', name: 'Alice', plan: 'team', balanceUsd: '999999.00' } });
   });
 
   it('requires a bearer', async () => {

@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 
 import { seedDevIdentity } from '../src/server/dev-seed.js';
-import { deriveMemberId } from '../src/server/ids.js';
+import { deriveMemberId, hashApiKey } from '../src/server/ids.js';
 import { MemoryHubStore } from '../src/server/memory-store.js';
 import { applyMigrations, resolveMigrationsDir, SqliteHubStore } from '../src/server/sqlite-store.js';
 import type { HubStore } from '../src/server/store.js';
@@ -101,6 +101,128 @@ describe.each(implementations)('%s', (_name, make) => {
     await store.close();
   });
 
+  it('sliding expiry moves expiresAt on authenticate only when a TTL is asked for and the key had one', async () => {
+    const store = make();
+    await store.createUser({ id: 'u1', email: 'a@b.c', name: 'A' });
+    const t0 = new Date('2026-09-08T00:00:00.000Z');
+    const { secret } = await store.issueApiKey({ userId: 'u1', kind: 'control', expiresAt: new Date(t0.getTime() + 1000).toISOString() });
+    const slid = await store.authenticate(secret, t0, { slidingTtlMs: 60_000 });
+    expect(slid?.apiKey.expiresAt).toBe(new Date(t0.getTime() + 60_000).toISOString());
+    expect(await store.authenticate(secret, new Date(t0.getTime() + 30_000))).not.toBeNull();
+    expect(await store.authenticate(secret, new Date(t0.getTime() + 61_000), { slidingTtlMs: 60_000 })).toBeNull();
+    // Seeded keys without expiry never gain one.
+    const forever = await store.issueApiKey({ userId: 'u1', kind: 'control', secret: 'odc_forever_key' });
+    expect((await store.authenticate(forever.secret, t0, { slidingTtlMs: 60_000 }))?.apiKey.expiresAt).toBeNull();
+    // revokeAllUserKeys hits every live key once.
+    expect(await store.revokeAllUserKeys('u1')).toBe(2);
+    expect(await store.revokeAllUserKeys('u1')).toBe(0);
+    expect(await store.authenticate(forever.secret, t0)).toBeNull();
+    await store.close();
+  });
+
+  it('upsertUser refreshes identity fields and keeps createdAt / gitlabId', async () => {
+    const store = make();
+    const created = await store.upsertUser({ id: '7', gitlabId: 7, email: 'x@y.z', name: 'X', avatarUrl: 'https://a/x.png' });
+    const updated = await store.upsertUser({ id: '7', gitlabId: 7, email: 'new@y.z', name: 'X2' });
+    expect(updated).toMatchObject({ id: '7', gitlabId: 7, email: 'new@y.z', name: 'X2', avatarUrl: 'https://a/x.png', createdAt: created.createdAt });
+    const cleared = await store.upsertUser({ id: '7', email: 'new@y.z', name: 'X2', avatarUrl: null });
+    expect(cleared.avatarUrl).toBeNull();
+    expect(cleared.gitlabId).toBe(7);
+    await store.close();
+  });
+
+  it('device auths and encrypted grants round-trip', async () => {
+    const store = make();
+    await store.createUser({ id: 'u1', email: 'a@b.c', name: 'A' });
+    // Keyed by sha256(hub device code); GitLab's code is an opaque cipher blob plus its key id.
+    const hash = hashApiKey('hub-code');
+    const row = {
+      deviceCodeHash: hash, userCode: 'ABCD-0001', gitlabDeviceCodeEnc: Buffer.from([9, 8, 7, 6]), keyId: 'k_dev',
+      verificationUri: 'https://gl/-/oauth/device',
+      verificationUriComplete: 'https://gl/-/oauth/device?user_code=ABCD-0001', intervalS: 5, status: 'pending' as const,
+      userId: null, profile: 'selfhost', createdAt: '2026-09-08T00:00:00.000Z', expiresAt: '2026-09-08T00:10:00.000Z', lastPolledAt: null,
+    };
+    expect(await store.createDeviceAuth(row)).toEqual(row);
+    expect(Buffer.isBuffer((await store.getDeviceAuth(hash))!.gitlabDeviceCodeEnc)).toBe(true);
+    expect(await store.getDeviceAuth('hub-code')).toBeNull();
+    expect(await store.getDeviceAuth('nope')).toBeNull();
+    const patched = await store.updateDeviceAuth(hash, { status: 'complete', userId: 'u1', intervalS: 10, lastPolledAt: '2026-09-08T00:00:05.000Z' });
+    expect(patched).toEqual({ ...row, status: 'complete', userId: 'u1', intervalS: 10, lastPolledAt: '2026-09-08T00:00:05.000Z' });
+    expect(await store.updateDeviceAuth('nope', { status: 'denied' })).toBeNull();
+
+    const grant = {
+      userId: 'u1', accessTokenEnc: Buffer.from([1, 2, 3]), refreshTokenEnc: Buffer.from([4, 5]), keyId: 'k_1',
+      accessExpiresAt: '2026-09-08T02:00:00.000Z', updatedAt: '2026-09-08T00:00:00.000Z',
+    };
+    await store.putOAuthGrant(grant);
+    const read = await store.getOAuthGrant('u1');
+    expect(read).toEqual(grant);
+    expect(Buffer.isBuffer(read!.accessTokenEnc)).toBe(true);
+    await store.putOAuthGrant({ ...grant, refreshTokenEnc: null, keyId: 'k_2' });
+    expect(await store.getOAuthGrant('u1')).toMatchObject({ refreshTokenEnc: null, keyId: 'k_2' });
+    await store.deleteOAuthGrant('u1');
+    expect(await store.getOAuthGrant('u1')).toBeNull();
+    await store.close();
+  });
+
+  it('applyBatch commits mutation + outbox + digest bumps together; outbox drains in id order once', async () => {
+    const store = make();
+    await store.createUser({ id: 'u1', email: 'a@b.c', name: 'A' });
+    const before = await store.getSyncDigest('g1');
+    const { outbox } = await store.applyBatch({
+      workspaces: [{ create: { id: 'g1', name: 'Team', kind: 'team', gitlabId: 1 } }],
+      members: [{ workspaceId: 'g1', userId: 'u1', role: 'member' }],
+      outbox: [
+        { workspaceId: 'g1', userId: 'u1', topic: 'directory', eventName: 'workspace-directory-changed', payload: { type: 'workspace-directory-changed', workspaceId: 'g1', change: 'created' } },
+        { workspaceId: 'g1', userId: null, topic: 'workspace', eventName: 'workspace-event', payload: { type: 'workspace-members-changed', workspaceId: 'g1', memberChange: 'added' } },
+      ],
+      digestBumps: [{ workspaceId: 'g1', face: 'membersToken' }],
+      audit: [{ actorUserId: 'u1', workspaceId: 'g1', action: 'membership_added' }],
+    });
+    expect(outbox.map((r) => [r.id, r.topic, r.publishedAt])).toEqual([[1, 'directory', null], [2, 'workspace', null]]);
+    expect((await store.getWorkspace('g1'))?.name).toBe('Team');
+    expect((await store.getMembership('u1', 'g1'))?.memberStatus).toBe('active');
+    expect((await store.getSyncDigest('g1')).membersToken).not.toBe(before.membersToken);
+    const pending = await store.listUnpublishedOutbox();
+    expect(pending.map((r) => r.id)).toEqual([1, 2]);
+    expect(pending[1]!.payload).toEqual({ type: 'workspace-members-changed', workspaceId: 'g1', memberChange: 'added' });
+    await store.markOutboxPublished([1]);
+    expect((await store.listUnpublishedOutbox()).map((r) => r.id)).toEqual([2]);
+    await store.markOutboxPublished([2]);
+    expect(await store.listUnpublishedOutbox()).toEqual([]);
+
+    // update op + removed retention keeps the first removedAt
+    await store.applyBatch({ workspaces: [{ update: { id: 'g1', name: 'Renamed', lifecycleState: 'locked' } }] });
+    expect(await store.getWorkspace('g1')).toMatchObject({ name: 'Renamed', lifecycleState: 'locked', gitlabId: 1 });
+    expect(await store.updateWorkspace('missing', { name: 'x' })).toBeNull();
+    const removed = await store.upsertMember({ workspaceId: 'g1', userId: 'u1', role: 'member', memberStatus: 'removed' });
+    const removedAgain = await store.upsertMember({ workspaceId: 'g1', userId: 'u1', role: 'member', memberStatus: 'removed' });
+    expect(removedAgain.removedAt).toBe(removed.removedAt);
+    expect((await store.listMemberships('u1')).map((m) => [m.workspaceId, m.memberStatus])).toEqual([['g1', 'removed']]);
+
+    // memberDeletes purges the row outright (retention expiry) and is a no-op for unknown pairs.
+    await store.applyBatch({ memberDeletes: [{ workspaceId: 'g1', userId: 'u1' }, { workspaceId: 'g1', userId: 'ghost' }] });
+    expect(await store.listMemberships('u1')).toEqual([]);
+    expect(await store.getMembership('u1', 'g1')).toBeNull();
+    expect(await store.listMembers('g1')).toEqual([]);
+    await store.close();
+  });
+
+  it('SQLite rolls the whole batch back when one statement fails', async () => {
+    const store = make();
+    await store.createUser({ id: 'u1', email: 'a@b.c', name: 'A' });
+    await store.createWorkspace({ id: 'g1', name: 'Team', kind: 'team' });
+    await expect(store.applyBatch({
+      outbox: [{ workspaceId: 'g1', userId: null, topic: 'workspace', eventName: 'workspace-event', payload: { type: 'x' } }],
+      // duplicate primary key -> throws
+      workspaces: [{ create: { id: 'g1', name: 'Dup', kind: 'team' } }],
+    })).rejects.toThrow();
+    if (store instanceof SqliteHubStore) {
+      expect(await store.listUnpublishedOutbox()).toEqual([]);
+    }
+    await store.close();
+  });
+
   it('seedDevIdentity is idempotent and the seeded key authenticates through the server', async () => {
     const store = make();
     const first = await seedDevIdentity(store, { controlKey: 'odc_dev_seed_key' });
@@ -130,17 +252,22 @@ describe('SqliteHubStore migrations', () => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  it('resolves migrations/ from src/ and declares sync_digests', () => {
+  it('resolves migrations/ from src/ and applies 0001 + 0002 + 0003 in order', () => {
     const dir = resolveMigrationsDir();
     expect(dir.endsWith(`${path.sep}migrations`)).toBe(true);
     const db = new Database(':memory:');
-    expect(applyMigrations(db, dir)).toEqual([1]);
+    expect(applyMigrations(db, dir)).toEqual([1, 2, 3]);
     const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>)
       .map((r) => r.name);
-    expect(tables).toEqual(expect.arrayContaining(['schema_migrations', 'users', 'api_keys', 'workspaces', 'workspace_members', 'sync_digests']));
+    expect(tables).toEqual(expect.arrayContaining(['schema_migrations', 'users', 'api_keys', 'workspaces', 'workspace_members', 'sync_digests', 'device_auths', 'oauth_grants', 'events_outbox', 'audit_log']));
+    const outboxColumns = (db.prepare('PRAGMA table_info(events_outbox)').all() as Array<{ name: string }>).map((c) => c.name);
+    expect(outboxColumns).toContain('user_id');
+    const deviceColumns = (db.prepare('PRAGMA table_info(device_auths)').all() as Array<{ name: string }>).map((c) => c.name);
+    expect(deviceColumns).toEqual(expect.arrayContaining(['device_code_hash', 'gitlab_device_code_enc', 'key_id']));
+    expect(deviceColumns).not.toContain('device_code');
     // Second pass is a no-op.
     expect(applyMigrations(db, dir)).toEqual([]);
-    expect(db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get()).toEqual({ n: 1 });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get()).toEqual({ n: 3 });
     db.close();
   });
 

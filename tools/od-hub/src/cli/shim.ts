@@ -2,6 +2,7 @@ import { BILLING_SUMMARY_STUB, OD_VELA_VERSION } from '../shared/wire.js';
 import { flagString, parseArgs } from './args.js';
 import { resolveShimContext, type Env, type ShimContext } from './config.js';
 import { hubRequest, ShimError, type FetchLike } from './http.js';
+import { runLogin, runLogout, type LoginIo } from './login.js';
 
 export interface CliResult {
   stdout: string;
@@ -12,6 +13,12 @@ export interface CliResult {
 export interface CliDeps {
   fetch?: FetchLike;
   context?: ShimContext;
+  /**
+   * Streaming sinks for long-running commands (`login`). When provided, output
+   * is written as it happens and the returned CliResult carries only what was
+   * not already streamed. Without them everything is buffered.
+   */
+  io?: Partial<Pick<LoginIo, 'stdout' | 'stderr' | 'openBrowser' | 'sleep' | 'maxWaitMs'>>;
 }
 
 /** Flags that always consume the following token as a value. */
@@ -153,9 +160,34 @@ function handleTeamProjects(argv: string[]): CliResult {
 
 function handleTodo(group: string, argv: string[], depth: number): CliResult {
   const { positionals } = parseArgs(argv, VALUE_FLAGS);
-  // TODO(M1-M3): login/logout (device flow), collab member|comment|presence,
+  // TODO(M2-M3): collab member|comment|presence,
   // resource push|head|pull|pull-batch|remove|shared|snapshot|snapshot-redact|list.
   return fail(ShimError.notSupported(scopeOf([group, ...positionals.slice(0, depth)])));
+}
+
+/**
+ * login/logout stream their output (the daemon needs the activation URL long
+ * before the process exits). Buffer into the CliResult only when the caller
+ * gave no sinks.
+ */
+async function handleAuth(command: 'login' | 'logout', ctx: ShimContext, env: Env, deps: CliDeps): Promise<CliResult> {
+  let stdout = '';
+  let stderr = '';
+  const io: LoginIo = {
+    stdout: deps.io?.stdout ?? ((text) => { stdout += text; }),
+    stderr: deps.io?.stderr ?? ((text) => { stderr += text; }),
+    ...(deps.io?.openBrowser ? { openBrowser: deps.io.openBrowser } : {}),
+    ...(deps.io?.sleep ? { sleep: deps.io.sleep } : {}),
+    ...(deps.io?.maxWaitMs !== undefined ? { maxWaitMs: deps.io.maxWaitMs } : {}),
+    ...(deps.fetch ? { fetch: deps.fetch } : {}),
+  };
+  try {
+    const exitCode = command === 'login' ? await runLogin(ctx, env, io) : await runLogout(ctx, env, io);
+    return { stdout, stderr, exitCode };
+  } catch (error) {
+    const shimError = error instanceof ShimError ? error : ShimError.network(command, error instanceof Error ? error.message : String(error));
+    return { stdout, stderr: `${stderr}${shimError.stderrLine}\n`, exitCode: shimError.exitCode };
+  }
 }
 
 // ---- entry ------------------------------------------------------------------
@@ -190,7 +222,7 @@ export async function runCli(argv: string[], env: Env, deps: CliDeps = {}): Prom
     case 'run': return handleRun(rest);
     case 'team-projects': return handleTeamProjects(rest);
     case 'login':
-    case 'logout': return handleTodo(command, rest, 0);
+    case 'logout': return handleAuth(command, ctx, env, deps);
     case 'collab': return handleTodo(command, rest, 2);
     case 'resource': return handleTodo(command, rest, 1);
     case 'agent': return handleTodo(command, rest, 1);

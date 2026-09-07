@@ -6,23 +6,30 @@ daemon run the team-workspace code paths (directory, SSE, billing gates,
 sync digest) against infrastructure you control instead of
 `amr-api.open-design.ai`.
 
-This package is the **M0/M1 skeleton** from
+This package is the **M0/M1 hub** from
 `PLAN-selfhosted-hub-gitlab-oauth.md`: argv routing, error formats, storage
-interface, and the stubs that keep the daemon happy. GitLab OAuth, resource
-blobs, comments, presence, and invites are declared (see
-`migrations/0001_init.sql`) but not yet implemented; the shim
-answers those subcommands with the typed `501: not_supported` line so the
-daemon degrades cleanly instead of guessing.
+interface, GitLab OAuth Device Flow login, the GitLab-mirrored workspace
+directory, and the outbox-backed SSE event stream. Resource blobs, comments,
+presence, and invites are declared (see `migrations/`) but not yet
+implemented; the shim answers those subcommands with the typed
+`501: not_supported` line so the daemon degrades cleanly instead of guessing.
 
 Dependencies: `better-sqlite3` (same pin as `apps/daemon`) for the optional
-`--sqlite` store; the HTTP layer is plain `node:http` + `fetch`. Dev deps
-mirror `tools/serve`.
+`--sqlite` store; the HTTP layer is plain `node:http` + `fetch`; token
+encryption is `node:crypto` AES-256-GCM. Dev deps mirror `tools/serve`.
 
 ## Layout
 
 ```
 src/index.ts              od-hub CLI entry (`od-hub start`, node:util parseArgs)
 src/server/http.ts        HTTP + SSE routes (node:http)
+src/server/config.ts      env -> HubConfig (GitLab, TTLs, public URL)
+src/server/gitlab.ts      injectable GitLabClient interface + fetch implementation
+src/server/auth-service.ts device flow, odc_/odr_ minting, encrypted grants, refresh lock
+src/server/directory-service.ts GitLab groups -> workspaces/members mirror + diff events
+src/server/event-relay.ts events_outbox -> SSE fan-out (workspace / directory / access)
+src/server/digest.ts      event -> sync-digest face mapping (mirrors e2e fake hub)
+src/server/token-cipher.ts AES-256-GCM envelope for GitLab tokens (key id bound as AAD)
 src/server/store.ts       HubStore interface + row types (PLAN §3.2)
 src/server/memory-store.ts in-memory HubStore
 src/server/sqlite-store.ts better-sqlite3 HubStore + schema_migrations runner
@@ -31,21 +38,28 @@ src/server/ids.ts         key hashing, odc_/odr_ minting, memberId derivation
 migrations/               NNNN_*.sql applied in order, tracked in schema_migrations
 src/cli/main.ts           od-vela bin entry
 src/cli/shim.ts           argv router (PLAN §6.2) and stub payloads
-src/cli/config.ts         VELA_* / $AMR_HOME/config.json resolution
+src/cli/login.ts          `od-vela login|logout` device flow + atomic config.json write
+src/cli/config.ts         VELA_* / $AMR_HOME/config.json resolution and profile writer
 src/cli/http.ts           hub client + stderr error contract (PLAN §6.3)
 src/shared/wire.ts        constants pinned to daemon parsers (file:line cited)
-tests/                    server endpoint + exhaustive shim contract tests
+tests/                    server endpoint, GitLab flow, SSE, and shim contract tests
+tests/helpers/fake-gitlab.ts node:http fake GitLab (device flow, /user, /groups)
+tests/helpers/fake-gitlab-main.ts the same fake as a standalone process (used by the smoke)
+scripts/smoke-login.ts    out-of-process login smoke: fake GitLab + od-hub --sqlite + od-vela login
 ```
 
 ## Server endpoints
 
 | Method + path | Auth | Behavior |
 |---|---|---|
-| `GET /healthz` | no | `{ok, service, listenerEpoch, at}` |
-| `GET /api/v1/me` | Bearer | `{user:{id, email, name?, image?}}` for the key owner |
-| `GET /api/v1/workspaces` | Bearer | caller's membership directory (`{items: WorkspaceDirectoryItem[]}`) |
-| `GET /api/v1/collab/events` | Bearer + `x-vela-workspace-id` | SSE: `ready` (5 capabilities, `listenerEpoch/listenerHealth/sourceGap`), immediate `heartbeat`, then every 10 s |
-| `GET /api/v1/collab/sync-digest` | Bearer + workspace | `{catalogToken, membersToken, contextToken, billingToken}` |
+| `GET /healthz` | no | `{ok, service, listenerEpoch, gitlab, at}` |
+| `POST /api/v1/auth/device` | no | `{profile}` -> proxies GitLab `authorize_device` (scope `read_user read_api`); returns `{deviceCode, userCode, verificationUri, verificationUriComplete, interval, expiresIn}`. `deviceCode` is hub-minted (256-bit); only its sha256 is stored, and GitLab's own code is stored encrypted and never leaves the server. 501 when GitLab is not configured |
+| `POST /api/v1/auth/device/token` | no | `{deviceCode}` -> polls GitLab. `428 {error:"authorization_pending"}`, `429 {error:"slow_down"}`, `400 access_denied|expired_token|invalid_grant|invalid_request`; on success upserts the user, encrypts the GitLab grant, mints `odc_`/`odr_` keys and returns `{controlKey, runtimeKey, apiUrl, linkUrl, user:{id,email,name,image,plan:"team"}}` |
+| `POST /api/v1/auth/revoke` | Bearer | revokes the presented key only |
+| `GET /api/v1/me` | Bearer | `{user:{id, email, name?, image?, plan, balanceUsd}}` for the key owner |
+| `GET /api/v1/workspaces` | Bearer | membership directory (`{items: WorkspaceDirectoryItem[]}`): personal `u<gitlabId>` + one `g<groupId>` row per GitLab group at or above `GITLAB_MIN_ACCESS_LEVEL`. GitLab listing cached 60 s per user; removed memberships stay visible as `memberStatus:"removed"` for 7 days |
+| `GET /api/v1/collab/events` | Bearer + `x-vela-workspace-id` | SSE: `ready` (5 capabilities, `listenerEpoch/listenerHealth/sourceGap`), immediate `heartbeat`, then every 10 s; `workspace-event`, `workspace-directory-changed`, `access-revoked` frames from the outbox |
+| `GET /api/v1/collab/sync-digest` | Bearer + workspace | `{catalogToken, membersToken, contextToken, billingToken}`; faces move per event exactly like the e2e fake hub |
 | `GET /api/v1/wallet/balance` | Bearer | stub `{balanceUsd:"999999.00", updatedAt}` |
 | `GET /api/v1/billing/workspace-snapshot` | Bearer + workspace | internal; feeds `od-vela billing workspace-snapshot`; `workspaceMemberId` equals the directory row |
 | `POST /api/v1/open-design/telemetry` | Bearer | 202, body discarded |
@@ -53,24 +67,76 @@ tests/                    server endpoint + exhaustive shim contract tests
 | `/api/v1/message-center/*` | Bearer | empty message lists |
 | any other `/api/v1/*` | — | `501 {error:"not_supported"}` (never a bare 404) |
 
-Auth failures return `401 {"error":"invalid_api_key"}`; a non-member asking
-for a workspace gets `403 {"error":"workspace_not_authorized"}`.
+Auth failures return `401 {"error":"invalid_api_key"}` **only** for a missing,
+revoked, or expired key, or when GitLab *rejects* the user's refresh token
+(HTTP 400/401 such as `invalid_grant`; then every key of that user is revoked
+first). When GitLab merely cannot be reached while a token needs refreshing
+(timeout, connection error, 5xx) the request answers
+`503 {"error":"gitlab_unavailable"}` and keys and grant stay intact, so a
+GitLab outage never logs users out. A GitLab `401` on an API call made with a
+token the hub still believed valid triggers one locked refresh and a retry
+before anything is revoked. A non-member or a removed member asking for a
+workspace gets `403 {"error":"workspace_not_authorized"}`; membership loss is
+never expressed as 401.
+
+JSON request bodies must be objects: malformed JSON answers
+`400 {"error":"invalid_json"}` and bodies over 64 KiB
+`413 {"error":"payload_too_large"}`.
+
+### GitLab mapping (PLAN §3.1, §5.2)
+
+| Hub | GitLab |
+|---|---|
+| `user.id` | `String(user.id)`; email falls back to `public_email`, then `<username>@<gitlab-host>` |
+| personal workspace | `u<gitlabId>`, `"<name>'s workspace"`, role `owner` |
+| team workspace | `g<groupId>`, `workspaceName = full_name`, `workspaceIconKey = avatar_url`; top-level groups only unless `GITLAB_WORKSPACE_GROUP_MODE=include-subgroups` |
+| `workspaceMemberId` | `m_<sha256(userId:workspaceId)[:24]>` (identical in directory and billing snapshot) |
+| role | access_level 50 -> `owner`, 40 -> `admin`, >= `GITLAB_MIN_ACCESS_LEVEL` (20) -> `member`, below -> no row |
+| `lifecycleState` | `marked_for_deletion_on` -> `deleting`, `archived` -> `locked`, else `active` |
+
+Directory diffs on refresh emit `workspace-directory-changed`
+(`created|updated|membership-added|membership-updated|membership-removed`) to
+the user's streams and `workspace-context-changed` +
+`workspace-members-changed{memberId, memberChange}` to the workspace. A
+removal additionally sends `access-revoked{reason:"workspace_membership_removed"}`
+to the removed user's streams of that workspace and closes them. Outbox rows
+are written in the same store transaction as the mutation.
 
 ## od-vela shim contract
 
-Implemented now: `--version`, `billing summary`, `billing
+Implemented now: `--version`, `login`, `logout`, `billing summary`, `billing
 workspace-snapshot`, `model list|preset`, `models`, `media models`,
 `run terminal`, `team-projects --help`. Closed on purpose (exit 1, typed
 stderr): `billing workspace-balance|team-catalog|checkout`. `image *` /
 `video *` exit 1 with
 `{"error":{"code":"not_supported","message":"od-hub does not provide media generation","retryable":false}}`
 on stdout, which the daemon surfaces as a non-retryable provider verdict.
-Everything else — `login`, `collab *`, `resource *`, `team-projects` data
+Everything else — `collab *`, `resource *`, `team-projects` data
 commands, `agent run` — is a TODO stub emitting:
 
 ```
 Error: <verb> <noun>: API request failed with status 501: not_supported
 ```
+
+`od-vela login` prints, to stdout and before anything else, exactly what
+`apps/daemon/src/integrations/vela.ts` `parseVelaLoginActivation` reads:
+
+```
+Open this URL to continue:
+<verificationUriComplete>
+
+Code: <userCode>
+```
+
+then tries to open the browser (failure -> stderr
+`could not open browser automatically: <reason>`), polls
+`/api/v1/auth/device/token` honouring `interval` and `slow_down`, atomically
+rewrites `$AMR_HOME/config.json` with
+`profiles[<profile>] = {controlKey, runtimeKey, apiUrl, linkUrl, user}` (other
+profiles and keys preserved), prints `Login successful for <email>.` and exits
+0. The daemon spawns it with stdin ignored and decides success by `runtimeKey`
+appearing in the file. `od-vela logout` calls `POST /api/v1/auth/revoke` and
+strips `controlKey/runtimeKey/user` from the profile.
 
 The shim never prints `unknown command`, `unknown flag:`,
 `billing_workspace_snapshot_unsupported`, or a bare `status 404` without a
@@ -85,6 +151,21 @@ Request headers on every hub call: `authorization: Bearer <controlKey>`,
 
 ## Environment variables
 
+Read by the hub server:
+
+| Variable | Meaning |
+|---|---|
+| `GITLAB_URL` | GitLab origin, e.g. `https://gitlab.example.com`. Together with the client id this enables `od-vela login` |
+| `GITLAB_OAUTH_CLIENT_ID` | OAuth application id (Device Authorization Grant must be enabled on the application; GitLab 17.2+) |
+| `GITLAB_OAUTH_CLIENT_SECRET` | optional; omit for a public (confidential = false) application |
+| `GITLAB_MIN_ACCESS_LEVEL` | minimum access level that yields a workspace row (default `20`, Reporter) |
+| `GITLAB_WORKSPACE_GROUP_MODE` | `top-level` (default) or `include-subgroups` |
+| `HUB_PUBLIC_URL` | origin written into `config.json.apiUrl`; defaults to the request `Host` (honours `x-forwarded-proto/host`) |
+| `LLM_GATEWAY_URL` | written as `linkUrl`; defaults to `HUB_PUBLIC_URL` |
+| `TOKEN_ENC_KEY` | base64 of 32 random bytes (`openssl rand -base64 32`); AES-256-GCM key for stored GitLab tokens. Unset = process-lifetime key, every restart forces re-login |
+| `CONTROL_KEY_TTL_DAYS` | sliding lifetime of `odc_`/`odr_` keys (default `30`); every authenticated request extends it |
+| `OD_HUB_PORT` / `OD_HUB_HOST` | listen defaults (`18790`, `127.0.0.1`) |
+
 Read by the shim (precedence mirrors `apps/daemon/src/integrations/vela.ts:751-795`):
 
 | Variable | Meaning |
@@ -95,6 +176,7 @@ Read by the shim (precedence mirrors `apps/daemon/src/integrations/vela.ts:751-7
 | `VELA_INVOCATION_SOURCE` | header value, default `open-design` |
 | `OPEN_DESIGN_AMR_PROFILE` / `VELA_PROFILE` | profile key inside `$AMR_HOME/config.json` (`selfhost` recommended) |
 | `AMR_HOME` | directory holding `config.json` (default `~/.amr`) |
+| `OD_VELA_OPEN_BROWSER` | `0` makes `od-vela login` skip the browser launch (headless hosts, smoke); it prints the same `could not open browser automatically: ...` stderr line, so the daemon shows the URL itself |
 
 Read by the daemon to point at this hub:
 
@@ -154,9 +236,26 @@ OPEN_DESIGN_VELA_TELEMETRY=0
 pnpm tools-dev run web --daemon-port 17456 --web-port 17573   # terminal 2
 ```
 
-`VELA_CONTROL_KEY` in the daemon environment is inherited by the shim; once
-`od-vela login` exists you will instead write `$AMR_HOME/config.json`
-`profiles.selfhost.{controlKey,runtimeKey,apiUrl}` and drop the env key.
+`VELA_CONTROL_KEY` in the daemon environment is inherited by the shim. With
+GitLab configured, drop the env key and let the daemon run `od-vela login`
+instead (Settings -> sign in): the shim writes
+`$AMR_HOME/config.json` `profiles.selfhost.{controlKey,runtimeKey,apiUrl,linkUrl,user}`.
+
+### GitLab login locally
+
+```bash
+GITLAB_URL=https://gitlab.example.com \
+GITLAB_OAUTH_CLIENT_ID=<application id> GITLAB_OAUTH_CLIENT_SECRET=<secret> \
+TOKEN_ENC_KEY=$(openssl rand -base64 32) HUB_PUBLIC_URL=http://127.0.0.1:18790 \
+  pnpm tools-od-hub start --port 18790 --sqlite .tmp/od-hub/hub.sqlite
+
+VELA_API_URL=http://127.0.0.1:18790 VELA_PROFILE=selfhost AMR_HOME=~/.amr \
+  node tools/od-hub/bin/od-vela.mjs login
+```
+
+The GitLab application needs the `read_user` and `read_api` scopes and the
+Device Authorization Grant enabled (GitLab 17.2+). `od-vela logout` revokes
+the key at the hub and removes it from the profile.
 
 Quick manual check without a daemon:
 
@@ -174,4 +273,16 @@ curl -N -H 'authorization: Bearer odc_dev_local_control_key' -H 'x-vela-workspac
 pnpm --filter @open-design/tools-od-hub typecheck
 pnpm --filter @open-design/tools-od-hub test
 pnpm --filter @open-design/tools-od-hub build
+pnpm --filter @open-design/tools-od-hub smoke
 ```
+
+`smoke` (`scripts/smoke-login.ts`) is the out-of-process login check, run the
+way a deployment is wired rather than in-process like the tests: it starts the
+fake GitLab (`tests/helpers/fake-gitlab-main.ts`) and `od-hub start --sqlite
+<tmp>` as separate processes, runs `bin/od-vela.mjs login` with
+`AMR_HOME=<tmp>` and `OD_VELA_OPEN_BROWSER=0` exactly as the daemon spawns it,
+asserts stdout against the daemon's activation regexes, approves the code on
+the fake (`POST /__fake/approve`), waits for the success line and exit 0, then
+calls `GET /api/v1/workspaces` with the minted key and checks every item passes
+the daemon's directory validation. It exits non-zero on the first mismatch and
+needs a prior `build` (the shim runs from `dist/`).

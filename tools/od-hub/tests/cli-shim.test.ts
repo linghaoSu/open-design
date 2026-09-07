@@ -328,9 +328,12 @@ describe('team-projects', () => {
 });
 
 describe('TODO stubs keep the typed 501 contract', () => {
+  it('login against a hub without GitLab configured -> 501 not_supported, still no compat trigger', async () => {
+    const result = await run(['login'], { ...baseEnv(), VELA_CONTROL_KEY: undefined });
+    expectNotSupported(result, 'login');
+  });
+
   const cases: Array<[string[], string]> = [
-    [['login'], 'login'],
-    [['logout'], 'logout'],
     [['collab', 'member', 'register', '--display-name', 'A', '--role', 'owner'], 'collab member register'],
     [['collab', 'member', 'list'], 'collab member list'],
     [['collab', 'comment', 'push', 'p1', '--comment-json', '{}'], 'collab comment push'],

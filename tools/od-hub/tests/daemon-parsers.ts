@@ -6,6 +6,125 @@
  * reason — update the copy together with the daemon.
  */
 
+// ---- apps/daemon/src/integrations/vela.ts:343-358 (parseVelaLoginActivation) ----
+export function parseVelaLoginActivation(stdout: string, stderr: string) {
+  const urlMatch = /Open this URL to continue:\s*\r?\n\s*(\S+)/i.exec(stdout);
+  // Anchor on a line start so a `user_code=` query param inside the URL is not
+  // mistaken for the dedicated `Code:` line.
+  const codeMatch = /^[^\S\r\n]*Code:\s*(\S+)/im.exec(stdout);
+  return {
+    activationUrl: urlMatch?.[1] ?? null,
+    userCode: codeMatch?.[1] ?? null,
+    browserOpenFailed: /could not open browser automatically/i.test(stderr),
+  };
+}
+
+// ---- apps/daemon/src/collab/vela-workspace-context.ts:57-66,196-219 ----------
+const WORKSPACE_TYPES = new Set(['personal', 'team']);
+const ROLES = new Set(['owner', 'admin', 'member']);
+const MEMBER_STATUSES = new Set(['active', 'removed']);
+const LIFECYCLE_STATES = new Set(['active', 'billing_past_due', 'locked', 'deleting', 'deleted']);
+export function mapVelaWorkspaceDirectoryItem(input: unknown) {
+  if (!input || typeof input !== 'object') return null;
+  const raw = input as Record<string, unknown>;
+  const workspaceId = str(raw.workspaceId);
+  const workspaceName = str(raw.workspaceName);
+  const workspaceMemberId = str(raw.workspaceMemberId);
+  if (!workspaceId || !workspaceName || !workspaceMemberId) return null;
+  if (!WORKSPACE_TYPES.has(raw.workspaceType as string)) return null;
+  if (!ROLES.has(raw.role as string)) return null;
+  if (!MEMBER_STATUSES.has(raw.memberStatus as string)) return null;
+  if (!LIFECYCLE_STATES.has(raw.lifecycleState as string)) return null;
+  const item: Record<string, unknown> = {
+    workspaceId,
+    workspaceName,
+    workspaceType: raw.workspaceType,
+    workspaceMemberId,
+    role: raw.role,
+    memberStatus: raw.memberStatus,
+    lifecycleState: raw.lifecycleState,
+  };
+  const workspaceIconKey = str(raw.workspaceIconKey);
+  if (workspaceIconKey) item.workspaceIconKey = workspaceIconKey;
+  return item;
+}
+
+// ---- apps/daemon/src/collab/hub-events-subscriber.ts:56-68,115-127,132-196 --
+const HUB_EVENT_TYPES = new Set([
+  'team-projects-changed', 'comment-changed', 'presence-changed', 'workspace-context-changed',
+  'workspace-members-changed', 'billing-changed', 'billing-subscription-changed', 'wallet-balance-changed',
+  'project-metadata-changed', 'project-content-changed', 'team-resources-changed',
+]);
+const HUB_WORKSPACE_MEMBER_CHANGES = new Set(['added', 'removed', 'updated']);
+const HUB_WORKSPACE_DIRECTORY_CHANGES = new Set([
+  'created', 'updated', 'deleted', 'membership-added', 'membership-updated', 'membership-removed',
+]);
+export function parseHubWorkspaceEvent(data: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(data) as Record<string, unknown>;
+    if (typeof parsed.type !== 'string' || !HUB_EVENT_TYPES.has(parsed.type)) return null;
+    const event: Record<string, unknown> = { type: parsed.type };
+    if (typeof parsed.workspaceId === 'string') event.workspaceId = parsed.workspaceId;
+    if (typeof parsed.workspaceMemberId === 'string') event.workspaceMemberId = parsed.workspaceMemberId;
+    if (typeof parsed.memberId === 'string') event.memberId = parsed.memberId;
+    if (typeof parsed.memberChange === 'string' && HUB_WORKSPACE_MEMBER_CHANGES.has(parsed.memberChange)) {
+      event.memberChange = parsed.memberChange;
+    }
+    if (typeof parsed.at === 'string') event.at = parsed.at;
+    return event;
+  } catch {
+    return null;
+  }
+}
+export function parseHubWorkspaceDirectoryEvent(data: string): Record<string, unknown> | null {
+  let parsed: Record<string, unknown> | null = null;
+  try {
+    const raw: unknown = JSON.parse(data);
+    parsed = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+  const workspaceId = typeof parsed?.workspaceId === 'string' ? parsed.workspaceId.trim() : '';
+  const change = parsed?.change;
+  if (
+    parsed?.type !== 'workspace-directory-changed'
+    || !workspaceId
+    || typeof change !== 'string'
+    || !HUB_WORKSPACE_DIRECTORY_CHANGES.has(change)
+  ) {
+    return null;
+  }
+  return { type: 'workspace-directory-changed', workspaceId, change, ...(typeof parsed.at === 'string' ? { at: parsed.at } : {}) };
+}
+// hub-events-subscriber.ts:222-244 parseHubListenerStatusRecord
+export function parseHubListenerStatus(parsed: Record<string, unknown> | null) {
+  if (!parsed) return null;
+  const listenerEpoch = typeof parsed.listenerEpoch === 'string' ? parsed.listenerEpoch.trim() : '';
+  const listenerHealth = parsed.listenerHealth;
+  if (
+    !listenerEpoch
+    || (listenerHealth !== 'starting' && listenerHealth !== 'healthy' && listenerHealth !== 'reconnecting' && listenerHealth !== 'stopped')
+    || typeof parsed.sourceGap !== 'boolean'
+  ) {
+    return null;
+  }
+  return { listenerEpoch, listenerHealth, sourceGap: parsed.sourceGap };
+}
+
+// ---- apps/daemon/src/collab/sync-digest.ts:88-101 (parseSyncDigest) ---------
+export function parseSyncDigest(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const { catalogToken, membersToken, contextToken, billingToken } = record;
+  if (
+    typeof catalogToken !== 'string' || typeof membersToken !== 'string'
+    || typeof contextToken !== 'string' || typeof billingToken !== 'string'
+  ) {
+    return null;
+  }
+  return { catalogToken, membersToken, contextToken, billingToken };
+}
+
 // ---- apps/daemon/src/integrations/vela-billing.ts:258-281 ------------------
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';

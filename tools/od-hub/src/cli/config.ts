@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
@@ -36,6 +36,55 @@ interface ProfileConfig {
 
 interface ConfigFile {
   profiles?: Record<string, ProfileConfig | undefined>;
+  [extra: string]: unknown;
+}
+
+/** Fields written by `od-vela login` (vela.ts:393-399 VelaProfileShape). */
+export interface StoredProfile {
+  controlKey: string;
+  runtimeKey: string;
+  apiUrl: string;
+  linkUrl: string;
+  user: { id: string; email: string; name?: string; image?: string | null; plan?: string };
+}
+
+function readConfigFile(file: string): ConfigFile {
+  if (!existsSync(file)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(file, 'utf8')) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as ConfigFile) : {};
+  } catch {
+    // A corrupt file must not block login; other profiles are lost only if unreadable anyway.
+    return {};
+  }
+}
+
+/**
+ * Atomically merge one profile into `$AMR_HOME/config.json` (write temp file,
+ * rename over). Other profiles and unknown top-level keys are preserved; the
+ * daemon watches this file's mtime/contents (vela.ts:500-560) so the write
+ * must be all-or-nothing.
+ */
+export function writeProfile(env: Env, profile: string, update: Partial<StoredProfile> | null): string {
+  const file = amrConfigPath(env);
+  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const current = readConfigFile(file);
+  const profiles = { ...(current.profiles ?? {}) };
+  if (update === null) {
+    // logout: drop credentials + identity, keep endpoints so the next login knows where to go.
+    const existing = { ...(profiles[profile] ?? {}) };
+    delete existing.controlKey;
+    delete existing.runtimeKey;
+    delete existing.user;
+    profiles[profile] = existing;
+  } else {
+    profiles[profile] = { ...(profiles[profile] ?? {}), ...update };
+  }
+  const next = { ...current, profiles };
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  renameSync(tmp, file);
+  return file;
 }
 
 export function resolveProfile(env: Env): string {

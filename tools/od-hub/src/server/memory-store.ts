@@ -1,13 +1,21 @@
 import { apiKeyIdFromHash, deriveMemberId, hashApiKey, mintApiKeySecret, newDigestToken } from './ids.js';
 import type {
   ApiKeyRow,
+  AuditInput,
+  AuthenticateOptions,
   AuthenticatedPrincipal,
   CreateUserInput,
   CreateWorkspaceInput,
+  DeviceAuthRow,
   HubStore,
   IssueApiKeyInput,
+  OAuthGrantRow,
+  OutboxEventInput,
+  OutboxRow,
+  StoreBatch,
   SyncDigestFace,
   SyncDigestRow,
+  UpdateWorkspaceInput,
   UpsertMemberInput,
   UserRow,
   WorkspaceBillingRow,
@@ -63,6 +71,12 @@ export function toDirectoryItem(workspace: WorkspaceRow, member: WorkspaceMember
   return item;
 }
 
+/** Shared sliding-expiry rule so memory and SQLite agree byte-for-byte. */
+export function slideExpiry(now: Date, options: AuthenticateOptions | undefined): string | undefined {
+  if (!options?.slidingTtlMs) return undefined;
+  return new Date(now.getTime() + options.slidingTtlMs).toISOString();
+}
+
 export interface SeedUser {
   id: string;
   email: string;
@@ -97,6 +111,11 @@ export class MemoryHubStore implements HubStore {
   private readonly members = new Map<string, WorkspaceMemberRow>(); // `${ws}:${user}`
   private readonly billing = new Map<string, WorkspaceBillingRow>();
   private readonly digests = new Map<string, SyncDigestRow>();
+  private readonly deviceAuths = new Map<string, DeviceAuthRow>();
+  private readonly grants = new Map<string, OAuthGrantRow>();
+  private readonly outbox: OutboxRow[] = [];
+  readonly audit: Array<AuditInput & { at: string }> = [];
+  private outboxSeq = 0;
   private readonly now: () => Date;
 
   constructor(seed: MemoryHubStoreSeed = {}, options: { now?: () => Date } = {}) {
@@ -139,13 +158,14 @@ export class MemoryHubStore implements HubStore {
 
   private putUser(input: CreateUserInput): UserRow {
     const at = this.now().toISOString();
+    const previous = this.users.get(input.id);
     const user: UserRow = {
       id: input.id,
-      gitlabId: input.gitlabId ?? null,
+      gitlabId: input.gitlabId ?? previous?.gitlabId ?? null,
       email: input.email,
       name: input.name,
-      avatarUrl: input.avatarUrl ?? null,
-      createdAt: at,
+      avatarUrl: input.avatarUrl === undefined ? (previous?.avatarUrl ?? null) : input.avatarUrl,
+      createdAt: previous?.createdAt ?? at,
       updatedAt: at,
     };
     this.users.set(user.id, user);
@@ -187,6 +207,16 @@ export class MemoryHubStore implements HubStore {
     return workspace;
   }
 
+  private patchWorkspace(id: string, patch: UpdateWorkspaceInput): WorkspaceRow | null {
+    const row = this.workspaces.get(id);
+    if (!row) return null;
+    if (patch.name !== undefined) row.name = patch.name;
+    if (patch.iconKey !== undefined) row.iconKey = patch.iconKey;
+    if (patch.lifecycleState !== undefined) row.lifecycleState = patch.lifecycleState;
+    row.updatedAt = this.now().toISOString();
+    return row;
+  }
+
   private putMember(input: UpsertMemberInput): WorkspaceMemberRow {
     const at = this.now().toISOString();
     const key = `${input.workspaceId}:${input.userId}`;
@@ -201,16 +231,43 @@ export class MemoryHubStore implements HubStore {
       displayName: input.displayName ?? previous?.displayName ?? null,
       avatarUrl: input.avatarUrl ?? previous?.avatarUrl ?? null,
       seenAt: at,
-      removedAt: status === 'removed' ? at : null,
+      // Keep the first removal timestamp so retention counts from when GitLab dropped the member.
+      removedAt: status === 'removed' ? (previous?.memberStatus === 'removed' ? previous.removedAt : at) : null,
       updatedAt: at,
     };
     this.members.set(key, row);
     return row;
   }
 
+  private pushOutbox(input: OutboxEventInput): OutboxRow {
+    this.outboxSeq += 1;
+    const row: OutboxRow = { ...input, id: this.outboxSeq, createdAt: this.now().toISOString(), publishedAt: null };
+    this.outbox.push(row);
+    return row;
+  }
+
+  private bumpDigestSync(workspaceId: string, face: SyncDigestFace): SyncDigestRow {
+    const digest = { ...this.digestSync(workspaceId), [face]: newDigestToken() };
+    this.digests.set(workspaceId, digest);
+    return { ...digest };
+  }
+
+  private digestSync(workspaceId: string): SyncDigestRow {
+    let digest = this.digests.get(workspaceId);
+    if (!digest) {
+      digest = freshSyncDigest(workspaceId);
+      this.digests.set(workspaceId, digest);
+    }
+    return digest;
+  }
+
   // ---- HubStore reads -----------------------------------------------------------
 
-  async authenticate(bearerToken: string, now: Date = this.now()): Promise<AuthenticatedPrincipal | null> {
+  async authenticate(
+    bearerToken: string,
+    now: Date = this.now(),
+    options?: AuthenticateOptions,
+  ): Promise<AuthenticatedPrincipal | null> {
     const token = bearerToken.trim();
     if (!token) return null;
     const apiKey = this.apiKeys.get(hashApiKey(token));
@@ -219,7 +276,9 @@ export class MemoryHubStore implements HubStore {
     const user = this.users.get(apiKey.userId);
     if (!user) return null;
     apiKey.lastSeenAt = now.toISOString();
-    return { user, apiKey };
+    const slid = slideExpiry(now, options);
+    if (slid && apiKey.expiresAt) apiKey.expiresAt = slid;
+    return { user, apiKey: { ...apiKey } };
   }
 
   async listDirectory(userId: string): Promise<WorkspaceDirectoryItem[]> {
@@ -233,8 +292,13 @@ export class MemoryHubStore implements HubStore {
     return sortDirectory(items);
   }
 
+  async listMemberships(userId: string): Promise<WorkspaceMemberRow[]> {
+    return [...this.members.values()].filter((m) => m.userId === userId).map((m) => ({ ...m }));
+  }
+
   async getMembership(userId: string, workspaceId: string): Promise<WorkspaceMemberRow | null> {
-    return this.members.get(`${workspaceId}:${userId}`) ?? null;
+    const row = this.members.get(`${workspaceId}:${userId}`);
+    return row ? { ...row } : null;
   }
 
   async getWorkspaceBilling(workspaceId: string): Promise<WorkspaceBillingRow> {
@@ -242,26 +306,28 @@ export class MemoryHubStore implements HubStore {
   }
 
   async getSyncDigest(workspaceId: string): Promise<SyncDigestRow> {
-    let digest = this.digests.get(workspaceId);
-    if (!digest) {
-      digest = freshSyncDigest(workspaceId);
-      this.digests.set(workspaceId, digest);
-    }
-    return { ...digest };
+    return { ...this.digestSync(workspaceId) };
   }
 
-  // ---- HubStore writes ----------------------------------------------------------
+  // ---- identity -------------------------------------------------------------------
 
   async createUser(input: CreateUserInput): Promise<UserRow> {
-    return this.putUser(input);
+    if (this.users.has(input.id)) throw new Error(`user ${input.id} already exists`);
+    return { ...this.putUser(input) };
+  }
+
+  async upsertUser(input: CreateUserInput): Promise<UserRow> {
+    return { ...this.putUser(input) };
   }
 
   async getUser(id: string): Promise<UserRow | null> {
-    return this.users.get(id) ?? null;
+    const row = this.users.get(id);
+    return row ? { ...row } : null;
   }
 
   async issueApiKey(input: IssueApiKeyInput): Promise<{ apiKey: ApiKeyRow; secret: string }> {
-    return this.putApiKey(input);
+    const { apiKey, secret } = this.putApiKey(input);
+    return { apiKey: { ...apiKey }, secret };
   }
 
   async revokeApiKey(secret: string, now: Date = this.now()): Promise<void> {
@@ -269,26 +335,111 @@ export class MemoryHubStore implements HubStore {
     if (row && !row.revokedAt) row.revokedAt = now.toISOString();
   }
 
+  async revokeAllUserKeys(userId: string, now: Date = this.now()): Promise<number> {
+    let count = 0;
+    for (const row of this.apiKeys.values()) {
+      if (row.userId === userId && !row.revokedAt) {
+        row.revokedAt = now.toISOString();
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  // ---- device flow + grants ------------------------------------------------------
+
+  async createDeviceAuth(row: DeviceAuthRow): Promise<DeviceAuthRow> {
+    this.deviceAuths.set(row.deviceCodeHash, { ...row });
+    return { ...row };
+  }
+
+  async getDeviceAuth(deviceCodeHash: string): Promise<DeviceAuthRow | null> {
+    const row = this.deviceAuths.get(deviceCodeHash);
+    return row ? { ...row } : null;
+  }
+
+  async updateDeviceAuth(
+    deviceCodeHash: string,
+    patch: Partial<Pick<DeviceAuthRow, 'status' | 'userId' | 'intervalS' | 'lastPolledAt'>>,
+  ): Promise<DeviceAuthRow | null> {
+    const row = this.deviceAuths.get(deviceCodeHash);
+    if (!row) return null;
+    Object.assign(row, patch);
+    return { ...row };
+  }
+
+  async putOAuthGrant(row: OAuthGrantRow): Promise<void> {
+    this.grants.set(row.userId, { ...row });
+  }
+
+  async getOAuthGrant(userId: string): Promise<OAuthGrantRow | null> {
+    const row = this.grants.get(userId);
+    return row ? { ...row } : null;
+  }
+
+  async deleteOAuthGrant(userId: string): Promise<void> {
+    this.grants.delete(userId);
+  }
+
+  // ---- workspaces -----------------------------------------------------------------
+
   async createWorkspace(input: CreateWorkspaceInput): Promise<WorkspaceRow> {
-    return this.putWorkspace(input);
+    if (this.workspaces.has(input.id)) throw new Error(`workspace ${input.id} already exists`);
+    return { ...this.putWorkspace(input) };
+  }
+
+  async updateWorkspace(id: string, patch: UpdateWorkspaceInput): Promise<WorkspaceRow | null> {
+    const row = this.patchWorkspace(id, patch);
+    return row ? { ...row } : null;
   }
 
   async getWorkspace(id: string): Promise<WorkspaceRow | null> {
-    return this.workspaces.get(id) ?? null;
+    const row = this.workspaces.get(id);
+    return row ? { ...row } : null;
   }
 
   async upsertMember(input: UpsertMemberInput): Promise<WorkspaceMemberRow> {
-    return this.putMember(input);
+    return { ...this.putMember(input) };
   }
 
   async listMembers(workspaceId: string): Promise<WorkspaceMemberRow[]> {
-    return [...this.members.values()].filter((m) => m.workspaceId === workspaceId);
+    return [...this.members.values()].filter((m) => m.workspaceId === workspaceId).map((m) => ({ ...m }));
   }
 
   async bumpSyncDigest(workspaceId: string, face: SyncDigestFace): Promise<SyncDigestRow> {
-    const digest = { ...(await this.getSyncDigest(workspaceId)), [face]: newDigestToken() };
-    this.digests.set(workspaceId, digest);
-    return { ...digest };
+    return this.bumpDigestSync(workspaceId, face);
+  }
+
+  // ---- outbox / audit -------------------------------------------------------------
+
+  async applyBatch(batch: StoreBatch): Promise<{ outbox: OutboxRow[] }> {
+    // Validate first so a failing batch leaves no partial state (the SQLite twin uses a transaction).
+    for (const op of batch.workspaces ?? []) {
+      if ('create' in op && this.workspaces.has(op.create.id)) throw new Error(`workspace ${op.create.id} already exists`);
+    }
+    for (const op of batch.workspaces ?? []) {
+      if ('create' in op) this.putWorkspace(op.create);
+      else this.patchWorkspace(op.update.id, op.update);
+    }
+    for (const member of batch.members ?? []) this.putMember(member);
+    for (const { workspaceId, userId } of batch.memberDeletes ?? []) this.members.delete(`${workspaceId}:${userId}`);
+    for (const bump of batch.digestBumps ?? []) this.bumpDigestSync(bump.workspaceId, bump.face);
+    for (const entry of batch.audit ?? []) this.audit.push({ ...entry, at: this.now().toISOString() });
+    const outbox = (batch.outbox ?? []).map((event) => ({ ...this.pushOutbox(event) }));
+    return { outbox };
+  }
+
+  async listUnpublishedOutbox(limit = 500): Promise<OutboxRow[]> {
+    return this.outbox.filter((row) => !row.publishedAt).slice(0, limit).map((row) => ({ ...row }));
+  }
+
+  async markOutboxPublished(ids: number[], now: Date = this.now()): Promise<void> {
+    const set = new Set(ids);
+    for (const row of this.outbox) if (set.has(row.id) && !row.publishedAt) row.publishedAt = now.toISOString();
+  }
+
+  async appendAudit(entry: AuditInput): Promise<void> {
+    this.audit.push({ ...entry, at: this.now().toISOString() });
   }
 
   async close(): Promise<void> {
