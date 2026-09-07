@@ -5810,4 +5810,8 @@ export const ja: Dict = {
 
   "settings.byokRuntimeUnknown": "OpenCode が利用可能かどうか未確認です。再スキャンしてください。",
 
+
+  "reactPreview.undeclaredOption": "{value}（未宣言）",
+  "reactPreview.undeclaredHint": "この JSON 値は宣言された選択肢に含まれていません。プレビューにはそのまま渡されます。",
+  "reactPreview.restoreJson": "最後の有効な JSON を復元",
 };

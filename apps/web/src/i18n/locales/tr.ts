@@ -5711,4 +5711,8 @@ export const tr: Dict = {
 
   "settings.byokRuntimeUnknown": "OpenCode’un kullanılabilirliği doğrulanmadı. Kontrol etmek için yeniden tarayın.",
 
+
+  "reactPreview.undeclaredOption": "{value} (tanımlanmamış)",
+  "reactPreview.undeclaredHint": "Bu JSON değeri tanımlanmış seçenekler arasında değil. Yine de önizlemeye iletilir.",
+  "reactPreview.restoreJson": "Son geçerli JSON değerini geri yükle",
 };

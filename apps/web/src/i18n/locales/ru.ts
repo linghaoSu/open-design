@@ -5711,4 +5711,8 @@ export const ru: Dict = {
 
   "settings.byokRuntimeUnknown": "Доступность OpenCode пока не подтверждена. Повторите поиск.",
 
+
+  "reactPreview.undeclaredOption": "{value} (не объявлено)",
+  "reactPreview.undeclaredHint": "Это значение JSON отсутствует среди объявленных вариантов. Оно всё равно передаётся в предпросмотр.",
+  "reactPreview.restoreJson": "Восстановить последний корректный JSON",
 };

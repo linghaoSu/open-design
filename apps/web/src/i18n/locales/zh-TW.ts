@@ -6164,4 +6164,8 @@ export const zhTW: Dict = {
 
   "settings.byokRuntimeUnknown": "尚未確認 OpenCode 是否可用，請重新掃描。",
 
+
+  "reactPreview.undeclaredOption": "{value}（未宣告）",
+  "reactPreview.undeclaredHint": "此 JSON 值不在已宣告的選項中，仍會傳入預覽。",
+  "reactPreview.restoreJson": "還原上次有效的 JSON",
 };

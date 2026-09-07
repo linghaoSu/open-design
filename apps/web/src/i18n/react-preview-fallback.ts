@@ -36,4 +36,7 @@ export const reactPreviewFallback: Pick<Dict, Extract<keyof Dict, `reactPreview.
   "reactPreview.useDefault": "Use source default",
   "reactPreview.resetProp": "Reset sample value",
   "reactPreview.unavailable": "Resolve the preview details, then retry or choose another export.",
+  "reactPreview.undeclaredOption": "{value} (not declared)",
+  "reactPreview.undeclaredHint": "This JSON value is not among the declared options. It is still passed to the preview.",
+  "reactPreview.restoreJson": "Restore last valid JSON",
 };

@@ -5711,4 +5711,8 @@ export const de: Dict = {
 
   "settings.byokRuntimeUnknown": "Die Verfügbarkeit von OpenCode ist noch nicht bestätigt. Suche erneut.",
 
+
+  "reactPreview.undeclaredOption": "{value} (nicht deklariert)",
+  "reactPreview.undeclaredHint": "Dieser JSON-Wert gehört nicht zu den deklarierten Optionen. Er wird dennoch an die Vorschau übergeben.",
+  "reactPreview.restoreJson": "Letztes gültiges JSON wiederherstellen",
 };

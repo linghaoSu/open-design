@@ -5711,4 +5711,8 @@ export const th: Dict = {
 
   "settings.byokRuntimeUnknown": "ยังไม่ได้ยืนยันว่า OpenCode พร้อมใช้งาน โปรดสแกนใหม่เพื่อตรวจสอบ",
 
+
+  "reactPreview.undeclaredOption": "{value} (ไม่ได้ประกาศไว้)",
+  "reactPreview.undeclaredHint": "ค่า JSON นี้ไม่อยู่ในตัวเลือกที่ประกาศไว้ แต่ยังคงส่งไปยังตัวอย่างพรีวิว",
+  "reactPreview.restoreJson": "คืนค่า JSON ที่ถูกต้องล่าสุด",
 };

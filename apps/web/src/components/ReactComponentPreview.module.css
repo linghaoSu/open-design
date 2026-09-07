@@ -33,6 +33,9 @@
 .previewDetails ul { padding-left: 20px; overflow-wrap: anywhere; }
 .jsonProps { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
 .jsonProps textarea { width: 100%; min-width: 0; box-sizing: border-box; resize: vertical; font: 12px/1.5 monospace; }
+.jsonRecovery { display: flex; align-items: start; flex-wrap: wrap; gap: 6px 10px; margin-top: 6px; }
+.jsonRecovery .error { flex: 1 1 180px; }
+.jsonRecovery .compactAction { height: auto; min-height: 30px; white-space: normal; text-align: start; }
 .recoveryHint { flex-basis: 100%; font-size: 12px; color: var(--text-muted); margin: 4px 0; line-height: 1.5; }
 .panel:not(.component) > .previewDetails { flex: 0 0 auto; max-height: 240px; overflow: auto; }
 .propDetails { display: grid; gap: 10px; margin: 12px 0 0; }

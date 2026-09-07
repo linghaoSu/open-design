@@ -19,6 +19,120 @@ function report(status: string, revision = 1, overrides: Partial<MessageEventIni
 }
 
 describe('standalone React component preview', () => {
+  it.each(['workspace', 'component'] as const)('keeps undeclared enum JSON values visible and recoverable in %s layout', async (layout) => {
+    vi.mocked(provider.createReactComponentPreview).mockResolvedValue(componentPreviewFixture({
+      controls: [
+        { name: 'variant', kind: 'enum', required: false, provenance: 'typescript', hasDefault: true, defaultValue: 'default', options: ['default', 'primary'] },
+        { name: 'size', kind: 'enum', required: false, provenance: 'typescript', hasDefault: true, defaultValue: 'default', options: ['default', 'icon'] },
+      ], effectiveProps: {}, mockProps: {}, callbacks: [],
+    }));
+    render(<ReactComponentPreview {...props} layout={layout} />);
+    await screen.findByTestId('react-component-preview-frame');
+    const originalFrame = frame(); const post = vi.spyOn(originalFrame.contentWindow!, 'postMessage');
+    const editor = screen.getByLabelText('All preview props (JSON)');
+    const variant = screen.getByRole('combobox', { name: 'variant' }) as HTMLSelectElement;
+    const size = screen.getByRole('combobox', { name: 'size' }) as HTMLSelectElement;
+    const entered = { children: 'Actual preview', variant: 'outline', size: 'lg', style: { color: '#243e38' }, extra: [null, false] };
+    fireEvent.change(editor, { target: { value: JSON.stringify(entered) } });
+    expect(variant).toHaveValue('"outline"'); expect(size).toHaveValue('"lg"');
+    expect(variant.selectedOptions[0]).toHaveTextContent('"outline" (not declared)');
+    expect(variant).toHaveAccessibleDescription('This JSON value is not among the declared options. It is still passed to the preview.');
+    expect(post.mock.calls.at(-1)![0].props).toEqual(entered);
+    expect(editor).toHaveValue(JSON.stringify(entered));
+
+    fireEvent.change(variant, { target: { value: '"primary"' } });
+    expect(variant).toHaveValue('"primary"'); expect(variant).not.toHaveAttribute('aria-describedby');
+    expect(size).toHaveValue('"lg"'); expect(post.mock.calls.at(-1)![0].props).toEqual({ ...entered, variant: 'primary' });
+    expect(JSON.parse((editor as HTMLTextAreaElement).value)).toEqual({ ...entered, variant: 'primary' });
+    fireEvent.click(within(size.parentElement!).getByRole('button', { name: 'Use source default' }));
+    const { size: _omitted, ...expected } = { ...entered, variant: 'primary' };
+    expect(size).toHaveValue('"default"'); expect(post.mock.calls.at(-1)![0].props).toEqual(expected);
+    expect(JSON.parse((editor as HTMLTextAreaElement).value)).toEqual(expected);
+
+    fireEvent.change(editor, { target: { value: JSON.stringify({ ...expected, variant: null }) } });
+    expect(variant).toHaveValue('null'); expect(variant.selectedOptions[0]).toHaveTextContent('null (not declared)');
+    expect(post.mock.calls.at(-1)![0].props.variant).toBeNull();
+    fireEvent.click(within(variant.parentElement!).getByRole('button', { name: 'Use source default' }));
+    expect(variant).toHaveValue('"default"'); expect(post.mock.calls.at(-1)![0].props).not.toHaveProperty('variant');
+    expect(frame()).toBe(originalFrame); expect(provider.createReactComponentPreview).toHaveBeenCalledOnce();
+  });
+  it.each([null, 'false', 0])('shows a boolean JSON override %j without coercing it to a declared option', async (value) => {
+    render(<ReactComponentPreview {...props} />);
+    await screen.findByTestId('react-component-preview-frame');
+    const originalFrame = frame(); const post = vi.spyOn(originalFrame.contentWindow!, 'postMessage');
+    const editor = screen.getByLabelText('All preview props (JSON)');
+    const active = screen.getByRole('combobox', { name: 'active' }) as HTMLSelectElement;
+    const entered = { ...componentPreviewFixture().effectiveProps, active: value, forwarded: { keep: true } };
+    fireEvent.change(editor, { target: { value: JSON.stringify(entered) } });
+    expect(active).toHaveValue(JSON.stringify(value));
+    expect(active.selectedOptions[0]).toHaveTextContent(`${JSON.stringify(value)} (not declared)`);
+    expect(active).toHaveAccessibleDescription('This JSON value is not among the declared options. It is still passed to the preview.');
+    expect(post.mock.calls.at(-1)![0].props).toEqual(entered);
+    fireEvent.change(active, { target: { value: 'false' } });
+    expect(active).toHaveValue('false'); expect(active.selectedOptions[0]).toHaveTextContent('false');
+    expect(active).not.toHaveAttribute('aria-describedby');
+    expect(post.mock.calls.at(-1)![0].props).toEqual({ ...entered, active: false });
+    fireEvent.click(within(active.parentElement!).getByRole('button', { name: 'Reset sample value' }));
+    expect(post.mock.calls.at(-1)![0].props).toEqual({ ...entered, active: true });
+    expect(frame()).toBe(originalFrame); expect(provider.createReactComponentPreview).toHaveBeenCalledOnce();
+  });
+  it.each(['workspace', 'component'] as const)('protects invalid JSON drafts and restores the last valid text in %s layout', async (layout) => {
+    render(<ReactComponentPreview {...props} layout={layout} />);
+    await screen.findByTestId('react-component-preview-frame');
+    const originalFrame = frame(); const post = vi.spyOn(originalFrame.contentWindow!, 'postMessage');
+    const editor = screen.getByLabelText('All preview props (JSON)') as HTMLTextAreaElement;
+    fireEvent.click(editor.closest('details')!.querySelector('summary')!);
+    const entered = '{\n "title":"Keep draft", "count":7, "active":null, "variant":"custom", "items":[], "other":{"keep":true}\n}';
+    fireEvent.change(editor, { target: { value: entered } });
+    const last = post.mock.calls.at(-1)![0]; report('rendered', last.revision as number);
+    fireEvent.change(editor, { target: { value: '{' } });
+    expect(editor).toHaveValue('{'); expect(editor).toHaveAttribute('aria-invalid', 'true');
+    for (const name of ['title', 'count', 'active', 'variant', 'items', 'Component export']) expect(screen.getByLabelText(name)).toBeDisabled();
+    const singleReset = within(screen.getByLabelText('count').parentElement!).getByRole('button', { name: 'Use source default' });
+    expect(singleReset).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('title'), { target: { value: 'Do not discard draft' } });
+    fireEvent.click(singleReset);
+    expect(editor).toHaveValue('{'); expect(post.mock.calls.at(-1)![0]).toBe(last);
+    expect(screen.getByTestId('react-component-preview-status')).toHaveAttribute('data-status', 'rendered');
+    expect(screen.getByRole('button', { name: 'Reset props' })).toBeEnabled();
+    const restore = screen.getByRole('button', { name: 'Restore last valid JSON' });
+    expect(restore).toBeVisible(); fireEvent.click(restore);
+    expect(editor).toHaveValue(entered); expect(editor).not.toHaveAttribute('aria-invalid'); expect(editor).toHaveFocus();
+    expect(post.mock.calls.at(-1)![0]).toBe(last); expect(screen.getByLabelText('title')).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Restore last valid JSON' })).toBeNull();
+
+    fireEvent.change(editor, { target: { value: '[' } });
+    fireEvent.change(editor, { target: { value: '{"title":"Typed recovery","active":false}' } });
+    expect(editor).not.toHaveAttribute('aria-invalid'); expect(screen.getByLabelText('title')).toBeEnabled();
+    expect(post.mock.calls.at(-1)![0].props).toEqual({ title: 'Typed recovery', active: false });
+    fireEvent.change(editor, { target: { value: '{' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Reset props' }));
+    expect(JSON.parse(editor.value)).toEqual(componentPreviewFixture().effectiveProps);
+    expect(screen.queryByRole('button', { name: 'Restore last valid JSON' })).toBeNull();
+    expect(frame()).toBe(originalFrame); expect(provider.createReactComponentPreview).toHaveBeenCalledOnce();
+  });
+  it('restores field editors from effective JSON after prior invalid field drafts without updating the renderer', async () => {
+    render(<ReactComponentPreview {...props} />);
+    await screen.findByTestId('react-component-preview-frame');
+    const originalFrame = frame(); const post = vi.spyOn(originalFrame.contentWindow!, 'postMessage');
+    const editor = screen.getByLabelText('All preview props (JSON)') as HTMLTextAreaElement;
+    fireEvent.click(editor.closest('details')!.querySelector('summary')!);
+    const count = screen.getByLabelText('count'); const items = screen.getByLabelText('items');
+    fireEvent.change(count, { target: { value: '7' } });
+    const last = post.mock.calls.at(-1)![0];
+    fireEvent.change(count, { target: { value: '' } });
+    fireEvent.change(items, { target: { value: '[' } });
+    expect(count).toHaveAttribute('aria-invalid', 'true'); expect(items).toHaveAttribute('aria-invalid', 'true');
+    fireEvent.change(editor, { target: { value: '{' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Restore last valid JSON' }));
+    expect(count).toHaveValue(7); expect(count).not.toHaveAttribute('aria-invalid');
+    expect(JSON.parse((items as HTMLTextAreaElement).value)).toEqual(last.props.items); expect(items).not.toHaveAttribute('aria-invalid');
+    expect(JSON.parse(editor.value)).toEqual(last.props); expect(screen.queryByRole('alert')).toBeNull();
+    expect(post.mock.calls.at(-1)![0]).toBe(last);
+    fireEvent.click(within(count.parentElement!).getByRole('button', { name: 'Use source default' }));
+    expect(post.mock.calls.at(-1)![0].props).not.toHaveProperty('count'); expect(count).toHaveValue(3);
+    expect(frame()).toBe(originalFrame); expect(provider.createReactComponentPreview).toHaveBeenCalledOnce();
+  });
   it('edits complete JSON props for unresolved or forwarded shapes while retaining the last valid frame', async () => {
     vi.mocked(provider.createReactComponentPreview).mockResolvedValue(componentPreviewFixture({ controls: [], effectiveProps: {}, mockProps: {}, callbacks: [] }));
     render(<ReactComponentPreview {...props} layout="component" />);
@@ -75,6 +189,7 @@ describe('standalone React component preview', () => {
   it('keeps component render errors and retry visible while preview details stay collapsed', async () => {
     render(<ReactComponentPreview {...props} layout="component" />);
     await screen.findByTestId('react-component-preview-frame');
+    await act(async () => {});
     const originalFrame = frame();
     const post = vi.spyOn(originalFrame.contentWindow!, 'postMessage'); fireEvent.load(originalFrame);
     const revision = post.mock.calls.at(-1)![0].revision as number;

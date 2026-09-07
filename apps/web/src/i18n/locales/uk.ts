@@ -5711,4 +5711,8 @@ export const uk: Dict = {
 
   "settings.byokRuntimeUnknown": "Доступність OpenCode ще не підтверджено. Повторіть пошук.",
 
+
+  "reactPreview.undeclaredOption": "{value} (не оголошено)",
+  "reactPreview.undeclaredHint": "Цього значення JSON немає серед оголошених варіантів. Воно все одно передається до попереднього перегляду.",
+  "reactPreview.restoreJson": "Відновити останній коректний JSON",
 };

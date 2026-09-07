@@ -5711,4 +5711,8 @@ export const ko: Dict = {
 
   "settings.byokRuntimeUnknown": "OpenCode 사용 가능 여부가 확인되지 않았습니다. 다시 검색하세요.",
 
+
+  "reactPreview.undeclaredOption": "{value} (선언되지 않음)",
+  "reactPreview.undeclaredHint": "이 JSON 값은 선언된 옵션에 포함되지 않습니다. 미리보기에는 그대로 전달됩니다.",
+  "reactPreview.restoreJson": "마지막 유효한 JSON 복원",
 };

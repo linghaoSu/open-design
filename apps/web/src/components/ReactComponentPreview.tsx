@@ -69,6 +69,10 @@ function editorText(control: ComponentPreviewControl, value: JsonValue | undefin
   return control.kind === 'string' || control.kind === 'react-node' ? String(value) : control.kind === 'enum' ? JSON.stringify(value) : JSON.stringify(value, null, 2);
 }
 
+function editorDrafts(controls: ComponentPreviewControl[], values: PreviewProps): Record<string, string> {
+  return Object.fromEntries(controls.filter((control) => Object.hasOwn(values, control.name)).map((control) => [control.name, editorText(control, values[control.name])]));
+}
+
 export function ReactComponentPreview(props: Props) {
   const identity = JSON.stringify([props.projectId, workspaceAccountScopedCacheKey(props.workspaceContext), props.sourcePath, props.sourceIdentity, props.componentPreviewRequest?.nonce, props.componentPreviewRequest?.exportName]);
   return <PreviewContent key={identity} {...props} />;
@@ -84,6 +88,7 @@ function PreviewContent({ projectId, sourcePath, workspaceContext, componentPrev
   const [invalid, setInvalid] = useState<Record<string, boolean>>({});
   const [jsonDraft, setJsonDraft] = useState<string | null>(null);
   const [invalidJson, setInvalidJson] = useState(false);
+  const lastValidJson = useRef<string | null>(null);
   const previewDetails = useRef<HTMLDetailsElement>(null);
   const jsonEditor = useRef<HTMLTextAreaElement>(null);
   const [failure, setFailure] = useState('');
@@ -95,6 +100,7 @@ function PreviewContent({ projectId, sourcePath, workspaceContext, componentPrev
   useEffect(() => {
     const controller = new AbortController(); let canceled = false;
     setBusy(true); setFailure(''); setResult(null); setDrafts({}); setInvalid({}); setJsonDraft(null); setInvalidJson(false);
+    lastValidJson.current = null;
     void createReactComponentPreview({ projectId, workspaceContext: scopeRef.current, signal: controller.signal }, { sourcePath, ...(exportName ? { exportName } : {}) })
       .then((response) => { if (!canceled) { setResult(response); setValues(response.effectiveProps); } })
       .catch((error: unknown) => { if (!canceled) setFailure(error instanceof Error ? error.message : t('reactPreview.failed')); })
@@ -103,7 +109,9 @@ function PreviewContent({ projectId, sourcePath, workspaceContext, componentPrev
   }, [projectId, sourcePath, exportName, buildRetry, t]);
 
   function change(control: ComponentPreviewControl, text: string) {
+    if (invalidJson) return;
     setJsonDraft(null); setInvalidJson(false);
+    lastValidJson.current = null;
     setDrafts((old) => ({ ...old, [control.name]: text }));
     try {
       let value: JsonValue;
@@ -119,24 +127,32 @@ function PreviewContent({ projectId, sourcePath, workspaceContext, componentPrev
     } catch { setInvalid((old) => ({ ...old, [control.name]: true })); }
   }
   function resetProp(name: string) {
+    if (invalidJson) return;
     setJsonDraft(null); setInvalidJson(false);
+    lastValidJson.current = null;
     setDrafts((old) => { const next = { ...old }; delete next[name]; return next; });
     setInvalid((old) => ({ ...old, [name]: false }));
     setValues((old) => { const next = { ...old }; if (result && Object.hasOwn(result.effectiveProps, name)) next[name] = result.effectiveProps[name]!; else delete next[name]; return next; });
   }
-  const reset = () => { setValues({ ...result?.effectiveProps }); setDrafts({}); setInvalid({}); setJsonDraft(null); setInvalidJson(false); setRetry((old) => old + 1); };
+  const reset = () => { setValues({ ...result?.effectiveProps }); setDrafts({}); setInvalid({}); setJsonDraft(null); setInvalidJson(false); lastValidJson.current = null; setRetry((old) => old + 1); };
   function changeJson(text: string) {
     setJsonDraft(text);
     try {
       const parsed = ComponentPreviewPropsSchema.parse(JSON.parse(text));
       setValues(parsed); setInvalidJson(false); setInvalid({});
-      setDrafts(Object.fromEntries((result?.controls ?? []).filter((control) => Object.hasOwn(parsed, control.name)).map((control) => [control.name, editorText(control, parsed[control.name])])));
+      lastValidJson.current = text;
+      setDrafts(editorDrafts(result?.controls ?? [], parsed));
     } catch { setInvalidJson(true); }
   }
+  const restoreJson = () => {
+    setJsonDraft(lastValidJson.current ?? JSON.stringify(values, null, 2)); setInvalidJson(false);
+    setDrafts(editorDrafts(result?.controls ?? [], values)); setInvalid({});
+    jsonEditor.current?.focus();
+  };
   const editJson = () => { if (previewDetails.current) previewDetails.current.open = true; jsonEditor.current?.focus(); };
   const retryPreview = () => result?.bundle ? setRetry((old) => old + 1) : setBuildRetry((old) => old + 1);
   const valueOrigin = (control: ComponentPreviewControl) => control.hasDefault && !Object.hasOwn(values, control.name) ? t('reactPreview.sourceDefault') : Object.hasOwn(drafts, control.name) ? t('reactPreview.edited') : Object.hasOwn(values, control.name) ? t('reactPreview.sample') : t('reactPreview.unset');
-  const exportSelector = <label className={styles.export}>{t('reactPreview.export')}<select aria-label={t('reactPreview.export')} value={exportName ?? result?.selectedExport ?? ''} disabled={busy || !result?.exports.length} onChange={(event) => setExportName(event.target.value)}>
+  const exportSelector = <label className={styles.export}>{t('reactPreview.export')}<select aria-label={t('reactPreview.export')} value={exportName ?? result?.selectedExport ?? ''} disabled={busy || invalidJson || !result?.exports.length} onChange={(event) => { if (!invalidJson) setExportName(event.target.value); }}>
     {exportName && !result?.exports.includes(exportName) ? <option value={exportName}>{exportName}</option> : null}
     {!result?.exports.length ? <option value="">—</option> : result.exports.map((name) => <option key={name} value={name}>{name}</option>)}
   </select></label>;
@@ -164,6 +180,8 @@ function PreviewContent({ projectId, sourcePath, workspaceContext, componentPrev
             const hasCallbackMock = result.callbacks.some((callback) => callback.path[0] === control.name);
             const value = Object.hasOwn(values, control.name) ? values[control.name] : sourceDefault ? control.defaultValue : undefined;
             const text = Object.hasOwn(drafts, control.name) ? drafts[control.name]! : editorText(control, value);
+            const options = control.kind === 'boolean' ? [true, false] : control.kind === 'enum' ? control.options ?? [] : undefined;
+            const undeclared = Boolean(options && text !== '' && !options.some((option) => editorText(control, option) === text));
             const invalidValue = Object.hasOwn(invalid, control.name) && invalid[control.name] === true;
             const id = `${editorId}-prop-${control.name}`;
             return <div className={styles.prop} key={control.name}>
@@ -173,13 +191,17 @@ function PreviewContent({ projectId, sourcePath, workspaceContext, componentPrev
                 <span className={styles.hint}>{valueOrigin(control)}</span>
               </> : null}
               {control.kind === 'function' ? <p className={styles.hint}>{sourceDefault ? t('reactPreview.sourceDefault') : hasCallbackMock ? t('reactPreview.callback') : t('reactPreview.unset')}</p>
-                : control.kind === 'boolean' ? <select id={id} aria-label={control.name} value={text} onChange={(event) => change(control, event.target.value)}><option value="" disabled>{t('reactPreview.unset')}</option><option value="true">true</option><option value="false">false</option></select>
-                : control.kind === 'enum' ? <select id={id} aria-label={control.name} value={text} onChange={(event) => change(control, event.target.value)}><option value="" disabled>{t('reactPreview.unset')}</option>{control.options?.map((option, index) => <option key={index} value={JSON.stringify(option)}>{typeof option === 'string' ? option : JSON.stringify(option)}</option>)}</select>
-                : ['object', 'array', 'unknown'].includes(control.kind) ? <textarea id={id} aria-label={control.name} rows={4} spellCheck={false} value={text} placeholder={sourceDefault ? t('reactPreview.sourceDefault') : 'JSON'} aria-invalid={invalidValue || undefined} onChange={(event) => change(control, event.target.value)} />
-                : <input id={id} aria-label={control.name} type={control.kind === 'number' ? 'number' : 'text'} step={control.kind === 'number' ? 'any' : undefined} value={text} placeholder={sourceDefault ? t('reactPreview.sourceDefault') : undefined} aria-invalid={invalidValue || undefined} onChange={(event) => change(control, event.target.value)} />}
+                : options ? <select id={id} aria-label={control.name} aria-describedby={undeclared ? `${id}-undeclared` : undefined} value={text} disabled={invalidJson} onChange={(event) => change(control, event.target.value)}>
+                  <option value="" disabled>{t('reactPreview.unset')}</option>
+                  {undeclared ? <option value={text} disabled>{t('reactPreview.undeclaredOption', { value: JSON.stringify(value) })}</option> : null}
+                  {options.map((option, index) => <option key={index} value={editorText(control, option)}>{typeof option === 'string' ? option : JSON.stringify(option)}</option>)}
+                </select>
+                : ['object', 'array', 'unknown'].includes(control.kind) ? <textarea id={id} aria-label={control.name} rows={4} spellCheck={false} value={text} disabled={invalidJson} placeholder={sourceDefault ? t('reactPreview.sourceDefault') : 'JSON'} aria-invalid={invalidValue || undefined} onChange={(event) => change(control, event.target.value)} />
+                : <input id={id} aria-label={control.name} type={control.kind === 'number' ? 'number' : 'text'} step={control.kind === 'number' ? 'any' : undefined} value={text} disabled={invalidJson} placeholder={sourceDefault ? t('reactPreview.sourceDefault') : undefined} aria-invalid={invalidValue || undefined} onChange={(event) => change(control, event.target.value)} />}
+              {undeclared ? <p id={`${id}-undeclared`} className={styles.hint}>{t('reactPreview.undeclaredHint')}</p> : null}
               {hasCallbackMock && control.kind !== 'function' ? <p className={styles.hint}>{t('reactPreview.callback')}</p> : null}
               {invalidValue ? <p role="alert" className={styles.error}>{t('reactPreview.invalidValue')}</p> : null}
-              {control.kind !== 'function' && Object.hasOwn(drafts, control.name) ? <Button variant="ghost" className={styles.resetProp} onClick={() => resetProp(control.name)}>{control.hasDefault ? t('reactPreview.useDefault') : t('reactPreview.resetProp')}</Button> : null}
+              {control.kind !== 'function' && Object.hasOwn(drafts, control.name) ? <Button variant="ghost" className={styles.resetProp} disabled={invalidJson} onClick={() => resetProp(control.name)}>{control.hasDefault ? t('reactPreview.useDefault') : t('reactPreview.resetProp')}</Button> : null}
             </div>;
           })}
         </aside>
@@ -190,7 +212,7 @@ function PreviewContent({ projectId, sourcePath, workspaceContext, componentPrev
       <summary>{t(layout === 'component' ? 'reactPreview.diagnostics' : 'reactPreview.jsonProps')}</summary>
       {layout === 'component' ? <div className={styles.toolbar}>{exportSelector}<Button className={styles.compactAction} disabled={busy} onClick={retryPreview}>{t('reactPreview.retry')}</Button></div> : null}
       {result ? <label className={styles.jsonProps}>{t('reactPreview.jsonProps')}<textarea ref={jsonEditor} aria-label={t('reactPreview.jsonProps')} aria-describedby={`${editorId}-json-hint`} rows={6} spellCheck={false} disabled={!result.bundle} value={jsonDraft ?? JSON.stringify(values, null, 2)} aria-invalid={invalidJson || undefined} onChange={(event) => changeJson(event.target.value)} /><span id={`${editorId}-json-hint`} className={styles.hint}>{t('reactPreview.jsonHint')}</span></label> : null}
-      {invalidJson ? <p role="alert" className={styles.error}>{t('reactPreview.invalidJson')}</p> : null}
+      {invalidJson ? <div className={styles.jsonRecovery}><p role="alert" className={styles.error}>{t('reactPreview.invalidJson')}</p><Button variant="ghost" className={styles.compactAction} onClick={restoreJson}>{t('reactPreview.restoreJson')}</Button></div> : null}
       {layout === 'component' && result?.diagnostics.length ? <ul>{result.diagnostics.map((item, index) => <li key={index}>{item.message}</li>)}</ul> : null}
       {layout === 'component' && result?.controls.length ? <dl className={styles.propDetails}>{result.controls.map((control) => <div key={control.name}>
         <dt><code>{control.name}</code>{control.required ? <span className={styles.badge}>{t('reactPreview.required')}</span> : null}</dt>

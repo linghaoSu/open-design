@@ -5711,4 +5711,8 @@ export const hu: Dict = {
 
   "settings.byokRuntimeUnknown": "Az OpenCode elérhetősége még nincs megerősítve. Keress újra.",
 
+
+  "reactPreview.undeclaredOption": "{value} (nincs deklarálva)",
+  "reactPreview.undeclaredHint": "Ez a JSON-érték nem szerepel a deklarált lehetőségek között, de továbbra is átadásra kerül az előnézetnek.",
+  "reactPreview.restoreJson": "Az utolsó érvényes JSON visszaállítása",
 };

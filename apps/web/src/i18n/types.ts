@@ -75,6 +75,9 @@ export interface Dict {
   "designWorkspace.packageDetails": string;
   "designWorkspace.repairTitle": string;
   "designWorkspace.repairHint": string;
+  "reactPreview.undeclaredOption": string;
+  "reactPreview.undeclaredHint": string;
+  "reactPreview.restoreJson": string;
   "reactPreview.type": string;
   "reactPreview.jsonProps": string;
   "reactPreview.jsonHint": string;

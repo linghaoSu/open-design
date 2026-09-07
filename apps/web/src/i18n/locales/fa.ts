@@ -5706,4 +5706,8 @@ export const fa: Dict = {
 
   "settings.byokRuntimeUnknown": "در دسترس بودن OpenCode هنوز تأیید نشده است. برای بررسی دوباره اسکن کنید.",
 
+
+  "reactPreview.undeclaredOption": "{value} (تعریف‌نشده)",
+  "reactPreview.undeclaredHint": "این مقدار JSON در میان گزینه‌های تعریف‌شده نیست، اما همچنان به پیش‌نمایش ارسال می‌شود.",
+  "reactPreview.restoreJson": "بازیابی آخرین JSON معتبر",
 };

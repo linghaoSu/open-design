@@ -5711,4 +5711,8 @@ export const id: Dict = {
 
   "settings.byokRuntimeUnknown": "Ketersediaan OpenCode belum dikonfirmasi. Pindai ulang untuk memeriksa.",
 
+
+  "reactPreview.undeclaredOption": "{value} (tidak dideklarasikan)",
+  "reactPreview.undeclaredHint": "Nilai JSON ini tidak termasuk opsi yang dideklarasikan. Nilai tersebut tetap diteruskan ke pratinjau.",
+  "reactPreview.restoreJson": "Pulihkan JSON valid terakhir",
 };
