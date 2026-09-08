@@ -425,6 +425,28 @@ about 1.6 runner-minutes, avoiding roughly 3.6 runner-minutes and 2.1
 critical-path minutes per qualifying run, or about 166 runner-minutes across
 that replay window.
 
+### od-hub test set (medium, additive)
+
+Rule `od-hub-sources` maps the `od-hub` source unit — `tools/od-hub/`,
+`deploy/od-hub/`, and `deploy/tests/od-hub-deploy.test.ts` — to
+`od_hub_tests_required`. The effect is consumed inside the existing
+`workspace_unit_tests` workload, which then runs
+`pnpm --filter @open-design/tools-od-hub build`, its Vitest suite, and the
+source-level deployment contract test. `workspace-manifests-and-ci` also
+claims the effect so lockfile and manifest edits fan out to it.
+
+This route is purely additive: before it, a `tools/od-hub` change reached only
+the generic `workspace-fallback` (`workspace_validation_required`) and its
+package tests never ran in CI. It omits nothing that ran before, so it needs no
+paired-run evidence. The rule stays `medium` on purpose: the merge queue
+escalates a pure od-hub change to the full plan instead of trusting it, and
+promoting it to `certain` (to let the queue skip web/daemon/Playwright lanes
+for hub-only changes) is a separate decision that requires the replay and
+paired-run evidence described under "Confidence tiers". Docker image builds of
+`deploy/od-hub/Dockerfile` are not part of the gate (the deploy test's build
+case skips without a daemon), matching the standalone status of
+`docker-image.yml`.
+
 ## Evidence and evaluation
 
 Shell may fetch file lists and extract logs, but every scope judgment goes

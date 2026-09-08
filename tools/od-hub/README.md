@@ -511,6 +511,20 @@ curl -N -H 'authorization: Bearer odc_dev_local_control_key' -H 'x-vela-workspac
   http://127.0.0.1:18790/api/v1/collab/events
 ```
 
+## Deployment
+
+Production deployment lives in [`deploy/od-hub/`](../../deploy/od-hub/README.md):
+a multi-stage `Dockerfile` (runtime = `node:24-slim` + `dist/`, `migrations/`,
+`templates/`, production `better-sqlite3`), a one-service `docker-compose.yml`
+with a `/data` volume for the SQLite file and blobs, an `.env.example` listing
+every variable from the table above, and a runbook covering the GitLab OAuth
+application, reverse-proxy rules for the SSE stream, backup, and upgrade.
+Pointing a daemon or a packaged Design Loom at a deployed hub is documented in
+[`docs/deployment/self-hosted-hub.md`](../../docs/deployment/self-hosted-hub.md).
+`deploy/tests/od-hub-deploy.test.ts` pins the deployment files to this
+package's contract (`node --test deploy/tests/od-hub-deploy.test.ts`; the
+image-build case runs only when a Docker daemon is reachable).
+
 ## Verify
 
 ```bash

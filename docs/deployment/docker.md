@@ -99,3 +99,11 @@ networking override is required.
 - `pull access denied` or `authentication required` for `ghcr.io/nexu-io/od`: the GHCR package must be public for anonymous Docker, Compose, and Dokploy pulls. An organization maintainer must open GitHub -> Packages -> `od` -> Package settings and change visibility to Public.
 - reverse proxy + `OD_API_TOKEN`: either inject `Authorization: Bearer <OD_API_TOKEN>` at the proxy, or set `OPEN_DESIGN_DISABLE_API_AUTH=1` only when that proxy already authenticates every request and the daemon is not directly exposed.
 - browser sign-in repeats: use username `open-design` and the exact `OD_API_TOKEN` value from `deploy/.env`; recreate the container after changing the token.
+
+## Self-hosted collaboration hub (optional)
+
+The image above is the single-user OpenDesign daemon. Team workspaces —
+shared projects, comments, presence, invites — need a hub. To run that on your
+own infrastructure against your GitLab instead of the public service, deploy
+`od-hub` from [`deploy/od-hub/`](../../deploy/od-hub/README.md) and point the
+daemon at it as described in [`self-hosted-hub.md`](./self-hosted-hub.md).

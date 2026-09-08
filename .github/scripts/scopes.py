@@ -174,7 +174,8 @@ def evaluate(contract, files, threshold, derive_workspace):
                 outputs[effect] = True
         decisions.append({"file": file, "matchedRules": matched_ids, "escalated": False})
     if derive_workspace and any(outputs[name] for name in (
-        "daemon_tests_required", "web_tests_required", "tools_dev_tests_required", "tools_pack_tests_required"
+        "daemon_tests_required", "web_tests_required", "tools_dev_tests_required", "tools_pack_tests_required",
+        "od_hub_tests_required",
     )):
         outputs["workspace_validation_required"] = True
     return outputs, decisions

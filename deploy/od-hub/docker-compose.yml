@@ -1,0 +1,53 @@
+name: od-hub
+
+services:
+  od-hub:
+    container_name: od-hub
+    image: ${OD_HUB_IMAGE:-od-hub:local}
+    build:
+      context: ../..
+      dockerfile: deploy/od-hub/Dockerfile
+    restart: unless-stopped
+    # Optional so `docker compose config` validates before the operator copies
+    # .env.example to .env; the hub still needs the file for a real deployment.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: ${NODE_OPTIONS:---max-old-space-size=256}
+      OD_HUB_HOST: 0.0.0.0
+      OD_HUB_PORT: 18790
+      OD_HUB_DATA_DIR: /data
+      BLOB_DIR: ${BLOB_DIR:-/data/blobs}
+    # `start --sqlite` is the shipped persistent store. `--seed-dev` is only
+    # for a GitLab-less trial (see README "Trial without GitLab").
+    command: ["start", "--sqlite", "/data/hub.sqlite"]
+    ports:
+      - "${OD_HUB_BIND:-127.0.0.1}:${OD_HUB_PUBLISH_PORT:-18790}:18790"
+    volumes:
+      - od_hub_data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${OD_HUB_MEM_LIMIT:-512m}
+    pids_limit: 256
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:18790/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  # SQLite file (`hub.sqlite` + WAL) and the content-addressed blob store
+  # (`blobs/`) live side by side so one snapshot backs up both.
+  od_hub_data:

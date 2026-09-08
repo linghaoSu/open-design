@@ -333,6 +333,16 @@ jobs:
               pnpm --filter @open-design/e2e test tests/packaged-launcher-update-loop.test.ts
             fi
           fi
+          if [ "${{ fromJSON(needs.plan.outputs.scopes).od_hub_tests_required }}" = "true" ]; then
+            # Build before test so the spawned `bin/od-vela.mjs` contract case
+            # runs against a fresh dist instead of being skipped.
+            pnpm --filter @open-design/tools-od-hub build
+            pnpm --filter @open-design/tools-od-hub test
+            # deploy/od-hub contract: source-level checks only. The real image
+            # build case in that file needs a Docker daemon and is a local
+            # verification step, not part of the merge gate.
+            OD_HUB_DEPLOY_TEST_SKIP_DOCKER=1 node --test deploy/tests/od-hub-deploy.test.ts
+          fi
 
 
   daemon_unit_tests:

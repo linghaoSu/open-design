@@ -1535,6 +1535,31 @@ process.stdin.on("end", () => {
           fi`);
   });
 
+  it("[P2] runs the od-hub test set inside the workspace unit job when the planner arms it", async () => {
+    const workflow = await readFile(ciWorkflowPath, "utf8");
+    const workspaceUnit = sectionBetween(workflow, "  workspace_unit_tests:", "  daemon_unit_tests:");
+
+    // The od-hub route is a planner-owned medium rule; the executor only reads
+    // the effect and must not re-derive changed paths. Build precedes test so
+    // the spawned-bin contract case is exercised, and the deploy contract test
+    // runs source-level only (the Docker build case needs a daemon).
+    expect(workspaceUnit).toContain(`if [ "\${{ fromJSON(needs.plan.outputs.scopes).od_hub_tests_required }}" = "true" ]; then`);
+    expect(workspaceUnit).toContain("pnpm --filter @open-design/tools-od-hub build\n            pnpm --filter @open-design/tools-od-hub test");
+    expect(workspaceUnit).toContain("OD_HUB_DEPLOY_TEST_SKIP_DOCKER=1 node --test deploy/tests/od-hub-deploy.test.ts");
+    expect(workflow).not.toContain("  od_hub_tests:");
+
+    const hot = { inputs: { ci_mode: "hot" } };
+    await expect(runScopesPrint("workflow_dispatch", hot, ["tools/od-hub/src/index.ts"])).resolves.toMatchObject({
+      od_hub_tests_required: true,
+      run_workspace_unit_tests: true,
+      daemon_tests_required: false,
+      run_web_workspace_tests: false,
+    });
+    await expect(runScopesPrint("workflow_dispatch", hot, ["deploy/Dockerfile"])).resolves.toMatchObject({
+      od_hub_tests_required: false,
+    });
+  });
+
   it("[P1] runs the complete daemon suite in four required shards", async () => {
     const workflow = await readFile(ciWorkflowPath, "utf8");
     const daemonTests = sectionBetween(workflow, "  daemon_unit_tests:", "  windows_tools_pack_payload_tests:");

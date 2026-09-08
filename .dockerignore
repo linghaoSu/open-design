@@ -13,6 +13,7 @@ coverage
 tsconfig.tsbuildinfo
 deploy/*.env
 deploy/.env
+deploy/**/.env
 deploy/**/*.tar
 deploy/**/*.tgz
 deploy/**/*.zip

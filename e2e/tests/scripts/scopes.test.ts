@@ -131,6 +131,86 @@ describe("workflow scope planner", () => {
     }
   });
 
+  test("routes od-hub sources and its deployment surface to the od-hub test set", () => {
+    // In-bound: the tool, its Docker deployment, and the deploy contract test
+    // arm od_hub_tests_required (medium) and therefore the workspace unit job
+    // that runs the od-hub build/test commands. Nothing else in the plan is
+    // widened by the route: web, daemon, and pack lanes stay off.
+    for (const file of [
+      "tools/od-hub/src/server/http.ts",
+      "tools/od-hub/tests/server.test.ts",
+      "tools/od-hub/migrations/0007_future.sql",
+      "tools/od-hub/templates/console.html",
+      "tools/od-hub/bin/od-vela.mjs",
+      "tools/od-hub/esbuild.config.mjs",
+      "tools/od-hub/tsconfig.json",
+      "tools/od-hub/vitest.config.ts",
+      // bin/od-hub.mjs imports packages/metatool/src/index.ts and the build
+      // script runs packages/metatool/src/cli.ts, so metatool edits must
+      // exercise the hub build.
+      "packages/metatool/src/index.ts",
+      "packages/metatool/src/cli.ts",
+      "deploy/od-hub/Dockerfile",
+      "deploy/od-hub/docker-compose.yml",
+      "deploy/tests/od-hub-deploy.test.ts",
+    ]) {
+      expect(plan("pr", [file]), file).toMatchObject({
+        scopes: {
+          od_hub_tests_required: true,
+          workspace_validation_required: true,
+          daemon_tests_required: false,
+          web_tests_required: false,
+          tools_pack_tests_required: false,
+        },
+        enabled: { workspace_unit_tests: true, daemon_unit_tests: false, web_workspace_tests: false },
+        trace: { ruleHits: { "od-hub-sources": 1 }, escalations: [] },
+      });
+    }
+
+    // Out-of-bound: sibling deploy assets and the daemon image do not arm it.
+    for (const file of ["deploy/Dockerfile", "deploy/docker-compose.yml", "tools/serve/src/index.ts", "apps/daemon/src/server.ts"]) {
+      expect(plan("pr", [file]).scopes.od_hub_tests_required, file).toBe(false);
+    }
+
+    // Mixed: od-hub plus a web change keeps both sets; neither hides the other.
+    expect(plan("pr", ["tools/od-hub/src/index.ts", "apps/web/src/App.tsx"])).toMatchObject({
+      scopes: { od_hub_tests_required: true, web_tests_required: true },
+      enabled: { workspace_unit_tests: true, web_workspace_tests: true },
+      trace: { escalations: [] },
+    });
+
+    // Manifest edits fan out to every package test set, od-hub included.
+    expect(plan("pr", ["tools/od-hub/package.json"])).toMatchObject({
+      scopes: { od_hub_tests_required: true, daemon_tests_required: true, web_tests_required: true },
+      trace: { ruleHits: { "workspace-manifests-and-ci": 1 } },
+    });
+
+    // Unknown sibling: an unmapped root path next to an od-hub edit keeps the
+    // conservative fallback (workspace validation stays armed) on a PR and is
+    // escalated to the full plan in the merge queue instead of being ignored.
+    const unknownSibling = ["tools/od-hub/src/index.ts", "some-new-root/file.ts"];
+    expect(plan("pr", unknownSibling)).toMatchObject({
+      scopes: { od_hub_tests_required: true, workspace_validation_required: true, ui_critical_validation_required: true },
+      enabled: { workspace_unit_tests: true },
+      trace: { ruleHits: { "od-hub-sources": 1, "workspace-fallback": 2 }, escalations: [] },
+    });
+    const unknownSiblingQueue = plan("merge-queue", unknownSibling);
+    expect(unknownSiblingQueue.scopes).toMatchObject({ od_hub_tests_required: true, workspace_validation_required: true });
+    expect(unknownSiblingQueue.trace.escalations).toEqual([
+      { file: "tools/od-hub/src/index.ts", reason: "below-threshold" },
+      { file: "some-new-root/file.ts", reason: "below-threshold" },
+    ]);
+    expect(unknownSiblingQueue.enabled.workspace_unit_tests).toBe(true);
+
+    // Fallback: the route is medium, so the merge queue escalates to the full
+    // plan instead of trusting it, and forced-full plans always arm the set.
+    const queue = plan("merge-queue", ["tools/od-hub/src/index.ts"]);
+    expect(queue.scopes.od_hub_tests_required).toBe(true);
+    expect(queue.trace.escalations).toEqual([{ file: "tools/od-hub/src/index.ts", reason: "below-threshold" }]);
+    expect(queue.enabled.workspace_unit_tests).toBe(true);
+    expect(plan("full").scopes.od_hub_tests_required).toBe(true);
+  });
+
   test("keeps Terminal exact sources on the independent release validation line", () => {
     for (const file of [
       "apps/closure/src/index.ts",
